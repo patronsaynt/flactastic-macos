@@ -45,6 +45,16 @@ cat > "$OUTPUT_PATH" <<PLIST
     <string>14.0</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.music</string>
+    <!-- Library sync over the LAN. Both keys are required from macOS 15: without
+         NSBonjourServices the browser returns nothing and the listener fails,
+         and the failure is completely silent, so a missing key here looks
+         exactly like "no other devices are running FLACtastic". -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>FLACtastic uses the local network to find your other devices and sync your music library between them. Nothing is sent over the internet.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_flactastic._tcp</string>
+    </array>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
