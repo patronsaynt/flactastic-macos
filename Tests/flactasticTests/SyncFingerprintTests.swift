@@ -113,6 +113,24 @@ func fingerprintOmitsUnsetMixFlag() {
     #expect(iOSStyle == macStyleFalse)
 }
 
+@Test("The fingerprint is a known constant across both platforms")
+func fingerprintIsPinned() {
+    // A golden value, duplicated verbatim in the iOS repo's SyncPortTests.
+    // The fingerprint only works if both apps compute it identically, and
+    // nothing in a single-platform test suite can catch a drift in field
+    // order, the separator, or the normalisation rules. Pinning it on both
+    // sides means whichever one is edited first fails here, long before anyone
+    // reaches a real device-to-device sync and sees their whole library listed
+    // as conflicts.
+    let digest = TagFingerprint.compute(
+        title: "Roygbiv", artist: "Boards of Canada", albumArtist: "Boards of Canada",
+        album: "Music Has the Right to Children", trackNumber: 8,
+        genre: "Electronic", secondaryGenres: ["IDM", "Ambient"], year: 1998,
+        isCompilation: false
+    )
+    #expect(digest == "a8a034c777902a3ef2c69aa40255d210678d5e47a4a7df65f2f1dd1fd0aa3211")
+}
+
 // MARK: - ContentHasher
 
 @Test("File hashing matches in-memory hashing")
