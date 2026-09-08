@@ -57,6 +57,24 @@ final class PlaylistStore {
         }
     }
 
+    // MARK: - Sync
+
+    /// Inserts or replaces a playlist that arrived from a paired device.
+    ///
+    /// Matched on `id`, so a playlist that has travelled between devices stays
+    /// one playlist instead of accumulating a copy per sync. A replacement is
+    /// wholesale — the user was shown the conflict and approved the overwrite
+    /// before any of this ran, so merging here would contradict what they
+    /// agreed to.
+    func upsertFromSync(_ playlist: Playlist) {
+        if let index = playlists.firstIndex(where: { $0.id == playlist.id }) {
+            playlists[index] = playlist
+        } else {
+            playlists.append(playlist)
+        }
+        save()
+    }
+
     // MARK: - CRUD
 
     @discardableResult

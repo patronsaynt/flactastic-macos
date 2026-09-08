@@ -176,7 +176,13 @@ struct FlactasticApp: App {
             CommandGroup(replacing: .appInfo) {
                 Button("About FLACtastic") { openWindow(id: "about") }
             }
-            CommandGroup(replacing: .newItem) { }
+            // Sync takes the (emptied) New Item slot at the top of the File
+            // menu. It is a task with a beginning and an end rather than a
+            // place in the library, so it opens a window instead of occupying
+            // a permanent tab in the navigation.
+            CommandGroup(replacing: .newItem) {
+                Button("Sync…") { openWindow(id: "sync") }
+            }
             CommandMenu("Collection") {
                 Button("Refresh Collection") { library.refreshLibrary() }
                     .keyboardShortcut("r", modifiers: .command)
@@ -199,6 +205,17 @@ struct FlactasticApp: App {
                     .keyboardShortcut(.downArrow, modifiers: .command)
             }
         }
+
+        // Library sync over the local network — opened from File → Sync…
+        // The model is created by the view and torn down when the window
+        // closes, so nothing advertises on the network unless this is open.
+        Window("Sync", id: "sync") {
+            SyncView()
+                .environment(library)
+                .environment(playlistStore)
+                .preferredColorScheme(settings.useLightMode ? .light : .dark)
+        }
+        .windowResizability(.contentSize)
 
         // About FLACtastic — opened from the application menu.
         Window("About FLACtastic", id: "about") {

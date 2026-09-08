@@ -165,12 +165,23 @@ actor SyncSession {
 
     /// Runs the side that accepted an incoming connection. No user is present
     /// here, so it makes no decisions beyond enforcing its own limits.
+    /// - Parameter replaying: a message the caller already read off the
+    ///   connection. The listener has to peek at the first message to tell a
+    ///   pairing attempt from a sync, so it hands that message back here rather
+    ///   than leaving the session to read one that has already been consumed.
     func runResponder(
         connection: SyncConnection,
         local: LocalContext,
+        replaying: WireMessage? = nil,
         progress: @Sendable (Progress) -> Void = { _ in }
     ) async throws -> Summary {
-        guard case .hello(let hello) = try await connection.receiveMessage() else {
+        let opening: WireMessage
+        if let replaying {
+            opening = replaying
+        } else {
+            opening = try await connection.receiveMessage()
+        }
+        guard case .hello(let hello) = opening else {
             throw SessionError.unexpectedMessage("expected hello")
         }
         guard SyncProtocol.version.isCompatible(with: hello.version) else {
