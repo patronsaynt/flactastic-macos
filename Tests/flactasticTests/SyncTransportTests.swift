@@ -207,19 +207,4 @@ func largeAndRapidFramesSurvive() async throws {
     #expect(await chunks.all() == expected)
 }
 
-// MARK: - Test helpers
-
-/// Minimal actor boxes, so the listener callbacks can hand results back to the
-/// test body without tripping Swift 6 concurrency checking.
-private actor AsyncBox<T: Sendable> {
-    private var stored: T?
-    func set(_ value: T) { stored = value }
-    func value() -> T? { stored }
-}
-
-private actor AsyncCollector<T: Sendable> {
-    private var items: [T] = []
-    func append(_ item: T) { items.append(item) }
-    func count() -> Int { items.count }
-    func all() -> [T] { items }
-}
+// Shared AsyncBox / AsyncCollector live in SyncTestSupport.swift.

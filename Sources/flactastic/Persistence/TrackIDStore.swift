@@ -102,6 +102,28 @@ final class TrackIDStore {
         return fresh
     }
 
+    // MARK: - Adoption (sync)
+
+    /// Forces `fileURL` to carry an identity chosen elsewhere.
+    ///
+    /// Used when a file arrives from a paired device: the sender already has a
+    /// stable UUID for it, and both libraries should agree on that UUID so the
+    /// next sync recognises the file by identity instead of re-hashing it and
+    /// matching on content.
+    ///
+    /// Deliberately distinct from `assign`, which never overwrites an existing
+    /// xattr — that non-destructive rule is what makes local scanning safe, and
+    /// this is the one caller entitled to break it. It is only ever applied to
+    /// a file this device just received and wrote, never to a pre-existing
+    /// library file, so no local identity is ever clobbered.
+    ///
+    /// Does not call `save()`; the sync session batches the sidecar write once
+    /// at the end of a run, matching the scan loop's contract.
+    func adopt(_ id: UUID, for fileURL: URL, relativePath: String) {
+        writeXattr(id, to: fileURL)
+        cache[relativePath] = id
+    }
+
     // MARK: - Path rename (post-Organizer, optional optimisation)
 
     /// Updates sidecar cache keys after the Organizer moves files.
