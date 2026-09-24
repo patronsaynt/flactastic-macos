@@ -17,6 +17,10 @@ struct FlactasticApp: App {
     @State private var lyricsFetcher: LyricsFetcher
 
     init() {
+        // A write to a closed socket/pipe should surface as EPIPE, not kill the
+        // app mid-album. Sockets also set SO_NOSIGPIPE; this is the backstop.
+        signal(SIGPIPE, SIG_IGN)
+
         // Listening history recorder, injected into the player so plays are
         // tracked into whichever library is currently loaded. Settings is built
         // here too so the player can read the user's counted-play threshold.

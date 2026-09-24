@@ -268,6 +268,7 @@ private actor DiscordIPC {
             dropConnection()
             return false
         }
+        drainReplies()
         return true
     }
 
@@ -285,6 +286,7 @@ private actor DiscordIPC {
             dropConnection()
             return false
         }
+        drainReplies()
         return true
     }
 
@@ -323,6 +325,7 @@ private actor DiscordIPC {
 
             let s = socket(AF_UNIX, SOCK_STREAM, 0)
             guard s >= 0 else { continue }
+            configureSocket(s)
 
             var addr = sockaddr_un()
             addr.sun_family = sa_family_t(AF_UNIX)
@@ -347,6 +350,37 @@ private actor DiscordIPC {
             close(s)
         }
         return false
+    }
+
+    /// Without SO_NOSIGPIPE, writing to a socket Discord has already closed
+    /// (Discord quit/restarted, or dropped us) raises SIGPIPE, whose default
+    /// action terminates the whole app mid-playback. With it, `write` just
+    /// fails with EPIPE and we reconnect via the normal backoff path.
+    /// The timeouts keep a wedged Discord from blocking this actor forever.
+    private func configureSocket(_ s: Int32) {
+        var on: Int32 = 1
+        setsockopt(s, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+        var timeout = timeval(tv_sec: 2, tv_usec: 0)
+        let tvSize = socklen_t(MemoryLayout<timeval>.size)
+        setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, tvSize)
+        setsockopt(s, SOL_SOCKET, SO_SNDTIMEO, &timeout, tvSize)
+    }
+
+    /// Discord answers every SET_ACTIVITY with a response frame. Consume them
+    /// so they don't pile up in the socket buffer over a long session, and use
+    /// the read to notice early when Discord has hung up (recv returns 0).
+    private func drainReplies() {
+        guard fd >= 0 else { return }
+        var buf = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let r = buf.withUnsafeMutableBytes { bp in
+                recv(fd, bp.baseAddress, bp.count, MSG_DONTWAIT)
+            }
+            if r > 0 { continue }
+            if r < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR) { return }
+            dropConnection()
+            return
+        }
     }
 
     private func performHandshake(clientID: String) -> Bool {
