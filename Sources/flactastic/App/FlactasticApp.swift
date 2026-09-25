@@ -325,7 +325,9 @@ struct FlactasticApp: App {
         // so the choice never interrupts audio at launch.
         audioOutput.start()
         discordPresence.attach(player: player, settings: settings)
-        await spotifyAuth.restore()
+        // Network round-trips (profile + playlists) — never hold the library
+        // scan, and with it the loading cover, behind them.
+        Task { await spotifyAuth.restore() }
         if let path = settings.lastRootPath {
             let url = URL(fileURLWithPath: path)
             if FileManager.default.fileExists(atPath: url.path) {
@@ -336,8 +338,6 @@ struct FlactasticApp: App {
             }
         }
         // Nothing to scan — reveal the UI immediately so the empty state shows.
-        withAnimation(.easeOut(duration: 0.35)) {
-            library.hasCompletedInitialLoad = true
-        }
+        library.hasCompletedInitialLoad = true
     }
 }

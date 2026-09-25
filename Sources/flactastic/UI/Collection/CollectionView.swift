@@ -120,7 +120,7 @@ struct CollectionView: View {
         }
         .animation(.easeInOut(duration: 0.22), value: router.collectionPath)
         .onAppear { recomputeVisible() }
-        .onChange(of: library.tracks) { _, _ in recomputeVisible() }
+        .onChange(of: library.tracksRevision) { _, _ in recomputeVisible() }
         .onChange(of: searchText) { _, _ in recomputeVisible() }
         .onChange(of: sortOption) { _, _ in recomputeVisible() }
         .sheet(item: $editingAlbum) { album in

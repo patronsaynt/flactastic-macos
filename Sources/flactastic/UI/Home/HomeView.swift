@@ -95,7 +95,7 @@ struct HomeView: View {
         .onChange(of: listening.events.count) { _, _ in recomputeMetrics() }
         .onChange(of: listening.recentContexts) { _, _ in recomputeMetrics() }
         .onChange(of: statsRange) { _, _ in recomputeMetrics() }
-        .onChange(of: library.tracks) { _, _ in recomputeMetrics() }
+        .onChange(of: library.tracksRevision) { _, _ in recomputeMetrics() }
         .task(id: library.hasCompletedInitialLoad) {
             guard library.hasCompletedInitialLoad else { return }
             await highlight.pickIfNeeded(

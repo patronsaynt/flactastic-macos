@@ -18,8 +18,16 @@ final class LibraryStore {
         didSet {
             albumsCache = nil
             albumsByIDCache = nil
+            tracksRevision &+= 1
         }
     }
+    /// Bumped on every `tracks` assignment. Views should observe this with
+    /// `.onChange` rather than `library.tracks` itself: `onChange` compares
+    /// old vs new with `==`, and `Track`'s synthesized equality memcmps each
+    /// track's embedded artwork. Every equal prefix of the array — or the
+    /// whole thing, for passes like `deduplicateArtworkStorage` that change
+    /// storage but not values — gets byte-compared on the main thread.
+    private(set) var tracksRevision: Int = 0
     var scanState: ScanState = .idle
     /// Flips to `true` once the app's initial library load resolves (either a
     /// successful scan, a failure, or a confirmed no-op when there's nothing
@@ -347,9 +355,7 @@ final class LibraryStore {
             } catch {
                 if Task.isCancelled { return }
                 self.scanState = .failed(String(describing: error))
-                withAnimation(.easeOut(duration: 0.35)) {
-                    self.hasCompletedInitialLoad = true
-                }
+                self.hasCompletedInitialLoad = true
             }
         }
     }
@@ -584,12 +590,13 @@ final class LibraryStore {
                     // walks the whole library, so they used to add a visible
                     // tail to the loading cover even though the data was ready.
                     // We now run them *after* the flip so the home page appears
-                    // in lockstep with the Collection being done. The
-                    // withAnimation drives LoadingCoverView's .transition.
+                    // in lockstep with the Collection being done. Deliberately
+                    // not wrapped in `withAnimation`: flipping it inside one
+                    // let SwiftUI re-render during the property's `willSet`,
+                    // read the stale `false`, and miss the change entirely.
+                    // ContentView animates the cover's fade itself.
                     if !self.hasCompletedInitialLoad {
-                        withAnimation(.easeOut(duration: 0.35)) {
-                            self.hasCompletedInitialLoad = true
-                        }
+                        self.hasCompletedInitialLoad = true
                     }
 
                     // Run the whole-library refinements on a *later* runloop
@@ -601,6 +608,10 @@ final class LibraryStore {
                     // would stay stuck until the next navigation. Yielding first
                     // lets the cover fade out cleanly before this work begins.
                     Task { @MainActor in
+                        // A bare `Task {}` enqueued from this main-actor
+                        // continuation can drain before SwiftUI commits the
+                        // flag flip, so actually wait out the cover's fade.
+                        try? await Task.sleep(for: .milliseconds(500))
                         guard !Task.isCancelled else { return }
                         self.normaliseArtistTags()
                         // Dedup before seeding so the album cache and albums

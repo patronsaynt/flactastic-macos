@@ -17,6 +17,15 @@ struct ContentView: View {
     /// the app's own view, not an `NSToolbar`, so hiding it for a fullscreen
     /// visualizer has to happen here in the layout.
     @State private var isFullScreen = false
+    /// Set shortly after `hasCompletedInitialLoad` flips, once the loading
+    /// cover's fade has played, to take it out of the hierarchy entirely.
+    @State private var coverDismissed = false
+    /// Drives the cover's fade-out, ahead of `coverDismissed` unmounting it.
+    @State private var coverFading = false
+
+    /// Longest the loading cover may stay up, however big the library is.
+    /// Past this the UI is revealed while metadata keeps streaming in.
+    private static let maxCoverDuration: Duration = .seconds(8)
 
     var body: some View {
         @Bindable var router = router
@@ -131,16 +140,22 @@ struct ContentView: View {
             .transition(.opacity)
 
             // Opaque cover that hides the populating grid/list during the
-            // initial library scan. Fades out once the first load resolves.
-            if !library.hasCompletedInitialLoad {
+            // initial library scan. Its visibility is local `@State` owned by
+            // `runLoadingCover()`, not a direct read of the library flag, so
+            // the cover can never outlive the load (or `maxCoverDuration`)
+            // even if an observation update is missed.
+            if !coverDismissed {
                 LoadingCoverView()
-                    .transition(.opacity)
+                    .opacity(coverFading ? 0 : 1)
+                    .allowsHitTesting(!coverFading)
+                    .transition(.identity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: library.hasCompletedInitialLoad) { _, done in
             if done { prefetchArtistImages() }
         }
+        .task { await runLoadingCover() }
         .task {
             if library.hasCompletedInitialLoad { prefetchArtistImages() }
         }
@@ -176,11 +191,29 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.28), value: player.isQueueVisible)
         .animation(.easeInOut(duration: 0.3), value: router.artworkZoomData != nil)
         .animation(.easeInOut(duration: 0.25), value: router.selectedTab)
-        // Drive the loading-cover fade off the flag directly, so its removal
-        // isn't dependent on the originating `withAnimation` transaction
-        // surviving a tick that also mutates other library state.
-        .animation(.easeOut(duration: 0.35), value: library.hasCompletedInitialLoad)
         .background(Theme.background)
+    }
+
+    /// Holds the loading cover until the initial library load resolves or
+    /// `maxCoverDuration` passes, then fades and unmounts it.
+    ///
+    /// Polls the flag instead of relying only on `.onChange`: observation of
+    /// `hasCompletedInitialLoad` has been seen to be dropped at launch (SwiftUI
+    /// re-rendered in the flag's `willSet`, read the old value, and never
+    /// heard the change), which left the cover up until something else — like
+    /// switching tabs — forced a redraw. The poll costs nothing measurable.
+    private func runLoadingCover() async {
+        let deadline = ContinuousClock.now + Self.maxCoverDuration
+        while !library.hasCompletedInitialLoad && ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(100))
+            if Task.isCancelled { return }
+        }
+        withAnimation(.easeOut(duration: 0.35)) { coverFading = true }
+        // Outlast the fade, then unmount without animation.
+        try? await Task.sleep(for: .milliseconds(400))
+        var t = Transaction()
+        t.disablesAnimations = true
+        withTransaction(t) { coverDismissed = true }
     }
 
     @ViewBuilder

@@ -70,7 +70,7 @@ struct ArtistsCollectionView: View {
             rebuildSummaries()
             canAnimateEntrances = true
         }
-        .onChange(of: library.tracks) { rebuildSummaries() }
+        .onChange(of: library.tracksRevision) { rebuildSummaries() }
         .onChange(of: artistStore.overrides) { rebuildSummaries() }
     }
 
