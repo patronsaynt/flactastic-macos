@@ -116,7 +116,7 @@ enum FormatUtils {
     }
 
     /// "96 kHz" / "44.1 kHz" — whole numbers print without a decimal.
-    private static func kilohertzString(_ rate: Double) -> String {
+    static func kilohertzString(_ rate: Double) -> String {
         let khz = rate / 1000.0
         return khz == khz.rounded()
             ? String(format: "%.0f kHz", khz)

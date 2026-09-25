@@ -15,6 +15,7 @@ struct FlactasticApp: App {
     @State private var artistImageFetcher: ArtistImageFetcher
     @State private var lyricsRemoteCache: LyricsRemoteCache
     @State private var lyricsFetcher: LyricsFetcher
+    @State private var audioOutput: AudioOutputManager
 
     init() {
         // A write to a closed socket/pipe should surface as EPIPE, not kill the
@@ -28,7 +29,9 @@ struct FlactasticApp: App {
         _settings = State(initialValue: settingsStore)
         let listeningStore = ListeningStore()
         _listening = State(initialValue: listeningStore)
-        _player = State(initialValue: PlayerState(listening: listeningStore, settings: settingsStore))
+        let playerState = PlayerState(listening: listeningStore, settings: settingsStore)
+        _player = State(initialValue: playerState)
+        _audioOutput = State(initialValue: AudioOutputManager(settings: settingsStore, engine: playerState.engine))
 
         let store = ArtistStore()
         let cache = ArtistRemoteCache()
@@ -107,6 +110,7 @@ struct FlactasticApp: App {
                             .environment(player)
                             .environment(listening)
                             .environment(settings)
+                            .environment(audioOutput)
                             .environment(playlistStore)
                             .environment(artistStore)
                             .environment(artistRemoteCache)
@@ -317,6 +321,9 @@ struct FlactasticApp: App {
         await artistRemoteCache.loadAsync()
         await lyricsRemoteCache.loadAsync()
         player.engine.setVolume(settings.volume)
+        // Route to the saved output device / format before anything plays,
+        // so the choice never interrupts audio at launch.
+        audioOutput.start()
         discordPresence.attach(player: player, settings: settings)
         await spotifyAuth.restore()
         if let path = settings.lastRootPath {

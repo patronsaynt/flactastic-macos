@@ -115,6 +115,24 @@ final class Settings {
         }
     }
 
+    /// UID of the pinned output device (stable across reboots and re-plugs).
+    /// nil follows the system default output device.
+    var outputDeviceUID: String? {
+        didSet { UserDefaults.standard.set(outputDeviceUID, forKey: "flactastic.outputDeviceUID") }
+    }
+
+    /// Output sample rate applied to the device. Every track is resampled to
+    /// this one rate, which keeps playback gapless. nil leaves the device as is.
+    var outputSampleRate: Double? {
+        didSet { UserDefaults.standard.set(outputSampleRate, forKey: "flactastic.outputSampleRate") }
+    }
+
+    /// Physical bit depth applied to the device's output stream. nil leaves
+    /// the device's current format alone.
+    var outputBitDepth: Int? {
+        didSet { UserDefaults.standard.set(outputBitDepth, forKey: "flactastic.outputBitDepth") }
+    }
+
     init() {
         lastRootPath = UserDefaults.standard.string(forKey: "flactastic.lastRootPath")
         let stored = UserDefaults.standard.object(forKey: "flactastic.volume")
@@ -164,6 +182,9 @@ final class Settings {
         showSpotifyLikedSongs = (storedLikedSongs as? Bool) ?? true
         let storedCPF = UserDefaults.standard.object(forKey: "flactastic.countedPlayFraction")
         countedPlayFraction = (storedCPF as? Double) ?? 0.90
+        outputDeviceUID = UserDefaults.standard.string(forKey: "flactastic.outputDeviceUID")
+        outputSampleRate = UserDefaults.standard.object(forKey: "flactastic.outputSampleRate") as? Double
+        outputBitDepth = UserDefaults.standard.object(forKey: "flactastic.outputBitDepth") as? Int
     }
 }
 

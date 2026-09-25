@@ -768,8 +768,45 @@ final class PlayerEngine {
 
     // MARK: - Configuration change
 
+    /// Apply a user-chosen output device / rate / bit depth. At launch (graph
+    /// not built yet, or nothing queued) this is applied directly with no
+    /// audible effect. Mid-playback it's one rebuild that resumes at the same
+    /// position. The canonical rate stays fixed afterwards, so gapless
+    /// transitions between tracks are unaffected.
+    func applyOutputConfiguration(_ config: AudioOutputConfig) {
+        guard isPrepared, !_queue.isEmpty else {
+            do {
+                try graph.applyOutput(config)
+            } catch {
+                print("[PlayerEngine] Failed to apply output configuration: \(error)")
+            }
+            if isPrepared {
+                throttle.setLimit(Int64(graph.canonicalFormat.sampleRate * 10))
+            }
+            return
+        }
+        rebuildOutput {
+            do {
+                try graph.applyOutput(config)
+            } catch {
+                print("[PlayerEngine] Failed to apply output configuration: \(error)")
+                graph.reprepare()
+            }
+        }
+    }
+
     private func handleConfigurationChange() {
         guard isPrepared else { return }
+        // Our own applyOutputConfiguration() can echo a notification after it
+        // has already rebuilt at the new rate — nothing to do then, and a
+        // second flush would cost an extra audible restart.
+        if graph.isInSyncWithDevice { return }
+        rebuildOutput { graph.reprepare() }
+    }
+
+    /// Flush everything, let `reconfigure` change the graph, then restart
+    /// decoding at the saved position against the (possibly new) canonical rate.
+    private func rebuildOutput(_ reconfigure: () -> Void) {
         let wasPlaying = isPlaying
         let savedTime = currentTime
         let savedIndex = _currentIndex
@@ -781,12 +818,13 @@ final class PlayerEngine {
         liveScheduleEnd.withLock { $0 = 0 }
         currentEntryStartFrame = -1
 
-        graph.reprepare()
+        reconfigure()
         // Update throttle limit for new device rate.
         let rate = graph.canonicalFormat.sampleRate
         throttle.setLimit(Int64(rate * 10))
 
         if !_queue.isEmpty {
+            seekTimeOffset = savedTime
             startDecoding(from: savedIndex, seekOffset: savedTime)
             if wasPlaying { play() }
         }

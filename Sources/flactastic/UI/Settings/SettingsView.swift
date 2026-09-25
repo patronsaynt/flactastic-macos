@@ -48,6 +48,8 @@ struct SettingsView: View {
                     switch selectedTab {
                     case .general:
                         GeneralSettingsPane(openFolder: openFolder)
+                    case .audio:
+                        AudioSettingsPane()
                     case .connections:
                         ConnectionsSettingsPane()
                     case .appearance:
@@ -94,6 +96,7 @@ struct SettingsView: View {
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
     case general     = "General"
+    case audio       = "Audio"
     case connections = "Connections"
     case appearance  = "Appearance"
     case visualizer  = "Visualizer"
@@ -351,6 +354,153 @@ private struct CountedPlayThresholdRow: View {
         let clamped = min(max(value, 0), 100)
         settings.countedPlayFraction = Double(clamped) / 100.0
         text = String(clamped)
+    }
+}
+
+// MARK: - Audio pane
+
+private struct AudioSettingsPane: View {
+    @Environment(AudioOutputManager.self) private var audioOutput
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
+
+            // Output Device ────────────────────────────────────────────────
+            SettingsGroup(title: "Output Device") {
+                PickerRow(label: "Device", subtitle: missingDeviceNote) {
+                    Picker("", selection: Binding(
+                        get: { audioOutput.selectedDeviceUID ?? "" },
+                        set: { audioOutput.selectDevice(uid: $0.isEmpty ? nil : $0) }
+                    )) {
+                        Text(systemDefaultLabel).tag("")
+                        Divider()
+                        ForEach(audioOutput.devices) { device in
+                            Text(device.name).tag(device.uid)
+                        }
+                        if audioOutput.isSelectedDeviceMissing, let uid = audioOutput.selectedDeviceUID {
+                            Text("Disconnected Device").tag(uid)
+                        }
+                    }
+                }
+            }
+
+            // Format ───────────────────────────────────────────────────────
+            SettingsGroup(title: "Format") {
+                PickerRow(
+                    label: "Sample Rate",
+                    subtitle: "Every track is resampled to this rate so playback stays gapless. Changing output settings briefly restarts the current track at the same position."
+                ) {
+                    Picker("", selection: Binding(
+                        get: { audioOutput.selectedSampleRate ?? 0 },
+                        set: { audioOutput.selectSampleRate($0 == 0 ? nil : $0) }
+                    )) {
+                        Text(deviceDefaultLabel(audioOutput.currentSampleRate.map(FormatUtils.kilohertzString)))
+                            .tag(0.0)
+                        Divider()
+                        ForEach(rateOptions, id: \.self) { rate in
+                            Text(FormatUtils.kilohertzString(rate)).tag(rate)
+                        }
+                    }
+                }
+                GroupDivider()
+                PickerRow(label: "Bit Depth") {
+                    Picker("", selection: Binding(
+                        get: { audioOutput.selectedBitDepth ?? 0 },
+                        set: { audioOutput.selectBitDepth($0 == 0 ? nil : $0) }
+                    )) {
+                        Text(deviceDefaultLabel(audioOutput.currentBitDepth.map { "\($0)-bit" }))
+                            .tag(0)
+                        Divider()
+                        ForEach(depthOptions, id: \.self) { bits in
+                            Text("\(bits)-bit").tag(bits)
+                        }
+                    }
+                    .disabled(audioOutput.availableBitDepths.isEmpty)
+                }
+            }
+
+            // Now Outputting ───────────────────────────────────────────────
+            SettingsGroup(title: "Now Outputting") {
+                HStack(spacing: Theme.Spacing.md) {
+                    Image(systemName: "hifispeaker.fill")
+                        .foregroundStyle(Theme.textTertiary)
+                    Text(nowOutputting)
+                        .font(Theme.Font.body)
+                        .foregroundStyle(Theme.textSecondary)
+                        .monospacedDigit()
+                    Spacer()
+                }
+                .padding(.horizontal, Theme.Spacing.lg)
+                .padding(.vertical, Theme.Spacing.md)
+            }
+        }
+    }
+
+    private var systemDefaultLabel: String {
+        audioOutput.defaultDevice.map { "System Default (\($0.name))" } ?? "System Default"
+    }
+
+    private var missingDeviceNote: String? {
+        audioOutput.isSelectedDeviceMissing
+            ? "The selected device is disconnected. Using the system default until it's reconnected."
+            : nil
+    }
+
+    private func deviceDefaultLabel(_ current: String?) -> String {
+        current.map { "Device Default (currently \($0))" } ?? "Device Default"
+    }
+
+    /// Available options, plus the saved choice if the current device can't
+    /// offer it (e.g. pinned DAC unplugged) so the picker never shows blank.
+    private var rateOptions: [Double] {
+        var rates = audioOutput.availableSampleRates
+        if let saved = audioOutput.selectedSampleRate, !rates.contains(saved) { rates.append(saved) }
+        return rates.sorted()
+    }
+
+    private var depthOptions: [Int] {
+        var depths = audioOutput.availableBitDepths
+        if let saved = audioOutput.selectedBitDepth, !depths.contains(saved) { depths.append(saved) }
+        return depths.sorted()
+    }
+
+    private var nowOutputting: String {
+        var parts: [String] = []
+        if let rate = audioOutput.currentSampleRate { parts.append(FormatUtils.kilohertzString(rate)) }
+        if let bits = audioOutput.currentBitDepth { parts.append("\(bits)-bit") }
+        let format = parts.joined(separator: " · ")
+        let name = audioOutput.effectiveDevice?.name ?? "No output device"
+        return format.isEmpty ? name : "\(format) → \(name)"
+    }
+}
+
+/// Label (+ optional caption) with a trailing menu picker, for SettingsGroup.
+private struct PickerRow<Control: View>: View {
+    let label: String
+    var subtitle: String? = nil
+    @ViewBuilder var control: () -> Control
+
+    var body: some View {
+        HStack(alignment: subtitle != nil ? .top : .center, spacing: Theme.Spacing.lg) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(Theme.Font.body)
+                    .foregroundStyle(Theme.textPrimary)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer()
+            control()
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+        }
+        .padding(.horizontal, Theme.Spacing.lg)
+        .padding(.vertical, Theme.Spacing.md)
     }
 }
 
