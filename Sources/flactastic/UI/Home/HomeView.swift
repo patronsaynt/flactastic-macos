@@ -55,6 +55,8 @@ struct HomeView: View {
         var footerHours: Int = 0
     }
     @State private var metrics = HomeMetrics()
+    @State private var removalRequest: LibraryRemovalRequest? = nil
+    @State private var isHeroHovering = false
 
     private func recomputeMetrics() {
         var m = HomeMetrics()
@@ -91,6 +93,7 @@ struct HomeView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
+        .removeFromLibraryConfirmation($removalRequest, library: library)
         .onAppear { recomputeMetrics() }
         .onChange(of: listening.events.count) { _, _ in recomputeMetrics() }
         .onChange(of: listening.recentContexts) { _, _ in recomputeMetrics() }
@@ -136,6 +139,10 @@ struct HomeView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .topTrailing) {
+            if highlight.pick != nil { heroPinButton }
+        }
+        .onHover { isHeroHovering = $0 }
         // Banner lives behind the content so its height tracks the content
         // (which grows when the lyric wraps to two lines). The GeometryReader
         // pins the (otherwise greedy) blurred image to the content's size —
@@ -149,6 +156,23 @@ struct HomeView: View {
             .padding(.bottom, -18)   // fall neatly into the gap below the attribution
             .allowsHitTesting(false)
         }
+    }
+
+    /// Discreet pin in the banner's top-right corner. Hidden until the hero is
+    /// hovered; stays visible (accent-tinted) while pinned.
+    private var heroPinButton: some View {
+        Button { highlight.togglePin() } label: {
+            Image(systemName: highlight.isPinned ? "pin.fill" : "pin")
+                .font(.system(size: 13))
+                .foregroundStyle(highlight.isPinned ? Theme.accent : Theme.textTertiary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(highlight.isPinned ? "Unpin lyric" : "Pin lyric")
+        .opacity(highlight.isPinned || isHeroHovering ? 1 : 0)
+        .animation(.easeInOut(duration: 0.15), value: isHeroHovering)
+        .offset(y: -8)
     }
 
     /// Song credit shown under the lyric: `♪ Title — Artist`.
@@ -357,6 +381,10 @@ struct HomeView: View {
                 items.append(contentsOf: artistItems)
             }
         }
+        items.append(.divider)
+        items.append(.button("Remove from Library", systemImage: "trash") {
+            removalRequest = LibraryRemovalRequest(title: album.name, tracks: album.tracks)
+        })
         return items
     }
 

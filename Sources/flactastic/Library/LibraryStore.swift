@@ -328,6 +328,31 @@ final class LibraryStore {
         seedAlbumArtworkCache()
     }
 
+    /// Removes tracks from the library and moves their files to the Trash.
+    /// Tracks whose file couldn't be trashed stay in the library; returns
+    /// the number that failed.
+    @discardableResult
+    func removeTracks(_ toRemove: [Track]) -> Int {
+        guard !toRemove.isEmpty else { return 0 }
+        var removedIDs = Set<UUID>()
+        var failures = 0
+        for track in toRemove {
+            do {
+                if FileManager.default.fileExists(atPath: track.url.path) {
+                    try FileManager.default.trashItem(at: track.url, resultingItemURL: nil)
+                }
+                removedIDs.insert(track.id)
+            } catch {
+                failures += 1
+            }
+        }
+        guard !removedIDs.isEmpty else { return failures }
+        tracks = tracks.filter { !removedIDs.contains($0.id) }
+        seedAlbumArtworkCache()
+        persistMetadataCache()
+        return failures
+    }
+
     func openFolder(_ url: URL) {
         scanTask?.cancel()
         metadataTask?.cancel()

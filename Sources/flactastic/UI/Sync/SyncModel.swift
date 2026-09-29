@@ -67,18 +67,39 @@ final class SyncModel {
 
     @ObservationIgnored private var runTask: Task<Void, Never>?
     /// Resolved when the user answers the confirmation sheet.
-    @ObservationIgnored private var approvalContinuation: CheckedContinuation<Bool, Never>?
+    @ObservationIgnored private var approvalContinuation: CheckedContinuation<SyncSelection?, Never>?
 
     init(library: LibraryStore, playlistStore: PlaylistStore) {
         self.library = library
         self.playlistStore = playlistStore
         self.pairedPeers = peerStore.peers()
+        // However the code goes away — expiry, Stop, success, failure — the
+        // listener stops accepting the pairing key and stops advertising that
+        // a code is showing.
+        gatekeeper.onClose = { [weak self] in self?.advertiser.isPairingOpen = false }
     }
 
     // MARK: - Lifecycle
 
-    /// Called when the Sync window appears.
+    /// Number of live users (the Sync window, Settings ▸ Devices). Networking
+    /// runs while at least one is on screen.
+    @ObservationIgnored private var activeUsers = 0
+
+    /// Paired keys, read from the Keychain once per launch.
+    ///
+    /// On an ad-hoc-signed build every Keychain read can raise the macOS
+    /// "wants to use your confidential information" prompt — the item's ACL
+    /// names the exact binary that wrote it, and each rebuild is a new one.
+    /// Reading on every window open and every sync meant a prompt each time;
+    /// reading once and keeping the result current here means at most one per
+    /// device per launch. The keys already live in memory on the listener, so
+    /// this holds nothing that was not already resident.
+    @ObservationIgnored private var keyCache: [UUID: SymmetricKey]?
+
+    /// Called when the Sync window or Devices tab appears.
     func begin() {
+        activeUsers += 1
+        guard activeUsers == 1 else { return }
         browser.start()
         advertiser.pairedKeys = loadPairedKeys()
         advertiser.onConnection = { [weak self] connection in
@@ -87,14 +108,18 @@ final class SyncModel {
         advertiser.start()
     }
 
-    /// Called when the Sync window closes. Everything stops — no listener, no
-    /// browser, no pairing window survives the window being shut.
+    /// Called when the Sync window or Devices tab goes away. When the last user
+    /// leaves everything stops — no listener, no browser, no pairing window.
     func end() {
+        activeUsers = max(0, activeUsers - 1)
+        guard activeUsers == 0 else { return }
         runTask?.cancel()
         runTask = nil
-        resolveApproval(false)
-        gatekeeper.closePairing()
+        resolveApproval(nil)
+        // Stop first, so withdrawing the code below does not rebuild a
+        // listener that is about to be torn down.
         advertiser.stop()
+        gatekeeper.closePairing()
         browser.stop()
         phase = .idle
         activePeerID = nil
@@ -131,6 +156,7 @@ final class SyncModel {
 
     /// Shows a code on this device for another to type in.
     func openPairingCode() {
+        keepListening()
         guard let code = gatekeeper.openPairing() else {
             errorMessage = "Too many failed attempts. Try again in "
                          + "\(gatekeeper.lockoutSecondsRemaining) seconds."
@@ -142,11 +168,11 @@ final class SyncModel {
 
     func closePairingCode() {
         gatekeeper.closePairing()
-        advertiser.isPairingOpen = false
     }
 
     /// Types a code into another device that is showing one.
     func pair(with peer: DiscoveredPeer, code: String) {
+        keepListening()
         guard let endpoint = browser.endpoint(for: peer.deviceID) else {
             errorMessage = "That device is no longer on the network."
             return
@@ -156,30 +182,11 @@ final class SyncModel {
             guard let self else { return }
             defer { self.pairingPeerID = nil }
             do {
-                let identity = PairingIdentity(
-                    deviceID: DeviceIdentity.deviceID,
-                    displayName: DeviceIdentity.displayName,
-                    kind: DeviceIdentity.kind
+                _ = try await PairingExchange.runGuest(
+                    endpoint: endpoint, code: code, identity: Self.localIdentity,
+                    persist: { peer, key in try await self.savePairing(peer: peer, key: key) },
+                    rollback: { deviceID in await self.forget(deviceID: deviceID) }
                 )
-                let session = try GuestPairingSession(typedCode: code, identity: identity)
-                let connection = SyncConnection(pairingWith: endpoint)
-                defer { Task { await connection.cancel() } }
-                try await connection.start()
-
-                while true {
-                    let message = try await connection.receiveMessage(timeout: .seconds(60))
-                    switch try session.receive(message) {
-                    case .send(let next):
-                        try await connection.send(next)
-                    case .sendAndFinish(let next, let peer, let key):
-                        try await connection.send(next)
-                        self.completePairing(peer: peer, key: key)
-                        return
-                    case .finish(let peer, let key):
-                        self.completePairing(peer: peer, key: key)
-                        return
-                    }
-                }
             } catch let error as PairingError {
                 self.errorMessage = error.userFacingMessage
             } catch {
@@ -188,20 +195,22 @@ final class SyncModel {
         }
     }
 
-    private func completePairing(peer: PairedPeer, key: SymmetricKey) {
+    /// Saves a completed pairing. Throws rather than falling back to
+    /// plaintext storage; `PairingExchange` then makes sure the other device
+    /// does not keep its half either.
+    private func savePairing(peer: PairedPeer, key: SymmetricKey) throws {
         do {
             try PeerKeyStore.store(key: key, for: peer.deviceID)
         } catch {
-            // Refusing to fall back to plaintext storage means this is fatal,
-            // and the user needs to know rather than believing they are paired.
-            errorMessage = "Couldn't save the pairing securely: \(error)"
-            return
+            print("[SyncModel] Couldn't save pairing key: \(error)")
+            throw error
         }
         peerStore.upsert(peer)
         pairedPeers = peerStore.peers()
-        advertiser.pairedKeys = loadPairedKeys()
-        gatekeeper.recordSuccess()
-        advertiser.isPairingOpen = false
+        var keys = loadPairedKeys()
+        keys[peer.deviceID] = key
+        keyCache = keys
+        advertiser.pairedKeys = keys
     }
 
     /// Revokes a device. Deleting the key removes it from the listener's PSK
@@ -210,12 +219,16 @@ final class SyncModel {
         try? PeerKeyStore.delete(deviceID: deviceID)
         peerStore.remove(deviceID: deviceID)
         pairedPeers = peerStore.peers()
-        advertiser.pairedKeys = loadPairedKeys()
+        var keys = loadPairedKeys()
+        keys[deviceID] = nil
+        keyCache = keys
+        advertiser.pairedKeys = keys
     }
 
     // MARK: - Syncing
 
     func sync(with peer: PeerRow) {
+        keepListening()
         guard let endpoint = browser.endpoint(for: peer.peer.deviceID) else {
             errorMessage = "That device is no longer on the network."
             return
@@ -225,7 +238,7 @@ final class SyncModel {
                          + "FLACtastic's sync. Update both devices."
             return
         }
-        guard let key = (try? PeerKeyStore.key(for: peer.peer.deviceID)) ?? nil else {
+        guard let key = loadPairedKeys()[peer.peer.deviceID] else {
             errorMessage = "\(peer.displayName) isn't paired with this Mac yet."
             return
         }
@@ -257,7 +270,7 @@ final class SyncModel {
                     endpoint: endpoint, key: key, localDeviceID: DeviceIdentity.deviceID
                 )
                 defer { Task { await connection.cancel() } }
-                try await connection.start()
+                try await SyncSession.connect(connection, peerName: peer.displayName)
 
                 let context = SyncSession.LocalContext(
                     deviceID: DeviceIdentity.deviceID,
@@ -273,6 +286,7 @@ final class SyncModel {
                     connection: connection,
                     direction: direction,
                     local: context,
+                    pairedKey: key,
                     approve: { plan in await self.requestApproval(for: plan) },
                     progress: { progress in
                         Task { @MainActor in self.phase = .transferring(progress) }
@@ -298,29 +312,35 @@ final class SyncModel {
 
     func cancelRun() {
         runTask?.cancel()
-        resolveApproval(false)
+        resolveApproval(nil)
     }
 
     // MARK: - Approval
 
-    /// Suspends the run until the user answers the confirmation sheet.
-    private func requestApproval(for plan: SyncPlan) async -> Bool {
+    /// Suspends the run until the user answers the confirmation sheet. Returns
+    /// what they ticked, or `nil` if they cancelled.
+    private func requestApproval(for plan: SyncPlan) async -> SyncSelection? {
         // Nothing to warn about and nothing to do — don't make the user
         // dismiss a sheet that says "no changes".
-        if plan.isEmpty { return true }
+        if plan.isEmpty { return .everything }
         return await withCheckedContinuation { continuation in
             approvalContinuation = continuation
             phase = .awaitingApproval(plan)
         }
     }
 
-    func approvePlan() { resolveApproval(true) }
-    func declinePlan() { resolveApproval(false) }
+    func approvePlan(_ selection: SyncSelection = .everything) {
+        // Leave `.awaitingApproval` now so the sheet closes on the click,
+        // rather than lingering until the first file reports progress.
+        phase = .transferring(SyncSession.Progress())
+        resolveApproval(selection)
+    }
+    func declinePlan() { resolveApproval(nil) }
 
-    private func resolveApproval(_ approved: Bool) {
+    private func resolveApproval(_ selection: SyncSelection?) {
         guard let continuation = approvalContinuation else { return }
         approvalContinuation = nil
-        continuation.resume(returning: approved)
+        continuation.resume(returning: selection)
     }
 
     // MARK: - Applying a pull
@@ -352,124 +372,109 @@ final class SyncModel {
     /// Handles a peer that dialled us. Runs unattended: the responder makes no
     /// decisions of its own beyond enforcing its own filters and limits.
     private func handleIncoming(_ raw: NWConnection) {
-        guard let root = library.rootURL else { return }
-        let tracks = library.tracks
-        let playlists = playlistStore.playlists
+        // Snapshotted on arrival: the code that was on screen when the guest
+        // connected, and the keys the listener accepted it under.
         let code = gatekeeper.currentCode()
+        let keys = advertiser.pairedKeys
 
         Task { [weak self] in
             guard let self else { return }
             let connection = SyncConnection(accepted: raw)
             defer { Task { await connection.cancel() } }
             do {
-                try await connection.start()
-                let first = try await connection.receiveMessage(timeout: .seconds(30))
-
-                if case .pairCommit = first {
-                    // Should never happen: the host sends the commit. A guest
-                    // opening with one is malformed.
-                    return
+                switch try await IncomingRequest.read(from: connection) {
+                case .pairing(let hello):
+                    try await self.hostPairing(connection: connection, hello: hello, code: code)
+                case .sync(let hello):
+                    try await self.respond(connection: connection, hello: hello, keys: keys)
                 }
-                if case .pairGuestKey = first {
-                    try await self.runPairingHost(connection: connection, firstMessage: first, code: code)
-                    return
-                }
-                guard case .hello = first else { return }
-                try await self.runResponder(
-                    connection: connection, firstMessage: first,
-                    root: root, tracks: tracks, playlists: playlists
-                )
             } catch {
                 print("[SyncModel] Incoming connection ended: \(error)")
             }
         }
     }
 
-    private func runPairingHost(
-        connection: SyncConnection,
-        firstMessage: WireMessage,
-        code: String?
-    ) async throws {
-        guard let code else {
-            try await connection.send(.protocolError(.init(
-                code: .pairingClosed, message: "Not pairing."
-            )))
-            return
-        }
-        let session = HostPairingSession(code: code, identity: PairingIdentity(
-            deviceID: DeviceIdentity.deviceID,
-            displayName: DeviceIdentity.displayName,
-            kind: DeviceIdentity.kind
-        ))
-        // The commit must already have been sent for the guest to have replied
-        // with a key, so replay it into the session's state machine.
-        _ = session.begin()
-
-        var message = firstMessage
-        while true {
-            do {
-                switch try session.receive(message) {
-                case .send(let next):
-                    try await connection.send(next)
-                case .sendAndFinish(let next, let peer, let key):
-                    try await connection.send(next)
-                    completePairing(peer: peer, key: key)
-                    return
-                case .finish(let peer, let key):
-                    completePairing(peer: peer, key: key)
-                    return
-                }
-            } catch {
-                // Every failure burns the code, whatever caused it.
-                gatekeeper.recordFailure()
-                advertiser.isPairingOpen = false
-                try? await connection.send(.pairResult(.init(
-                    success: false, failureReason: "Pairing failed."
-                )))
-                throw error
+    private func hostPairing(connection: SyncConnection, hello: WireMessage.Hello, code: String?) async throws {
+        do {
+            _ = try await PairingExchange.runHost(
+                on: connection, opening: hello, code: code, identity: Self.localIdentity,
+                persist: { peer, key in try await self.savePairing(peer: peer, key: key) }
+            )
+            gatekeeper.recordSuccess()
+        } catch PairingError.notAcceptingPairing {
+            // No code was showing, so there was nothing to guess.
+            throw PairingError.notAcceptingPairing
+        } catch {
+            if case PairingError.storageFailed = error {
+                errorMessage = PairingError.storageFailed.userFacingMessage
             }
-            message = try await connection.receiveMessage(timeout: .seconds(60))
+            // Every other failure burns the code, whatever caused it.
+            gatekeeper.recordFailure()
+            throw error
         }
     }
 
-    private func runResponder(
-        connection: SyncConnection,
-        firstMessage: WireMessage,
-        root: URL,
-        tracks: [Track],
-        playlists: [Playlist]
-    ) async throws {
-        // The responder path in SyncSession expects to read `hello` itself, so
-        // this replays what has already been consumed.
-        let manifest = try await ManifestBuilder().build(
-            tracks: tracks, playlists: playlists, rootURL: root,
-            deviceID: DeviceIdentity.deviceID, filter: .unrestricted
-        )
-        let context = SyncSession.LocalContext(
-            deviceID: DeviceIdentity.deviceID,
-            displayName: DeviceIdentity.displayName,
-            kind: DeviceIdentity.kind,
-            libraryRoot: root,
-            manifest: manifest,
-            filter: .unrestricted,
-            playlists: playlists
-        )
+    private func respond(connection: SyncConnection, hello: WireMessage.Hello, keys: [UUID: SymmetricKey]) async throws {
+        // Read on the main actor now; `prepare` runs later, off it.
+        let root = library.rootURL
+        let tracks = library.tracks
+        let playlists = playlistStore.playlists
+        let identity = Self.localIdentity
+
         let session = SyncSession()
         _ = try await session.runResponder(
-            connection: connection, local: context, replaying: firstMessage
+            connection: connection,
+            replaying: .hello(hello),
+            identity: identity,
+            authenticate: { keys[$0] },
+            prepare: {
+                // Only reached once the peer has proven it is paired, so an
+                // unpaired device never learns whether a folder is open.
+                guard let root else { throw ManifestBuilder.BuildError.noLibraryRoot }
+                let manifest = try await ManifestBuilder().build(
+                    tracks: tracks, playlists: playlists, rootURL: root,
+                    deviceID: identity.deviceID, filter: .unrestricted
+                )
+                return SyncSession.LocalContext(
+                    deviceID: identity.deviceID,
+                    displayName: identity.displayName,
+                    kind: identity.kind,
+                    libraryRoot: root,
+                    manifest: manifest,
+                    filter: .unrestricted,
+                    playlists: playlists
+                )
+            }
         )
-        await absorb(landed: await session.landed, root: root)
+        if let root { await absorb(landed: await session.landed, root: root) }
     }
 
     // MARK: - Helpers
 
+    private static var localIdentity: PairingIdentity {
+        PairingIdentity(
+            deviceID: DeviceIdentity.deviceID,
+            displayName: DeviceIdentity.displayName,
+            kind: DeviceIdentity.kind
+        )
+    }
+
+    /// Resets the listener's idle timer on user activity — or restarts it if
+    /// the timer already fired with the window open.
+    private func keepListening() {
+        guard activeUsers > 0 else { return }
+        advertiser.keepAlive()
+    }
+
     private func loadPairedKeys() -> [UUID: SymmetricKey] {
+        if let keyCache { return keyCache }
         var keys: [UUID: SymmetricKey] = [:]
         for peer in pairedPeers {
             if let key = (try? PeerKeyStore.key(for: peer.deviceID)) ?? nil {
                 keys[peer.deviceID] = key
             }
         }
+        keyCache = keys
         return keys
     }
 }

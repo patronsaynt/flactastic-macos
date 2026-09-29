@@ -90,6 +90,18 @@ enum SyncProtocol {
     /// Consecutive failed pairing attempts before the listener locks out.
     static let pairingFailureLimit = 3
     static let pairingLockoutDuration: TimeInterval = 60
+
+    // MARK: - Timeouts
+
+    /// How long an initiator waits for the responder's manifest. The responder
+    /// hashes its whole library before it can send one, which on a first sync
+    /// of a large FLAC collection is minutes, not seconds. Later runs hit the
+    /// hash cache and answer almost immediately.
+    static let manifestWaitTimeout: Duration = .seconds(30 * 60)
+
+    /// How long a responder waits for the initiator's decision. A person is
+    /// working through a checklist of what to sync, possibly a long one.
+    static let planReviewTimeout: Duration = .seconds(30 * 60)
 }
 
 /// What kind of machine a peer is. Advertised in the TXT record so the UI can

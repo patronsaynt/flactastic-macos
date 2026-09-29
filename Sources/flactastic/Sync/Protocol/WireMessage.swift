@@ -54,7 +54,14 @@ enum WireMessage: Sendable, Equatable {
         let deviceKind: SyncDeviceKind
         /// Whether this device already holds a pairing key for the peer. Lets
         /// the UI offer "Pair" versus "Sync" before any secret is exchanged.
+        ///
+        /// `false` is also how a guest opens a pairing attempt: the host reads
+        /// it and answers with `pairCommit`.
         let isPaired: Bool
+        /// `ChannelBinding.proof` for this connection. Required when
+        /// `isPaired` is true — it is what stops a device that dialled with
+        /// the public pairing key from passing itself off as a paired peer.
+        var proof: Data? = nil
     }
 
     /// Step 2 of pairing: `SHA256(hostPublicKey ‖ hostNonce)`.
@@ -114,6 +121,11 @@ enum WireMessage: Sendable, Equatable {
         /// changed while the confirmation sheet was on screen.
         let planHash: String
         let approved: Bool
+        /// The part of the plan the user ticked. `nil` means all of it. Both
+        /// sides narrow the plan identically with `SyncPlan.restricted(to:)`
+        /// *after* checking `planHash` against the full plan — a selection can
+        /// only remove work, never add any.
+        var selection: SyncSelection? = nil
     }
 
     struct FileStart: Codable, Sendable, Equatable {

@@ -27,14 +27,15 @@ struct AlbumDetailView: View {
 
     @State private var isEditingAlbum = false
     @State private var editingTrack: Track? = nil
+    @State private var removalRequest: LibraryRemovalRequest? = nil
 
     var body: some View {
         if let album {
             ZStack {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        FLBackLink(title: "Back to Albums") {
-                            if !router.collectionPath.isEmpty { router.collectionPath.removeLast() }
+                        FLBackLink(title: router.collectionBackTitle) {
+                            router.goBackInCollection()
                         }
                         .padding(.top, 24)
 
@@ -54,6 +55,7 @@ struct AlbumDetailView: View {
                 AlbumMetadataEditorView(album: album)
                     .environment(library)
             }
+            .removeFromLibraryConfirmation($removalRequest, library: library)
             .sheet(item: $editingTrack) { track in
                 TrackMetadataEditorView(track: track)
                     .environment(library)
@@ -186,6 +188,7 @@ struct AlbumDetailView: View {
                         playbackContextMenuItems(for: [track], player: player)
                         FLContextMenuItem.divider
                         FLContextMenuItem.button("Edit...", systemImage: "pencil") { editingTrack = track }
+                        FLContextMenuItem.button("Remove from Library", systemImage: "trash") { removalRequest = LibraryRemovalRequest(title: track.title, tracks: [track]) }
                         FLContextMenuItem.divider
                         addToPlaylistMenuItem(track: track)
                         let artistItems = artistContextMenuItems(

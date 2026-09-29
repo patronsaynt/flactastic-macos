@@ -75,8 +75,29 @@ TLS over TCP, authenticated with **pre-shared keys** (`NWProtocolTLS` +
   two agreed at pairing.
 
 This is what makes revocation absolute: deleting a peer's key removes it from
-the listener's PSK set, so its handshake cannot complete at all. There is no
-application-level authorisation check that could be forgotten or bypassed.
+the listener's PSK set, so its handshake cannot complete at all.
+
+TLS alone does **not** tell the listener *which* PSK a connection used —
+Network.framework completes the handshake with whichever registered key
+matches and does not report it. While a code is on screen the public pairing
+PSK (below) is registered alongside the peer keys, so a completed handshake
+proves only "paired peer **or** anyone". The channel binding below closes that.
+
+### Channel binding
+
+A sync opens with `hello { isPaired: true, proof }`, where:
+
+```
+exporter = TLS-Exporter(label: "EXPORTER-flactastic-channel-v1", context: none, length: 32)
+proof    = HMAC-SHA256(longTermKey, "flactastic-hello-v1" ‖ 0x00 ‖ deviceID (16 raw bytes) ‖ exporter)
+```
+
+The responder looks up the long-term key for `hello.deviceID`, derives the same
+exporter from its end of the session, and verifies `proof` in constant time
+**before** sending anything else, including a version error. On failure it
+sends `protocolError(notPaired)` and closes. The exporter is unique to the
+session, so a proof cannot be replayed, and it is bound to the claimed device
+ID, so it cannot be presented under another identity.
 
 ### The pairing channel
 
@@ -133,7 +154,14 @@ destroys the code.
 
 ### Sequence
 
+The dialler always speaks first, for a sync and for pairing alike — that is how
+the listener tells the two apart before it says anything. A guest opens with
+`hello { isPaired: false }`; the host answers it with `pairCommit`. (v1.0 as
+first written had the guest wait for `pairCommit` and the host wait for the
+guest, and every pairing attempt deadlocked.)
+
 ```
+guest → hello         { version, deviceID, displayName, deviceKind, isPaired: false }
 host  → pairCommit    { commitment: SHA256(hostPub ‖ hostNonce) }
 guest → pairGuestKey  { publicKey: guestPub }
 host  → pairReveal    { publicKey: hostPub, nonce: hostNonce }
@@ -142,10 +170,25 @@ guest → pairConfirm   { mac: HMAC(k, "guest" ‖ 0x00 ‖ code), deviceID, dis
         host verifies; mismatch → abort
 host  → pairConfirm   { mac: HMAC(k, "host"  ‖ 0x00 ‖ code), deviceID, displayName, deviceKind }
         guest verifies; mismatch → abort
+        guest saves the key; failure → pairResult { success: false, failureReason: "storage-failed" }
 guest → pairResult    { success: true }
+        host saves the key
+host  → pairResult    { success: true }                            [ack]
 ```
 
+Each side saves before sending its final message, and a guest that does not
+receive the host's ack deletes the key it saved. Without the ack, a Keychain
+failure on the host left the guest believing it was paired with a device that
+refused every sync. A save failure on either side is reported with
+`failureReason: "storage-failed"` so the other side can say so rather than
+blaming the code.
+
 Curve25519 (X25519) key agreement. Nonce is 32 random bytes.
+
+If no code is live when the guest's `hello` arrives, the host sends
+`protocolError(pairingClosed)` and closes; that does not count as a failure,
+since there was nothing to guess. Any other failure on the host is reported to
+the guest as `pairResult { success: false }` before the connection closes.
 
 ### Derivation
 
@@ -181,6 +224,9 @@ how many handshakes they get:
 - **Every** failure burns the code, whatever caused it — a typo, a tampered
   message, a dropped connection.
 - **3** consecutive failures lock the listener out for **60 seconds**.
+- When a code is withdrawn for **any** reason — expiry included — the pairing
+  PSK comes off the listener and the TXT `p` flag returns to `0`. A device must
+  never advertise, or accept, pairing with no code on screen.
 - Codes never persist across app launches.
 - A malformed code is rejected **locally**, before connecting, so a typo does
   not consume one of the host's attempts.
@@ -217,15 +263,15 @@ connection closes. Never guess.
 
 | Tag | Direction | Payload |
 |-----|-----------|---------|
-| `hello` / `helloAck` | both | `version`, `deviceID`, `displayName`, `deviceKind`, `isPaired` |
+| `hello` / `helloAck` | both | `version`, `deviceID`, `displayName`, `deviceKind`, `isPaired`, `proof?` (hello with `isPaired: true` only — §3) |
 | `pairCommit` | host → guest | `commitment` |
 | `pairGuestKey` | guest → host | `publicKey` |
 | `pairReveal` | host → guest | `publicKey`, `nonce` |
 | `pairConfirm` | both | `mac`, `deviceID`, `displayName`, `deviceKind` |
-| `pairResult` | guest → host | `success`, `failureReason?` |
+| `pairResult` | both (guest's result, then host's ack) | `success`, `failureReason?` |
 | `syncRequest` | both | `direction`, `filter`, `manifest` |
 | `planProposal` | receiver | `plan`, `receiverFreeBytes?` |
-| `planDecision` | initiator | `planHash`, `approved` |
+| `planDecision` | initiator | `planHash`, `approved`, `selection?` (§7) |
 | `fileStart` | sender | `trackID`, `relativePath`, `fileSize`, `contentHash`, `tagFingerprint` |
 | `fileAccept` | receiver | `trackID`, `resumeOffset`, `skip` |
 | `fileEnd` | sender | `trackID` |
@@ -271,6 +317,7 @@ next run matches on identity instead of re-hashing.
 | `format` | `flac`, `mp3`, `wav`, `aiff`, `alac`, `aac` |
 | `tagFingerprint` | See below |
 | `title`, `artist`, `album` | Display only; **never** used for matching |
+| `albumArtist?` | Display only. Optional; absent means untagged. The confirmation checklist files each album (title + folder) under its album artist, else its most-credited track artist, so tracks crediting featured artists stay with their album |
 
 ### `tagFingerprint`
 
@@ -310,7 +357,8 @@ make every playlist a permanent conflict.
 ## 7. A sync run
 
 ```
-initiator → hello                    responder → helloAck
+initiator → hello(proof)             responder → verifies proof (§3)
+                                     responder → helloAck
                                      (major version must match exactly)
 
 initiator → syncRequest(direction, filter, its manifest)
@@ -319,14 +367,32 @@ responder → syncRequest(inverted,  filter, its manifest)
 ── both sides now hold both manifests and both filters ──
 ── each computes the plan independently ──
 
-initiator shows the plan to the user
-initiator → planDecision(planHash, approved)
+initiator shows the plan to the user, who may untick parts of it
+initiator → planDecision(planHash, approved, selection?)
 responder → compares planHash against its own computation
             mismatch → protocolError(planStale), abort
+── both sides narrow the plan to `selection` (absent = all of it) ──
 
 ── files flow in the agreed direction, then playlists ──
 sender    → syncComplete
 ```
+
+### Selection
+
+`selection` is `{ trackIDs?, playlistIDs? }` — explicit IDs of plan items,
+where an absent set means "all of that kind". `planHash` is always the hash of
+the **full** plan, so both sides prove they started from the same list; each
+then narrows it with the same rule: keep an item if its ID is in the set, drop
+IDs the plan does not contain. A selection can therefore only remove work. The
+receiver enforces the narrowed plan for tracks *and* playlists, and checks free
+space and `maxTotalTransferBytes` against the narrowed plan, so choosing the
+part of a library that fits is possible. The responder waits up to 30 minutes
+for the decision, since a person is working through a checklist.
+
+The responder sends `helloAck` **before** building its manifest. Building one
+hashes every file the filter admits, which on a first sync of a large library
+takes minutes; the initiator waits up to 30 minutes for the responder's
+`syncRequest` for that reason.
 
 `direction` is always expressed **from the initiator's point of view**:
 `push` = initiator sends, `pull` = initiator receives. One direction per run;
@@ -483,10 +549,18 @@ half-synced library on a device with no room to fix it.
 | Pairing lockout | 3 failures → 60 s |
 | Connection/handshake timeout | 20 s |
 | Idle read timeout | 60 s |
+| Pairing step timeout | 30 s |
+| Wait for responder's manifest | 30 min |
+| Wait for the plan decision | 30 min |
 
 A handshake timeout is mandatory, not optional polish: Network.framework treats
 an unreachable or wrong-key peer as a *path* problem and retries indefinitely,
 so without a bound the UI hangs forever instead of reporting a failure.
+
+A timeout must also actually *end* the wait. Racing a receive against a sleep
+in a Swift task group is only correct if the receive responds to cancellation:
+the group waits for every child before returning, so a continuation that
+ignores cancellation turns the timeout back into a hang.
 
 ---
 
@@ -498,6 +572,8 @@ A new implementation should be able to answer yes to all of these:
 - [ ] The TXT record contains only `v`, `id`, `n`, `k`, `p`, and `id` is random.
 - [ ] Peer display names are stripped of control and bidi-override characters.
 - [ ] Unpaired connections can send *only* pairing messages.
+- [ ] A sync `hello` is rejected unless its channel-binding `proof` verifies.
+- [ ] The dialler speaks first; a pairing guest opens with `hello(isPaired: false)`.
 - [ ] Pairing codes are single-use, expire, and every failure burns one.
 - [ ] Long-term keys are in the platform keychain, never in plaintext storage.
 - [ ] A revoked peer cannot complete the TLS handshake.
@@ -505,6 +581,7 @@ A new implementation should be able to answer yes to all of these:
 - [ ] Every received path passes §8 before touching the filesystem.
 - [ ] Files are staged, digest-verified, then atomically installed.
 - [ ] The receiver recomputes the plan and refuses a mismatched `planHash`.
+- [ ] A `selection` only narrows the plan; the receiver refuses anything outside the narrowed plan.
 - [ ] Filters are enforced on receipt, not only on send.
 - [ ] `tagFingerprint` matches §6 exactly, including absent-equals-default.
 - [ ] Dates encode with fractional seconds; JSON keys are sorted.

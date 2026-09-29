@@ -30,6 +30,12 @@ final class PairingGatekeeper {
 
     @ObservationIgnored private var expiryTask: Task<Void, Never>?
 
+    /// Called whenever a live code is withdrawn — expiry, success, failure,
+    /// or the user pressing Stop. The owner uses it to take the pairing PSK
+    /// off the listener and the "pairing open" flag out of the TXT record.
+    /// Without it, an expired code left both in place with nothing on screen.
+    @ObservationIgnored var onClose: (@MainActor () -> Void)?
+
     init(now: @escaping @Sendable () -> Date = { Date() }) {
         self.now = now
     }
@@ -77,6 +83,7 @@ final class PairingGatekeeper {
         expiryTask = nil
         activeCode = nil
         codeExpiresAt = nil
+        onClose?()
     }
 
     /// The code an incoming attempt must match, or `nil` if none is live.

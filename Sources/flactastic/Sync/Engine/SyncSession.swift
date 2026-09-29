@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 
 /// Drives one complete sync run from handshake to summary.
 ///
@@ -59,9 +60,28 @@ actor SyncSession {
         case noLibraryRoot
         case insufficientStorage(needed: Int64, available: Int64)
         case transferCapExceeded(Int64)
+        /// The peer did not prove it holds the paired key for this connection.
+        case notAuthenticated
+        /// The peer answered with a protocol error instead of carrying on.
+        case refusedByPeer(String)
+        /// No connection could be made at all.
+        case unreachable(String)
+        /// Connected, but the peer never answered `hello`.
+        case peerSilent
 
         var description: String {
             switch self {
+            case .notAuthenticated:
+                return "The other device couldn't confirm it's paired with this one. Forget it and pair again."
+            case .refusedByPeer(let message):
+                return "The other device refused: \(message)"
+            case .unreachable(let name):
+                return "Couldn't reach \(name). Make sure FLACtastic's Sync screen is open on it. "
+                     + "If it's a Mac, also check that System Settings ▸ Network ▸ Firewall "
+                     + "allows incoming connections for FLACtastic."
+            case .peerSilent:
+                return "The other device connected but didn't answer. If it's a Mac, look for a "
+                     + "password or permission prompt on its screen, then try again."
             case .incompatibleVersion(let version):
                 return "The other device speaks sync version \(version); this one speaks "
                      + "\(SyncProtocol.version). Update both to the same release."
@@ -103,21 +123,37 @@ actor SyncSession {
 
     /// Runs the side the user is sitting at.
     ///
-    /// - Parameter approve: shown the plan; returns whether to proceed. This is
-    ///   the confirmation the user asked for — nothing is written or sent
-    ///   before it returns true.
+    /// - Parameter approve: shown the plan; returns the part of it the user
+    ///   ticked (`.everything` if they changed nothing), or `nil` to decline.
+    ///   This is the confirmation the user asked for — nothing is written or
+    ///   sent before it returns.
+    /// - Parameter pairedKey: the long-term key for this peer. Used to prove,
+    ///   via `ChannelBinding`, that this connection really is the paired
+    ///   device and not someone who dialled with the public pairing key.
     func runInitiator(
         connection: SyncConnection,
         direction: SyncDirection,
         local: LocalContext,
-        approve: @Sendable (SyncPlan) async -> Bool,
+        pairedKey: SymmetricKey,
+        approve: @Sendable (SyncPlan) async -> SyncSelection?,
         progress: @Sendable (Progress) -> Void = { _ in }
     ) async throws -> Summary {
+        guard let exporter = await connection.exporterSecret() else {
+            throw SessionError.notAuthenticated
+        }
         try await connection.send(.hello(.init(
             version: SyncProtocol.version, deviceID: local.deviceID,
-            displayName: local.displayName, deviceKind: local.kind, isPaired: true
+            displayName: local.displayName, deviceKind: local.kind, isPaired: true,
+            proof: ChannelBinding.proof(key: pairedKey, exporter: exporter, deviceID: local.deviceID)
         )))
-        guard case .helloAck(let ack) = try await connection.receiveMessage() else {
+        let ackMessage: WireMessage
+        do {
+            ackMessage = try await connection.receiveMessage()
+        } catch SyncConnection.ConnectionError.timedOut {
+            throw SessionError.peerSilent
+        }
+        if case .protocolError(let failure) = ackMessage { throw SessionError.refusedByPeer(failure.message) }
+        guard case .helloAck(let ack) = ackMessage else {
             throw SessionError.unexpectedMessage("expected helloAck")
         }
         guard SyncProtocol.version.isCompatible(with: ack.version) else {
@@ -130,7 +166,11 @@ actor SyncSession {
         try await connection.send(.syncRequest(.init(
             direction: direction, filter: local.filter, manifest: local.manifest
         )))
-        guard case .syncRequest(let peer) = try await connection.receiveMessage() else {
+        // Generous on purpose: the responder builds its manifest only now,
+        // and a first sync hashes every file it has.
+        let peerMessage = try await connection.receiveMessage(timeout: SyncProtocol.manifestWaitTimeout)
+        if case .protocolError(let failure) = peerMessage { throw SessionError.refusedByPeer(failure.message) }
+        guard case .syncRequest(let peer) = peerMessage else {
             throw SessionError.unexpectedMessage("expected the peer's manifest")
         }
 
@@ -141,23 +181,50 @@ actor SyncSession {
             localIsInitiator: true
         )
 
-        // Guard the receiver's limits before asking the user to approve
-        // something that cannot finish.
-        if direction == .pull {
-            try Self.checkCapacity(plan: plan, filter: local.filter, libraryRoot: local.libraryRoot)
-        }
-
-        guard await approve(plan) else {
+        guard let selection = await approve(plan) else {
             try? await connection.send(.planDecision(.init(planHash: plan.planHash, approved: false)))
             throw SessionError.declined
         }
-        try await connection.send(.planDecision(.init(planHash: plan.planHash, approved: true)))
+        let selected = plan.restricted(to: selection)
+
+        // Checked against what was *selected*, not the whole plan: picking the
+        // part of a library that fits is the point of choosing.
+        if direction == .pull {
+            do {
+                try Self.checkCapacity(plan: selected, filter: local.filter, libraryRoot: local.libraryRoot)
+            } catch {
+                try? await connection.send(.planDecision(.init(planHash: plan.planHash, approved: false)))
+                throw error
+            }
+        }
+        // The hash is always the full plan's: it proves both sides started
+        // from the same list. The selection then narrows it identically.
+        try await connection.send(.planDecision(.init(
+            planHash: plan.planHash, approved: true,
+            selection: selection.isEverything ? nil : selection
+        )))
 
         switch direction {
         case .push:
-            return try await sendPayload(plan: plan, connection: connection, local: local, progress: progress)
+            return try await sendPayload(plan: selected, connection: connection, local: local, progress: progress)
         case .pull:
-            return try await receivePayload(plan: plan, connection: connection, local: local, progress: progress)
+            return try await receivePayload(plan: selected, connection: connection, local: local, progress: progress)
+        }
+    }
+
+    /// Connects to a paired peer, turning transport failures into errors the
+    /// user can act on. A bare "timed out" does not say whether the other
+    /// device is unreachable or reachable-but-stuck, and the fixes differ.
+    static func connect(_ connection: SyncConnection, peerName: String) async throws {
+        do {
+            try await connection.start()
+        } catch SyncConnection.ConnectionError.handshakeFailed {
+            // With PSK this means the peer does not hold our key.
+            throw SessionError.notAuthenticated
+        } catch SyncConnection.ConnectionError.cancelled {
+            throw CancellationError()
+        } catch {
+            throw SessionError.unreachable(peerName)
         }
     }
 
@@ -165,14 +232,24 @@ actor SyncSession {
 
     /// Runs the side that accepted an incoming connection. No user is present
     /// here, so it makes no decisions beyond enforcing its own limits.
-    /// - Parameter replaying: a message the caller already read off the
-    ///   connection. The listener has to peek at the first message to tell a
-    ///   pairing attempt from a sync, so it hands that message back here rather
-    ///   than leaving the session to read one that has already been consumed.
+    /// - Parameters:
+    ///   - replaying: a message the caller already read off the connection.
+    ///     The listener has to peek at the first message to tell a pairing
+    ///     attempt from a sync, so it hands that message back here rather than
+    ///     leaving the session to read one that has already been consumed.
+    ///   - identity: what to answer `hello` with.
+    ///   - authenticate: the long-term key for a claimed device ID, or `nil`
+    ///     if it is not paired. The hello's proof must verify against it.
+    ///   - prepare: builds this side's context. Called only after `helloAck`
+    ///     has gone out — building means hashing the library, which can take
+    ///     minutes, and the initiator should not be left guessing whether
+    ///     anyone is there while it runs.
     func runResponder(
         connection: SyncConnection,
-        local: LocalContext,
         replaying: WireMessage? = nil,
+        identity: PairingIdentity,
+        authenticate: @Sendable (UUID) -> SymmetricKey?,
+        prepare: @Sendable () async throws -> LocalContext,
         progress: @Sendable (Progress) -> Void = { _ in }
     ) async throws -> Summary {
         let opening: WireMessage
@@ -184,6 +261,18 @@ actor SyncSession {
         guard case .hello(let hello) = opening else {
             throw SessionError.unexpectedMessage("expected hello")
         }
+
+        // Authenticate before anything else — including the version check —
+        // so an unpaired device learns nothing about this one.
+        guard let key = authenticate(hello.deviceID),
+              let exporter = await connection.exporterSecret(),
+              ChannelBinding.verify(hello.proof, key: key, exporter: exporter, deviceID: hello.deviceID) else {
+            try? await connection.send(.protocolError(.init(
+                code: .notPaired, message: "Not paired with this device."
+            )))
+            throw SessionError.notAuthenticated
+        }
+
         guard SyncProtocol.version.isCompatible(with: hello.version) else {
             try? await connection.send(.protocolError(.init(
                 code: .incompatibleVersion, message: "Version \(SyncProtocol.version) required."
@@ -191,12 +280,22 @@ actor SyncSession {
             throw SessionError.incompatibleVersion(hello.version)
         }
         try await connection.send(.helloAck(.init(
-            version: SyncProtocol.version, deviceID: local.deviceID,
-            displayName: local.displayName, deviceKind: local.kind, isPaired: true
+            version: SyncProtocol.version, deviceID: identity.deviceID,
+            displayName: identity.displayName, deviceKind: identity.kind, isPaired: true
         )))
 
         guard case .syncRequest(let request) = try await connection.receiveMessage() else {
             throw SessionError.unexpectedMessage("expected syncRequest")
+        }
+
+        let local: LocalContext
+        do {
+            local = try await prepare()
+        } catch {
+            try? await connection.send(.protocolError(.init(
+                code: .internalFailure, message: "\(error)"
+            )))
+            throw error
         }
         // The direction the initiator named is from *its* point of view.
         let ourDirection = request.direction.inverted
@@ -212,7 +311,10 @@ actor SyncSession {
             localIsInitiator: false
         )
 
-        guard case .planDecision(let decision) = try await connection.receiveMessage(timeout: .seconds(600)) else {
+        // Someone is ticking through a checklist on the other device.
+        guard case .planDecision(let decision) = try await connection.receiveMessage(
+            timeout: SyncProtocol.planReviewTimeout
+        ) else {
             throw SessionError.unexpectedMessage("expected planDecision")
         }
         guard decision.approved else { throw SessionError.declined }
@@ -227,15 +329,20 @@ actor SyncSession {
             throw SessionError.planChanged
         }
 
+        // Narrowed only after the hash check, and only ever narrowed: IDs the
+        // plan does not contain are ignored, so a selection cannot smuggle in
+        // work the receiver did not compute for itself.
+        let selected = plan.restricted(to: decision.selection ?? .everything)
+
         if ourDirection == .pull {
-            try Self.checkCapacity(plan: plan, filter: local.filter, libraryRoot: local.libraryRoot)
+            try Self.checkCapacity(plan: selected, filter: local.filter, libraryRoot: local.libraryRoot)
         }
 
         switch ourDirection {
         case .push:
-            return try await sendPayload(plan: plan, connection: connection, local: local, progress: progress)
+            return try await sendPayload(plan: selected, connection: connection, local: local, progress: progress)
         case .pull:
-            return try await receivePayload(plan: plan, connection: connection, local: local, progress: progress)
+            return try await receivePayload(plan: selected, connection: connection, local: local, progress: progress)
         }
     }
 
@@ -320,6 +427,7 @@ actor SyncSession {
         // anything else — a file the user excluded, or one never proposed — is
         // sending something the user never approved.
         let approved = Set(plan.allIncomingTracks.map(\.trackID))
+        let approvedPlaylists = Set(plan.newPlaylists.map(\.id) + plan.playlistConflicts.map(\.incoming.id))
         landed = Landed()
 
         loop: while true {
@@ -364,7 +472,11 @@ actor SyncSession {
                 progress(state)
 
             case .playlists(let payload):
-                let allowed = payload.playlists.filter { filter.allows(playlistID: $0.id) }
+                // Held to the plan like tracks are: a playlist the user
+                // unticked must not arrive just because the filter allows it.
+                let allowed = payload.playlists.filter {
+                    approvedPlaylists.contains($0.id) && filter.allows(playlistID: $0.id)
+                }
                 landed.playlists = allowed
                 summary.playlistsTransferred = allowed.count
 

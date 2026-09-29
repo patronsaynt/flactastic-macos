@@ -10,6 +10,7 @@ struct FlactasticApp: App {
     @State private var listening: ListeningStore
     @State private var settings: Settings
     @State private var playlistStore: PlaylistStore
+    @State private var syncModel: SyncModel
     @State private var artistStore: ArtistStore
     @State private var artistRemoteCache: ArtistRemoteCache
     @State private var artistImageFetcher: ArtistImageFetcher
@@ -68,6 +69,7 @@ struct FlactasticApp: App {
         // local playlist. Shares the playlistStore/library/Lucida instances.
         let plStore = PlaylistStore()
         _playlistStore = State(initialValue: plStore)
+        _syncModel = State(initialValue: SyncModel(library: lib, playlistStore: plStore))
         _playlistRebuildCoordinator = State(initialValue: PlaylistRebuildCoordinator(
             downloads: downloads,
             playlistStore: plStore,
@@ -112,6 +114,7 @@ struct FlactasticApp: App {
                             .environment(settings)
                             .environment(audioOutput)
                             .environment(playlistStore)
+                            .environment(syncModel)
                             .environment(artistStore)
                             .environment(artistRemoteCache)
                             .environment(artistImageFetcher)
@@ -215,12 +218,14 @@ struct FlactasticApp: App {
         }
 
         // Library sync over the local network — opened from File → Sync…
-        // The model is created by the view and torn down when the window
-        // closes, so nothing advertises on the network unless this is open.
+        // The shared model is started when this window (or Settings ▸ Devices)
+        // appears and stopped when the last of them goes away, so nothing
+        // advertises on the network unless one is open.
         Window("Sync", id: "sync") {
             SyncView()
                 .environment(library)
                 .environment(playlistStore)
+                .environment(syncModel)
                 .preferredColorScheme(settings.useLightMode ? .light : .dark)
         }
         .windowResizability(.contentSize)

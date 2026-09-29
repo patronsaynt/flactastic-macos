@@ -26,8 +26,8 @@ struct PlaylistDetailView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    FLBackLink(title: "Back to Playlists") {
-                        if !router.playlistsPath.isEmpty { router.playlistsPath.removeLast() }
+                    FLBackLink(title: router.playlistsBackTitle) {
+                        router.goBackInPlaylists()
                     }
                     .padding(.top, 24)
 

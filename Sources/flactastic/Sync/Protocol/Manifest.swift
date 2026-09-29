@@ -36,6 +36,11 @@ struct TrackManifestEntry: Codable, Sendable, Hashable, Identifiable {
     let title: String
     let artist: String?
     let album: String?
+    /// The album-level artist, when tagged. What the confirmation checklist
+    /// groups by: an EP whose tracks credit featured artists ("A feat. B")
+    /// still belongs to one album under one artist. Optional on the wire, so
+    /// a manifest without it decodes and falls back to `artist`.
+    var albumArtist: String? = nil
 
     var id: UUID { trackID }
 }
@@ -154,4 +159,46 @@ struct SyncPlan: Codable, Sendable, Hashable {
         parts += playlistConflicts.map { "q:\($0.incoming.id.uuidString):\($0.incoming.contentHash)" }.sorted()
         return ContentHasher.hexDigest(of: Data(parts.joined(separator: "\n").utf8))
     }
+
+    /// The plan narrowed to what the user ticked.
+    ///
+    /// IDs in `selection` that are not in the plan are ignored, so a selection
+    /// can only ever remove work. The receiver relies on that: it runs the
+    /// restricted plan, and refuses any file outside it.
+    func restricted(to selection: SyncSelection) -> SyncPlan {
+        guard !selection.isEverything else { return self }
+        let keepTrack: (UUID) -> Bool = { selection.trackIDs?.contains($0) ?? true }
+        let keepPlaylist: (UUID) -> Bool = { selection.playlistIDs?.contains($0) ?? true }
+        return SyncPlan(
+            direction: direction,
+            newTracks: newTracks.filter { keepTrack($0.trackID) },
+            trackConflicts: trackConflicts.filter { keepTrack($0.incoming.trackID) },
+            newPlaylists: newPlaylists.filter { keepPlaylist($0.id) },
+            playlistConflicts: playlistConflicts.filter { keepPlaylist($0.incoming.id) }
+        )
+    }
+}
+
+// MARK: - Selection
+
+/// Which parts of a plan to actually run, chosen on the confirmation sheet.
+///
+/// Expressed as explicit IDs of plan items rather than as artists or albums:
+/// grouping is a display concern, and the two devices may not even agree on
+/// how to spell an artist. `nil` for either set means "all of them", which is
+/// also what `.everything` is — the default when the user changes nothing.
+struct SyncSelection: Codable, Sendable, Hashable {
+    /// Tracks to transfer, by `trackID`. `nil` means every track in the plan.
+    var trackIDs: Set<UUID>?
+    /// Playlists to transfer, by ID. `nil` means every playlist in the plan.
+    var playlistIDs: Set<UUID>?
+
+    init(trackIDs: Set<UUID>? = nil, playlistIDs: Set<UUID>? = nil) {
+        self.trackIDs = trackIDs
+        self.playlistIDs = playlistIDs
+    }
+
+    static let everything = SyncSelection()
+
+    var isEverything: Bool { trackIDs == nil && playlistIDs == nil }
 }

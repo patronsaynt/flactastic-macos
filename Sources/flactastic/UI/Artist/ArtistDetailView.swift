@@ -15,7 +15,7 @@ struct ArtistDetailView: View {
     @State private var isEditing = false
 
     private func popDetail() {
-        if !router.collectionPath.isEmpty { router.collectionPath.removeLast() }
+        router.goBackInCollection()
     }
 
     private var summary: ArtistSummary? {

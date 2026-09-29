@@ -119,18 +119,31 @@ actor SyncConnection {
             // background, still retrying against a peer nobody is waiting for.
             connection.stateUpdateHandler = nil
             connection.cancel()
-            let failure = (error as? ConnectionError) ?? .timedOut
+            let failure = (error as? ConnectionError) ?? (error is CancellationError ? .cancelled : .timedOut)
             fail(with: failure)
             throw failure
         }
         receiveLoop()
     }
 
+    /// Cancellation-aware on purpose. `start()` races this against a sleep in a
+    /// task group, and a task group waits for *every* child before returning —
+    /// so if this ignored cancellation, the timeout would win the race and then
+    /// wait forever for the loser, which is exactly the spinner it exists to
+    /// prevent.
     private func awaitReady() async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-            readyWaiters.append(continuation)
-            // If the state already settled before this ran, resolve immediately.
-            resolveReadyWaitersIfSettled()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                readyWaiters.append(continuation)
+                // If the state already settled before this ran, resolve immediately.
+                resolveReadyWaitersIfSettled()
+            }
+        } onCancel: {
+            Task { await self.releaseWaitersForCancellation() }
         }
     }
 
@@ -201,12 +214,58 @@ actor SyncConnection {
         }
     }
 
+    /// Cancellation-aware for the same reason as `awaitReady()`: it is the
+    /// losing child when `receiveFrame`'s timeout fires.
     private func waitForFrame() async throws -> FrameCodec.Frame {
         if !pending.isEmpty { return pending.removeFirst() }
         if let failure { throw failure }
-        return try await withCheckedThrowingContinuation { continuation in
-            waiter = continuation
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                // Checked here, on the actor, so a cancellation that landed
+                // before the continuation existed is not lost: the handler's
+                // hop to the actor cannot run until this closure returns.
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                waiter = continuation
+            }
+        } onCancel: {
+            Task { await self.releaseWaitersForCancellation() }
         }
+    }
+
+    /// Resumes anything parked on this connection with `CancellationError`,
+    /// without failing the connection itself — a receive that timed out
+    /// leaves the channel usable for whoever reads next.
+    private func releaseWaitersForCancellation() {
+        if let waiter {
+            self.waiter = nil
+            waiter.resume(throwing: CancellationError())
+        }
+        let ready = readyWaiters
+        readyWaiters = []
+        for continuation in ready { continuation.resume(throwing: CancellationError()) }
+    }
+
+    // MARK: - Channel binding
+
+    /// The TLS exporter secret for this session (see `ChannelBinding`), or
+    /// `nil` before the handshake has completed.
+    func exporterSecret() -> Data? {
+        guard let metadata = connection.metadata(definition: NWProtocolTLS.definition) as? NWProtocolTLS.Metadata else {
+            return nil
+        }
+        let label = ChannelBinding.exporterLabel
+        let secret = label.withCString { pointer in
+            sec_protocol_metadata_create_secret(
+                metadata.securityProtocolMetadata,
+                label.utf8.count,
+                pointer,
+                ChannelBinding.exporterLength
+            )
+        }
+        return secret.map { Data($0 as DispatchData) }
     }
 
     // MARK: - Internals

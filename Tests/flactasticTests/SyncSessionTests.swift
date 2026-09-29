@@ -59,7 +59,7 @@ private func runSync(
     direction: SyncDirection,
     initiatorFilter: SyncFilter = .unrestricted,
     responderFilter: SyncFilter = .unrestricted,
-    approve: @escaping @Sendable (SyncPlan) async -> Bool = { _ in true }
+    approve: @escaping @Sendable (SyncPlan) async -> SyncSelection? = { _ in .everything }
 ) async throws -> (summary: SyncSession.Summary, plan: AsyncBox<SyncPlan>, responderLanded: AsyncBox<SyncSession.Landed>) {
     let initiatorID = UUID(), responderID = UUID()
     let key = SymmetricKey(size: .bits256)
@@ -75,7 +75,12 @@ private func runSync(
             let server = SyncConnection(accepted: raw)
             try? await server.start()
             let session = SyncSession()
-            _ = try? await session.runResponder(connection: server, local: responderContext)
+            _ = try? await session.runResponder(
+                connection: server,
+                identity: .init(deviceID: responderID, displayName: "Test", kind: .mac),
+                authenticate: { $0 == initiatorID ? key : nil },
+                prepare: { responderContext }
+            )
             await responderLanded.set(await session.landed)
         }
     }
@@ -101,6 +106,7 @@ private func runSync(
         connection: client,
         direction: direction,
         local: try await initiator.context(deviceID: initiatorID, filter: initiatorFilter),
+        pairedKey: key,
         approve: { plan in
             await seenPlan.set(plan)
             return await approve(plan)
@@ -194,7 +200,7 @@ func decliningTransfersNothing() async throws {
 
     await #expect(throws: SyncSession.SessionError.self) {
         _ = try await runSync(initiator: sender, responder: receiver, direction: .push,
-                              approve: { _ in false })
+                              approve: { _ in nil })
     }
     // Not one byte, and no staging left behind.
     #expect(!FileManager.default.fileExists(atPath: receiver.root.appendingPathComponent("a.flac").path))
@@ -322,6 +328,70 @@ func playlistsRespectFilter() async throws {
     )
     let landed = try #require(await result.responderLanded.waitForValue())
     #expect(landed.playlists.isEmpty)
+}
+
+// MARK: - Selection
+
+@Test("Only the tracks the user ticked are pushed", .timeLimit(.minutes(2)))
+func pushHonoursSelection() async throws {
+    let sender = try makeLibrary("sel-src", files: [
+        ("A/One/01.flac", 30_000), ("A/One/02.flac", 20_000), ("B/Two/01.flac", 10_000),
+    ])
+    let receiver = try makeLibrary("sel-dst", files: [])
+    defer {
+        try? FileManager.default.removeItem(at: sender.root)
+        try? FileManager.default.removeItem(at: receiver.root)
+    }
+    let keep = sender.tracks[0].id
+
+    let result = try await runSync(
+        initiator: sender, responder: receiver, direction: .push,
+        approve: { _ in SyncSelection(trackIDs: [keep]) }
+    )
+    #expect(result.summary.tracksTransferred == 1)
+    #expect(result.summary.bytesTransferred == 30_000)
+
+    let landed = try #require(await result.responderLanded.waitForValue())
+    #expect(landed.files.map(\.trackID) == [keep])
+    #expect(!FileManager.default.fileExists(atPath: receiver.root.appendingPathComponent("B/Two/01.flac").path))
+}
+
+@Test("A pull only brings the ticked tracks and playlists", .timeLimit(.minutes(2)))
+func pullHonoursSelection() async throws {
+    let localSide = try makeLibrary("selp-dst", files: [])
+    var remote = try makeLibrary("selp-src", files: [("x.flac", 15_000), ("y.flac", 25_000)])
+    defer {
+        try? FileManager.default.removeItem(at: localSide.root)
+        try? FileManager.default.removeItem(at: remote.root)
+    }
+    remote.playlists = [Playlist(name: "Wanted", entries: []), Playlist(name: "Unwanted", entries: [])]
+    let wantedTrack = remote.tracks[1].id
+    let wantedPlaylist = remote.playlists[0].id
+
+    let result = try await runSync(
+        initiator: localSide, responder: remote, direction: .pull,
+        approve: { _ in SyncSelection(trackIDs: [wantedTrack], playlistIDs: [wantedPlaylist]) }
+    )
+    #expect(result.summary.tracksTransferred == 1)
+    #expect(result.summary.playlistsTransferred == 1)
+    #expect(FileManager.default.fileExists(atPath: localSide.root.appendingPathComponent("y.flac").path))
+    #expect(!FileManager.default.fileExists(atPath: localSide.root.appendingPathComponent("x.flac").path))
+}
+
+@Test("A selection can only narrow the plan, never widen it")
+func selectionCannotWiden() {
+    let entry = { (path: String) in
+        TrackManifestEntry(trackID: UUID(), relativePath: path, fileSize: 1, contentHash: path,
+                           format: .flac, tagFingerprint: "", title: path, artist: nil, album: nil)
+    }
+    let a = entry("a"), b = entry("b")
+    let plan = SyncPlan(direction: .push, newTracks: [a, b], trackConflicts: [],
+                        newPlaylists: [], playlistConflicts: [])
+
+    let narrowed = plan.restricted(to: SyncSelection(trackIDs: [a.trackID, UUID()]))
+    #expect(narrowed.newTracks == [a])
+    #expect(plan.restricted(to: .everything) == plan)
+    #expect(plan.restricted(to: SyncSelection(trackIDs: [])).newTracks.isEmpty)
 }
 
 // AsyncBox lives in SyncTestSupport.swift.

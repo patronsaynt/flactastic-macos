@@ -19,42 +19,44 @@ struct PairingCodeEntrySheet: View {
     private var isValid: Bool { PairingCrypto.isWellFormedCode(normalized) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
-            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                Text("Pair with \(peer.displayName)")
-                    .font(Theme.Font.title)
-                    .foregroundStyle(Theme.textPrimary)
-                Text("On \(peer.displayName), choose File → Sync… and select Show Pairing Code, "
-                   + "then type the eight digits here.")
+        FLSheet(title: "Pair with \(peer.displayName)", width: 440, height: 340) {
+            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                Text("On \(peer.displayName), choose File → Sync… (or Settings ▸ Devices) and select "
+                   + "Show Code, then type the eight digits here.")
                     .font(Theme.Font.caption)
                     .foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                TextField("00000000", text: $code)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 26, weight: .medium, design: .monospaced))
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.horizontal, Theme.Spacing.lg)
+                    .padding(.vertical, Theme.Spacing.md)
+                    .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: 10))
+                    .focused($isFocused)
+                    .onSubmit { if isValid { onSubmit(normalized) } }
+
+                if !peer.isPairingOpen {
+                    Text("\(peer.displayName) isn't showing a code right now.")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textTertiary)
+                }
             }
-
-            TextField("00000000", text: $code)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 26, weight: .medium, design: .monospaced))
-                .focused($isFocused)
-                .onSubmit { if isValid { onSubmit(normalized) } }
-
-            if !peer.isPairingOpen {
-                Text("\(peer.displayName) isn't showing a code right now.")
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(Theme.textTertiary)
-            }
-
+            .padding(Theme.Spacing.xl)
+        } footer: {
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel, action: onCancel)
+                Button("Cancel", action: onCancel)
+                    .buttonStyle(PillButtonStyle())
                     .keyboardShortcut(.cancelAction)
                 Button("Pair") { onSubmit(normalized) }
+                    .buttonStyle(PillButtonStyle(isPrimary: true))
                     .keyboardShortcut(.defaultAction)
                     .disabled(!isValid)
+                    .opacity(isValid ? 1 : 0.4)
             }
         }
-        .padding(Theme.Spacing.xl)
-        .frame(width: 420)
-        .background(Theme.background)
         .onAppear { isFocused = true }
     }
 }

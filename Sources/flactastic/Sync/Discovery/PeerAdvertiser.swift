@@ -48,9 +48,17 @@ final class PeerAdvertiser {
     /// is not in this map cannot complete a handshake at all.
     var pairedKeys: [UUID: SymmetricKey] = [:] {
         didSet {
-            guard isAdvertising, oldValue.keys != pairedKeys.keys else { return }
+            // Compare the key material, not just the device IDs. Re-pairing a
+            // device keeps its ID and replaces its key; comparing IDs alone
+            // left the listener holding the old key, so the re-paired device
+            // could be dialled but could never dial in.
+            guard isAdvertising, Self.material(oldValue) != Self.material(pairedKeys) else { return }
             restartListener()
         }
+    }
+
+    private static func material(_ keys: [UUID: SymmetricKey]) -> [UUID: Data] {
+        keys.mapValues { $0.withUnsafeBytes { Data($0) } }
     }
 
     /// Called for each accepted connection. The advertiser itself performs no
@@ -114,11 +122,12 @@ final class PeerAdvertiser {
         isAdvertising = false
     }
 
-    /// Called while the Sync screen is visible to keep the idle timer from
-    /// firing under an actively watching user.
+    /// Called on every user action on the Sync screen (sync, pair, show a
+    /// code). Resets the idle timer — and, if it already fired while the
+    /// screen sat open, brings the listener back, so walking away and coming
+    /// back to the same window never leaves this device silently unreachable.
     func keepAlive() {
-        guard isAdvertising else { return }
-        restartIdleTimer()
+        start()
     }
 
     // MARK: - Internals

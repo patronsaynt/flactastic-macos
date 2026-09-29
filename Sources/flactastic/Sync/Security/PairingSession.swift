@@ -36,6 +36,16 @@ enum PairingError: Error, Equatable, CustomStringConvertible {
     case commitmentMismatch
     case confirmationFailed
     case peerReportedFailure(String?)
+    /// The other device has no code on screen — it refused the pairing
+    /// channel, or answered that pairing is closed.
+    case notAcceptingPairing
+    /// The handshake succeeded but one side could not save the key. Neither
+    /// side keeps it (see `PairingExchange`).
+    case storageFailed
+
+    /// `pairResult.failureReason` that marks a save failure on the wire, so
+    /// the other side can say so instead of blaming the code.
+    static let storageFailedReason = "storage-failed"
 
     var description: String {
         switch self {
@@ -46,6 +56,8 @@ enum PairingError: Error, Equatable, CustomStringConvertible {
         case .commitmentMismatch:     return "The other device changed its key mid-handshake."
         case .confirmationFailed:     return "The codes didn't match."
         case .peerReportedFailure:    return "The other device rejected the pairing."
+        case .notAcceptingPairing:    return "The other device isn't showing a pairing code."
+        case .storageFailed:          return "A device couldn't save the pairing key."
         }
     }
 
@@ -60,6 +72,12 @@ enum PairingError: Error, Equatable, CustomStringConvertible {
             return "Pairing didn't complete. Try again."
         case .invalidPublicKey, .commitmentMismatch, .confirmationFailed, .peerReportedFailure:
             return "Pairing failed. Check the code and try again."
+        case .notAcceptingPairing:
+            // Not an oracle: whether a device is showing a code is already
+            // advertised to the whole network in its TXT record.
+            return "That device isn't showing a pairing code. Show one on it, then try again."
+        case .storageFailed:
+            return "One of the devices couldn't save the pairing securely, so neither kept it. Try again."
         }
     }
 }
@@ -78,6 +96,7 @@ struct PairingIdentity: Sendable, Hashable {
 ///
 /// Message order (see `PairingCrypto` for why):
 /// ```
+/// guest → hello(isPaired: false)                    [opener; see PairingExchange]
 /// host  → pairCommit(SHA256(hostPub ‖ nonce))
 /// guest → pairGuestKey(guestPub)
 /// host  → pairReveal(hostPub, nonce)

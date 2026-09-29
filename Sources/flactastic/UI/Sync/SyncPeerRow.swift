@@ -1,11 +1,12 @@
 import SwiftUI
 
-/// One device in the Sync window's list.
+/// One device in the Sync list. Rendered as a row inside a `SettingsGroup`.
 struct SyncPeerRow: View {
     let name: String
     let kind: SyncDeviceKind
     let subtitle: String
     let isPaired: Bool
+    let isOnline: Bool
     let isBusy: Bool
     let isEnabled: Bool
     let primaryTitle: String
@@ -18,15 +19,22 @@ struct SyncPeerRow: View {
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
             Image(systemName: icon)
-                .font(.system(size: 20))
-                .frame(width: 28)
-                .foregroundStyle(Theme.textSecondary)
+                .font(.system(size: 18))
+                .frame(width: 26)
+                .foregroundStyle(Theme.textTertiary)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(name)
-                    .font(Theme.Font.bodyMedium)
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(name)
+                        .font(Theme.Font.body)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                    if isPaired {
+                        Circle()
+                            .fill(isOnline ? Theme.qualityCD : Theme.textTertiary.opacity(0.5))
+                            .frame(width: 6, height: 6)
+                    }
+                }
                 Text(subtitle)
                     .font(Theme.Font.caption)
                     .foregroundStyle(Theme.textTertiary)
@@ -37,9 +45,11 @@ struct SyncPeerRow: View {
 
             if isBusy {
                 ProgressView().controlSize(.small)
-            } else {
+            } else if isOnline {
                 Button(primaryTitle, action: onPrimary)
+                    .buttonStyle(PillButtonStyle(isPrimary: isPaired))
                     .disabled(!isEnabled)
+                    .opacity(isEnabled ? 1 : 0.4)
             }
 
             if let onForget {
@@ -47,6 +57,7 @@ struct SyncPeerRow: View {
                     Button("Forget This Device", role: .destructive) { isConfirmingForget = true }
                 } label: {
                     Image(systemName: "ellipsis")
+                        .foregroundStyle(Theme.textSecondary)
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -66,9 +77,8 @@ struct SyncPeerRow: View {
                 }
             }
         }
-        .padding(Theme.Spacing.md)
-        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
-        .opacity(isEnabled || isBusy ? 1 : 0.6)
+        .padding(.horizontal, Theme.Spacing.lg)
+        .padding(.vertical, Theme.Spacing.md)
     }
 
     private var icon: String {

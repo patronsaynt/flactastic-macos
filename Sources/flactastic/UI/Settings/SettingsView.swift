@@ -52,6 +52,8 @@ struct SettingsView: View {
                         AudioSettingsPane()
                     case .connections:
                         ConnectionsSettingsPane()
+                    case .devices:
+                        DevicesSettingsPane()
                     case .appearance:
                         AppearanceSettingsPane()
                     case .visualizer:
@@ -98,6 +100,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     case general     = "General"
     case audio       = "Audio"
     case connections = "Connections"
+    case devices     = "Devices"
     case appearance  = "Appearance"
     case visualizer  = "Visualizer"
     case debug       = "Debug"
@@ -128,7 +131,7 @@ private struct SettingsTabBar: View {
             Text(tab.rawValue)
                 .font(isSelected ? Theme.Font.bodyMedium : Theme.Font.body)
                 .foregroundStyle(isSelected ? Theme.textPrimary : Theme.textSecondary)
-                .padding(.horizontal, Theme.Spacing.lg + 2)
+                .padding(.horizontal, Theme.Spacing.md + 2)
                 .padding(.vertical, Theme.Spacing.sm)
                 .background {
                     if isSelected {
@@ -143,39 +146,6 @@ private struct SettingsTabBar: View {
 }
 
 // MARK: - Shared primitives
-
-/// A titled group of settings rows rendered on a raised surface card.
-private struct SettingsGroup<Content: View>: View {
-    var title: String? = nil
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            if let title {
-                Text(title.uppercased())
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.textTertiary)
-                    .kerning(0.6)
-                    .padding(.horizontal, 2)
-            }
-            VStack(spacing: 0) {
-                content()
-            }
-            .background(Theme.surfaceElevated)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-        }
-    }
-}
-
-/// Hair-line divider between rows inside a SettingsGroup.
-private struct GroupDivider: View {
-    var body: some View {
-        Rectangle()
-            .fill(Theme.divider)
-            .frame(height: 0.5)
-            .padding(.leading, Theme.Spacing.lg)
-    }
-}
 
 /// Standard label + toggle row for use inside SettingsGroup.
 private struct ToggleRow: View {

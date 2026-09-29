@@ -91,7 +91,8 @@ actor ManifestBuilder {
                 tagFingerprint: TagFingerprint.compute(for: track),
                 title: track.title,
                 artist: track.artist,
-                album: track.album
+                album: track.album,
+                albumArtist: track.albumArtist
             ))
 
             progress(Double(index + 1) / Double(max(1, candidates.count)))

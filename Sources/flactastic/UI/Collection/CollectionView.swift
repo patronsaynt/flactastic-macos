@@ -29,6 +29,7 @@ struct CollectionView: View {
     @AppStorage("flactastic.allTracksAscending") private var tracksAscending: Bool = false
     @State private var contentMode: CollectionContentMode = .albums
     @State private var editingAlbum: Album? = nil
+    @State private var removalRequest: LibraryRemovalRequest? = nil
     @State private var refreshRotation: Double = 0
     /// Gates the *initial* bulk reveal of the album grid/list for this
     /// mount: starts `false` so the first synchronous render of however
@@ -123,6 +124,7 @@ struct CollectionView: View {
         .onChange(of: library.tracksRevision) { _, _ in recomputeVisible() }
         .onChange(of: searchText) { _, _ in recomputeVisible() }
         .onChange(of: sortOption) { _, _ in recomputeVisible() }
+        .removeFromLibraryConfirmation($removalRequest, library: library)
         .sheet(item: $editingAlbum) { album in
             AlbumMetadataEditorView(album: album)
                 .environment(library)
@@ -348,6 +350,9 @@ struct CollectionView: View {
         var items = playbackContextMenuItems(for: album.tracks, player: player)
         items.append(.divider)
         items.append(.button("Edit...", systemImage: "pencil") { editingAlbum = album })
+        items.append(.button("Remove from Library", systemImage: "trash") {
+            removalRequest = LibraryRemovalRequest(title: album.name, tracks: album.tracks)
+        })
         if !album.isCompilation {
             let artistItems = artistContextMenuItems(
                 credit: album.albumArtist ?? album.artist,

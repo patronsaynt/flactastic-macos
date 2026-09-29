@@ -21,6 +21,7 @@ struct AllTracksView: View {
     @Binding var ascending: Bool
 
     @State private var editingTrack: Track? = nil
+    @State private var removalRequest: LibraryRemovalRequest? = nil
     @State private var selection: Set<UUID> = []
     /// Anchor row for shift-click range selection.
     @State private var anchorID: UUID? = nil
@@ -80,6 +81,7 @@ struct AllTracksView: View {
         .onChange(of: searchText) { _, _ in recomputeVisible() }
         .onChange(of: sortOption) { _, _ in recomputeVisible() }
         .onChange(of: ascending) { _, _ in recomputeVisible() }
+        .removeFromLibraryConfirmation($removalRequest, library: library)
         .sheet(item: $editingTrack) { track in
             TrackMetadataEditorView(track: track)
                 .environment(library)
@@ -172,6 +174,7 @@ struct AllTracksView: View {
                             FLContextMenuItem.divider
                         }
                         FLContextMenuItem.button("Edit...", systemImage: "pencil") { editingTrack = track }
+                        FLContextMenuItem.button("Remove from Library", systemImage: "trash") { removalRequest = LibraryRemovalRequest(title: tracksForMenu.count == 1 ? track.title : "\(tracksForMenu.count) Tracks", tracks: tracksForMenu) }
                         FLContextMenuItem.divider
                         addToPlaylistMenuItem(tracks: tracksForMenu)
                         let artistItems = artistContextMenuItems(
