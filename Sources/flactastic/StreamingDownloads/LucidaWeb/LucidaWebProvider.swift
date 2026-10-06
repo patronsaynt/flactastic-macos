@@ -103,8 +103,7 @@ final class LucidaWebProvider: NSObject, StreamerProvider {
         // fall back to defaults (Original / metadata / no compat).
         let opts = optionsByTrackID[track.id] ?? .default
 
-        let (handoff, server) = try await initiateJob(sourceURL: trackURL, options: opts)
-        try await waitForCompletion(handoff: handoff, server: server)
+        let (handoff, server) = try await runJob(track: track, sourceURL: trackURL, options: opts)
 
         // Build the same redirect=true URL the website hands to window.open;
         // WKDownload follows the 302 internally and writes to disk.
@@ -144,35 +143,80 @@ final class LucidaWebProvider: NSObject, StreamerProvider {
     // MARK: - Internals
 
     private let controller: LucidaWebController
-    private let amazonMatcher: AmazonMatchService
+    private let sourceMatcher: SourceMatchService
 
-    init(controller: LucidaWebController, amazonMatcher: AmazonMatchService = AmazonMatchService()) {
+    init(controller: LucidaWebController, sourceMatcher: SourceMatchService = SourceMatchService()) {
         self.controller = controller
-        self.amazonMatcher = amazonMatcher
+        self.sourceMatcher = sourceMatcher
         super.init()
     }
 
-    /// Start a Lucida job for `sourceURL`. Spotify links are Lucida's least
-    /// reliable source — its own Spotify downloader routinely 404s server-side
-    /// even when the site is otherwise healthy (Amazon Music, Tidal, etc. work
-    /// fine). When the primary attempt fails on a `spotify.com` URL, resolve
-    /// the same track's Amazon Music equivalent via Odesli and retry once
-    /// before giving up — mirrors the Amazon-first fallback the playlist
-    /// rebuild pipeline already uses.
-    private func initiateJob(
-        sourceURL: URL, options: LucidaOptions
+    /// Run a Lucida job for `track` through to server-side completion.
+    /// Spotify links are Lucida's least reliable source — its own Spotify
+    /// downloader routinely fails server-side — so for a Spotify track we walk
+    /// each `SourceMatchService.Service` in order, and only hand Lucida the
+    /// Spotify link once every alternate is unmatched or has failed. If that
+    /// fails too, the error says every platform was tried and lists why each
+    /// one failed.
+    private func runJob(
+        track: RemoteTrack, sourceURL: URL, options: LucidaOptions
+    ) async throws -> (handoff: String, server: String) {
+        guard Self.isSpotify(sourceURL) else {
+            return try await attempt(sourceURL, track: track, options: options)
+        }
+        var reasons: [String] = []
+        for service in SourceMatchService.Service.allCases {
+            guard let url = await sourceMatcher.url(for: track, on: service) else {
+                controller.addLog(.info, "No \(service.rawValue) match for \(track.title)")
+                // Worded to avoid PlaylistRebuildCoordinator.isPermanentFailure's
+                // "no match" keyword — one missing match shouldn't stop retries
+                // when the other platforms failed only transiently.
+                reasons.append("\(service.rawValue): track not in catalog search")
+                continue
+            }
+            do {
+                return try await attempt(url, track: track, options: options)
+            } catch where !(error is CancellationError) {
+                reasons.append("\(service.rawValue): \(Self.reason(error))")
+            }
+        }
+        do {
+            return try await attempt(sourceURL, track: track, options: options)
+        } catch where !(error is CancellationError) {
+            reasons.append("Spotify: \(Self.reason(error))")
+        }
+        let platforms = (SourceMatchService.Service.allCases.map(\.rawValue) + ["Spotify"])
+            .joined(separator: ", ")
+        throw StreamerError.unavailable(
+            "Tried every platform (\(platforms)) and none could download this track. "
+            + reasons.joined(separator: " · "))
+    }
+
+    /// One source, initiate → poll. Failures are logged to the debug pane
+    /// with the source URL so they can be reproduced on lucida.to directly.
+    private func attempt(
+        _ url: URL, track: RemoteTrack, options: LucidaOptions
     ) async throws -> (handoff: String, server: String) {
         do {
-            return try await requestJob(url: sourceURL, options: options)
-        } catch let error as StreamerError {
-            guard case .unavailable = error,
-                  let host = sourceURL.host?.lowercased(),
-                  host == "open.spotify.com" || host == "spotify.com",
-                  let amazonURL = await amazonMatcher.amazonURL(forTrack: sourceURL) else {
-                throw error
-            }
-            return try await requestJob(url: amazonURL, options: options)
+            let (handoff, server) = try await requestJob(url: url, options: options)
+            try await waitForCompletion(handoff: handoff, server: server)
+            return (handoff, server)
+        } catch where !(error is CancellationError) {
+            controller.addLog(.error, "\(track.title) via \(url.absoluteString): \(Self.reason(error))")
+            throw error
         }
+    }
+
+    /// Bridge/transport errors (e.g. "pollRequest HTTP 429") arrive as plain
+    /// `Error`s, so they're described too rather than only `StreamerError`s.
+    private static func reason(_ error: Error) -> String {
+        if case .unavailable(let message)? = error as? StreamerError { return message }
+        return error.localizedDescription
+    }
+
+    private static func isSpotify(_ url: URL) -> Bool {
+        let host = url.host?.lowercased()
+        return host == "open.spotify.com" || host == "spotify.com"
     }
 
     private func requestJob(
@@ -213,11 +257,11 @@ final class LucidaWebProvider: NSObject, StreamerProvider {
             )
             if res.status == "completed" { return }
             if res.status == "error" {
-                throw StreamerError.unavailable(res.message ?? "lucida job failed")
+                throw StreamerError.unavailable(res.failureReason)
             }
             try await Task.sleep(nanoseconds: 750_000_000)
         }
-        throw StreamerError.unavailable("lucida job timed out")
+        throw StreamerError.unavailable("Lucida job timed out after 3 minutes")
     }
 
     private func jsString(_ s: String) -> String {
@@ -420,7 +464,7 @@ private struct LucidaMetadata: Decodable {
     /// Build a `RemotePlaylist` from a resolved playlist payload. Unlike an
     /// album, playlist tracks span many artists/albums, so each entry keeps its
     /// own service-native URL (the Spotify track URL) — that's what the rebuild
-    /// flow feeds to Odesli for Amazon matching, and what Lucida falls back to.
+    /// flow matches to another service, and what Lucida falls back to.
     /// Per-entry album metadata is absent, so each track synthesizes a single
     /// album from its own title (same approach as `buildTrack`) rather than
     /// being lumped into one fake "playlist album" folder on disk.
@@ -516,4 +560,17 @@ private struct LucidaPollResponse: Decodable {
     let success: Bool?
     let status: String?
     let message: String?
+    let error: String?
+
+    /// Lucida leaves `message` at the last progress text ("Downloading…")
+    /// when a job errors, so prefer `error` and never present a progress
+    /// string as the cause.
+    var failureReason: String {
+        if let error, !error.isEmpty { return error }
+        let last = message?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let isProgress = last.isEmpty || last.hasSuffix("…") || last.hasSuffix("...")
+        return isProgress
+            ? "Lucida's server failed the job\(last.isEmpty ? "" : " during “\(last)”") with no error detail"
+            : last
+    }
 }

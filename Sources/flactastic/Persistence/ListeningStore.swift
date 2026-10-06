@@ -350,31 +350,134 @@ final class ListeningStore {
         return streak
     }
 
-    /// Minutes listened for each of the last 7 days, oldest → newest (Mon-style
-    /// ordering is applied by the view). Index 6 is today.
-    func weeklyMinutes() -> [Double] {
+    /// Minutes listened in each hour of today, split by genre.
+    func hourlyGenreMinutes(now: Date = .now) -> GenreBreakdown {
         let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        var buckets = [Double](repeating: 0, count: 7)
-        for event in events {
-            let day = cal.startOfDay(for: event.date)
-            guard let diff = cal.dateComponents([.day], from: day, to: today).day,
-                  diff >= 0, diff < 7 else { continue }
-            buckets[6 - diff] += event.secondsListened / 60.0
+        let dayStart = cal.startOfDay(for: now)
+        let buckets = (0..<24).compactMap { hour -> DateInterval? in
+            guard let start = cal.date(byAdding: .hour, value: hour, to: dayStart),
+                  let end = cal.date(byAdding: .hour, value: hour + 1, to: dayStart) else { return nil }
+            return DateInterval(start: start, end: end)
         }
-        return buckets
+        return genreMinutes(in: buckets)
     }
 
-    /// Weekday short labels aligned to `weeklyMinutes()` (index 6 = today).
-    func weeklyDayLabels() -> [String] {
+    /// Minutes listened on each of the seven days ending with `lastDay`
+    /// (inclusive), oldest first, split by genre.
+    func dailyGenreMinutes(endingOn lastDay: Date) -> GenreBreakdown {
         let cal = Calendar.current
-        let today = cal.startOfDay(for: Date())
-        let fmt = DateFormatter()
-        fmt.dateFormat = "EEE"
-        return (0..<7).reversed().map { offset in
-            let day = cal.date(byAdding: .day, value: -offset, to: today) ?? today
-            return fmt.string(from: day)
+        let end = cal.startOfDay(for: lastDay)
+        let buckets = (0..<7).reversed().compactMap { back -> DateInterval? in
+            guard let start = cal.date(byAdding: .day, value: -back, to: end),
+                  let next = cal.date(byAdding: .day, value: 1, to: start) else { return nil }
+            return DateInterval(start: start, end: next)
         }
+        return genreMinutes(in: buckets)
+    }
+
+    /// Minutes listened in each of `buckets` (contiguous, ascending), split by
+    /// genre. The top three primary genres across the whole range keep their
+    /// own series; everything else (including untagged tracks) folds into
+    /// "Other". A listen spanning a bucket boundary is split across both.
+    func genreMinutes(in buckets: [DateInterval]) -> GenreBreakdown {
+        guard let rangeStart = buckets.first?.start, let rangeEnd = buckets.last?.end else {
+            return GenreBreakdown(series: [], buckets: [], starts: [])
+        }
+        let other = GenreBreakdown.otherName
+
+        // Minutes per (bucket, genre key).
+        var perBucket = [[String: Double]](repeating: [:], count: buckets.count)
+        var totals: [String: Double] = [:]
+        for event in events {
+            let start = max(event.date, rangeStart)
+            let end = min(event.date.addingTimeInterval(event.secondsListened), rangeEnd)
+            guard end > start else { continue }
+            let genre = event.genre.flatMap { $0.isEmpty ? nil : $0 } ?? other
+            for (idx, bucket) in buckets.enumerated() where bucket.end > start && bucket.start < end {
+                let minutes = min(end, bucket.end).timeIntervalSince(max(start, bucket.start)) / 60
+                perBucket[idx][genre, default: 0] += minutes
+                totals[genre, default: 0] += minutes
+            }
+        }
+
+        let named = totals
+            .filter { $0.key != other }
+            .sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }
+            .prefix(3)
+            .map(\.key)
+        let hasOther = totals.keys.contains { !named.contains($0) }
+        let names = named + (hasOther ? [other] : [])
+
+        let rows = perBucket.map { bucket in
+            var row = [Double](repeating: 0, count: names.count)
+            for (genre, minutes) in bucket {
+                let idx = names.firstIndex(of: genre) ?? (names.count - 1)
+                row[idx] += minutes
+            }
+            return row
+        }
+        let series = names.enumerated().map { idx, name in
+            GenreBreakdown.Series(name: name, minutes: rows.reduce(0) { $0 + $1[idx] })
+        }
+        return GenreBreakdown(series: series, buckets: rows, starts: buckets.map(\.start))
+    }
+
+    /// Date of the earliest recorded listen, if any.
+    var firstEventDate: Date? { events.map(\.date).min() }
+
+    /// The album to resurface in the home "On this day" panel. Tries, in order:
+    /// exactly one year ago today; the same date in an earlier year (nearest
+    /// first); then within ±3 days of today's date last year. Within a window the
+    /// album with the most plays wins (minutes break ties). Nil when nothing
+    /// qualifies, which hides the panel. `isAvailable` filters out albums that
+    /// are no longer in the library.
+    func onThisDay(now: Date = .now, isAvailable: (String) -> Bool) -> OnThisDayPick? {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: now)
+        guard let oldest = events.map(\.date).min() else { return nil }
+
+        func pick(days: [Date], headline: String) -> OnThisDayPick? {
+            let daySet = Set(days)
+            var byAlbum: [String: OnThisDayPick] = [:]
+            for event in events {
+                guard let albumID = event.albumID,
+                      daySet.contains(cal.startOfDay(for: event.date)) else { continue }
+                var entry = byAlbum[albumID] ?? OnThisDayPick(
+                    albumID: albumID,
+                    album: event.album ?? "Unknown Album",
+                    artist: event.artist ?? "",
+                    headline: headline,
+                    plays: 0,
+                    minutes: 0,
+                    date: event.date
+                )
+                if event.counted { entry.plays += 1 }
+                entry.minutes += event.secondsListened / 60
+                entry.date = min(entry.date, event.date)
+                byAlbum[albumID] = entry
+            }
+            return byAlbum.values
+                .filter { $0.plays > 0 && isAvailable($0.albumID) }
+                .max {
+                    if $0.plays != $1.plays { return $0.plays < $1.plays }
+                    if $0.minutes != $1.minutes { return $0.minutes < $1.minutes }
+                    return $0.album.localizedCaseInsensitiveCompare($1.album) == .orderedDescending
+                }
+        }
+
+        // 1–2. Same calendar date, one year back, then further back.
+        var years = 1
+        while let day = cal.date(byAdding: .year, value: -years, to: today),
+              day >= cal.startOfDay(for: oldest) {
+            let headline = years == 1 ? "A year ago today you played" : "\(years) years ago today you played"
+            if let hit = pick(days: [day], headline: headline) { return hit }
+            years += 1
+        }
+
+        // 3. The week around this date last year.
+        guard let lastYear = cal.date(byAdding: .year, value: -1, to: today) else { return nil }
+        let week = (-3...3).compactMap { cal.date(byAdding: .day, value: $0, to: lastYear) }
+        return pick(days: week, headline: "This week last year you played")
     }
 
     func topArtists(limit: Int, since: Date? = nil) -> [RankedItem] {
@@ -489,6 +592,37 @@ struct RankedItem: Identifiable, Hashable {
     let plays: Int
     /// Total genuine minutes spent listening — the basis for ranking.
     let minutes: Double
+}
+
+/// Listening split into time buckets (hours of a day, or days of a week) and
+/// at most four genre series (top three plus "Other"). `buckets[b][i]` is
+/// minutes of `series[i]` in bucket `b`, which starts at `starts[b]`.
+struct GenreBreakdown: Hashable {
+    static let otherName = "Other"
+
+    struct Series: Hashable {
+        let name: String
+        let minutes: Double
+    }
+
+    let series: [Series]
+    let buckets: [[Double]]
+    let starts: [Date]
+
+    var isEmpty: Bool { series.isEmpty }
+}
+
+/// An album resurfaced by the home "On this day" panel.
+struct OnThisDayPick: Hashable {
+    let albumID: String
+    let album: String
+    let artist: String
+    /// "A year ago today you played", "2 years ago today…", "This week last year…".
+    let headline: String
+    var plays: Int
+    var minutes: Double
+    /// When it was first played in the matched window.
+    var date: Date
 }
 
 struct AlbumRank: Identifiable, Hashable {

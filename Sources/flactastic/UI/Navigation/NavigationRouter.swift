@@ -16,6 +16,9 @@ final class NavigationRouter {
     /// link straight to a playlist's detail view.
     var playlistsPath: [UUID] = []
     var artworkZoomData: Data? = nil
+    /// Set by the artist page while its full-window banner is showing, so the
+    /// floating player bar stays out of the way until the user scrolls.
+    var hidesPlayerBar = false
 
     /// Where a cross-tab jump started, so Back can return there instead of
     /// popping to the destination tab's root.
@@ -100,17 +103,6 @@ final class NavigationRouter {
         guard !playlistsPath.isEmpty else { return }
         if restoreReturnPoint(tab: .playlists, depth: playlistsPath.count) { return }
         playlistsPath.removeLast()
-    }
-
-    /// Label for the Back control on a Collection-tab detail page.
-    var collectionBackTitle: String {
-        if let point = pendingReturnPoint(tab: .collection, depth: collectionPath.count) {
-            return Self.backTitle(for: point)
-        }
-        if collectionPath.count >= 2 {
-            return Self.collectionPageTitle(collectionPath[collectionPath.count - 2])
-        }
-        return "Back to Albums"
     }
 
     /// Label for the Back control on a Playlists-tab detail page.

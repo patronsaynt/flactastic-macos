@@ -16,6 +16,10 @@ struct ArtworkView: View {
     /// where the user explicitly wants the true source image rather than a
     /// thumbnail sized for a grid cell.
     var fullResolution: Bool = false
+    /// `false` for callers that paint their own shadow (the album shelf), so
+    /// a deck of covers doesn't pay for a blurred, offscreen-rendered shadow
+    /// on every card.
+    var showsShadow: Bool = true
 
     private var cornerRadius: CGFloat {
         settings.roundedArtwork ? Theme.Radius.lg : 0
@@ -40,8 +44,11 @@ struct ArtworkView: View {
     /// Identity for the async decode task — changes whenever the artwork
     /// source or target size changes.
     private var decodeKey: String? {
-        cacheID.map { "\($0)#\(size)" }
+        cacheID.map { "\($0)#\(decodeSize)" }
     }
+
+    /// Thumbnail size to decode; the image is then drawn at `size`.
+    private var decodeSize: CGFloat { ArtworkImageCache.decodePointSize(for: size) }
 
     private var resolvedImage: NSImage? {
         guard let data, !data.isEmpty, let cacheID else { return nil }
@@ -53,7 +60,7 @@ struct ArtworkView: View {
         // Memory-only lookup in the body — never disk I/O or decode, which
         // used to run synchronously here on every cold cell mid-scroll.
         if let hit = ArtworkImageCache.shared.cachedThumbnail(
-            id: cacheID, pointSize: size, scale: displayScale
+            id: cacheID, pointSize: decodeSize, scale: displayScale
         ) {
             return hit
         }
@@ -73,16 +80,16 @@ struct ArtworkView: View {
                 placeholder
             }
         }
-        .artworkShadow(size: size)
+        .artworkShadow(size: size, enabled: showsShadow)
         .task(id: decodeKey) {
             guard !fullResolution, let cacheID, let key = decodeKey,
                   let data, !data.isEmpty else { return }
             guard decoded?.key != key else { return }
             guard ArtworkImageCache.shared.cachedThumbnail(
-                id: cacheID, pointSize: size, scale: displayScale
+                id: cacheID, pointSize: decodeSize, scale: displayScale
             ) == nil else { return }
             let box = await ArtworkImageCache.shared.thumbnailAsync(
-                for: data, id: cacheID, pointSize: size, scale: displayScale
+                for: data, id: cacheID, pointSize: decodeSize, scale: displayScale
             )
             guard let image = box.image else { return }
             decoded = DecodedImage(key: key, image: image)

@@ -1,7 +1,14 @@
 // swift-tools-version: 6.3
 // The swift-tools-version declares the minimum version of Swift required to build this package.
 
+import Foundation
 import PackageDescription
+
+/// Info.plist linked into debug executables so `swift run` builds can be
+/// granted Local Network access (see Support/DebugInfo.plist).
+let debugInfoPlist = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .appendingPathComponent("Support/DebugInfo.plist").path
 
 let package = Package(
     name: "flactastic",
@@ -27,6 +34,13 @@ let package = Package(
             resources: [
                 .process("Assets.xcassets"),
                 .copy("Resources/Wordmark.png"),
+            ],
+            linkerSettings: [
+                .unsafeFlags(
+                    ["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT",
+                     "-Xlinker", "__info_plist", "-Xlinker", debugInfoPlist],
+                    .when(configuration: .debug)
+                ),
             ]
         ),
         .testTarget(

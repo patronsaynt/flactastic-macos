@@ -267,6 +267,12 @@ final class DownloadCoordinator {
             }
             try handle.close()
 
+            // Some sources (SoundCloud via Lucida) deliver audio in an MP4
+            // container. Convert to .m4a so tagging and the library pick it
+            // up; everything else passes through untouched.
+            let stagedURL = try await AudioContainerNormalizer.normalize(tempURL)
+            let ext = stagedURL.pathExtension
+
             // --- Tag the file using metadata we already have from the provider.
             // Playlist rebuilds skip the full re-tag: Lucida already embedded the
             // real album/artist/cover from the source, and our RemoteTrack only
@@ -277,17 +283,17 @@ final class DownloadCoordinator {
             if job.trustEmbeddedMetadata {
                 if !track.title.isEmpty {
                     update(jobID, .tagging)
-                    try? await writer.overrideTitle(at: tempURL, title: track.title)
+                    try? await writer.overrideTitle(at: stagedURL, title: track.title)
                 }
             } else {
                 update(jobID, .tagging)
                 let artworkData = await Self.fetchArtwork(track: track, session: urlSession)
-                let format = AudioFileFormat.classify(tempURL) ?? .flac
+                let format = AudioFileFormat.classify(stagedURL) ?? .flac
                 let joinedArtists = track.artists.map(\.name).joined(separator: "; ")
                 let artistTag = joinedArtists.isEmpty ? nil : joinedArtists
                 let primaryArtist = track.artists.first?.name
                 let stagedTrack = Track(
-                    url: tempURL,
+                    url: stagedURL,
                     title: track.title,
                     artist: artistTag,
                     albumArtist: track.album?.title.isEmpty == false ? primaryArtist : nil,
@@ -319,7 +325,7 @@ final class DownloadCoordinator {
             let finalURL = try Self.finalDestination(
                 rootURL: rootURL,
                 track: track,
-                ext: stream.suggestedExtension
+                ext: ext
             )
             try FileManager.default.createDirectory(
                 at: finalURL.deletingLastPathComponent(),
@@ -331,9 +337,9 @@ final class DownloadCoordinator {
             if FileManager.default.fileExists(atPath: dest.path) {
                 let stem = finalURL.deletingPathExtension().lastPathComponent
                 let parent = finalURL.deletingLastPathComponent()
-                dest = parent.appendingPathComponent("\(stem) (\(UUID().uuidString.prefix(8))).\(stream.suggestedExtension)")
+                dest = parent.appendingPathComponent("\(stem) (\(UUID().uuidString.prefix(8))).\(ext)")
             }
-            try FileManager.default.moveItem(at: tempURL, to: dest)
+            try FileManager.default.moveItem(at: stagedURL, to: dest)
 
             finish(jobID, .completed(dest))
             scheduleLibraryRefresh()
@@ -380,7 +386,7 @@ final class DownloadCoordinator {
     /// artist/album info to disambiguate on (so we can't do any better).
     ///
     /// Exposed so the playlist rebuild can pre-check duplicates before spending
-    /// an Odesli lookup on a track it won't download.
+    /// a source lookup on a track it won't download.
     static func findExistingMatch(for remote: RemoteTrack, in tracks: [Track]) -> Track? {
         let exactKey = normalize(remote.title)
         guard !exactKey.isEmpty else { return nil }
@@ -495,6 +501,11 @@ final class DownloadCoordinator {
     private static func fetchArtwork(track: RemoteTrack, session: URLSession) async -> Data? {
         let arts = !track.coverArt.isEmpty ? track.coverArt : (track.album?.coverArt ?? [])
         guard let best = RemoteCoverArt.best(arts) else { return nil }
+        // SoundCloud metadata points at a thumbnail; swap in the original upload.
+        if SoundCloudArtwork.isArtworkURL(best.url),
+           let jpeg = await SoundCloudArtwork.fetchBestJPEG(from: best.url, session: session) {
+            return jpeg
+        }
         do {
             let (data, _) = try await session.data(from: best.url)
             return data

@@ -6,13 +6,10 @@ import Observation
 ///
 /// For each track, in playlist order:
 ///   1. Skip if it's already in the library (reuse the existing file).
-///   2. Ask Odesli for the Amazon Music equivalent (Amazon links resolve to
-///      higher-quality streams through Lucida); fall back to the original
-///      Spotify URL when there's no match.
-///   3. Download via the shared `DownloadCoordinator`, awaiting each one so the
-///      playlist order is deterministic and Odesli/Lucida aren't hammered.
-///   4. On an Amazon-link failure, retry once with the Spotify URL.
-///   5. Append the track to the local playlist (or record a failure).
+///   2. Download via the shared `DownloadCoordinator`. `LucidaWebProvider`
+///      tries a matched non-Spotify equivalent first and only falls back to
+///      the Spotify link itself (see `SourceMatchService`).
+///   3. Append the track to the local playlist (or record a failure).
 ///
 /// Progress and a final failure summary are published for the Download tab UI.
 @Observable
@@ -93,7 +90,6 @@ final class PlaylistRebuildCoordinator {
     private let playlistStore: PlaylistStore
     private let library: LibraryStore
     private let lucidaProvider: LucidaWebProvider
-    private let amazonMatcher: AmazonMatchService
     private let spotifyService: SpotifyPlaylistService
     private let urlSession: URLSession
 
@@ -104,7 +100,6 @@ final class PlaylistRebuildCoordinator {
         playlistStore: PlaylistStore,
         library: LibraryStore,
         lucidaProvider: LucidaWebProvider,
-        amazonMatcher: AmazonMatchService,
         spotifyService: SpotifyPlaylistService = SpotifyPlaylistService(),
         urlSession: URLSession = .shared
     ) {
@@ -112,7 +107,6 @@ final class PlaylistRebuildCoordinator {
         self.playlistStore = playlistStore
         self.library = library
         self.lucidaProvider = lucidaProvider
-        self.amazonMatcher = amazonMatcher
         self.spotifyService = spotifyService
         self.urlSession = urlSession
     }
@@ -326,8 +320,7 @@ final class PlaylistRebuildCoordinator {
         case alreadyInPlaylist
     }
 
-    /// Duplicate-check → Amazon match → download (Amazon first, Spotify
-    /// fallback) for a single track. Returns a value; the caller appends to the
+    /// Duplicate-check → download for a single track. Returns a value; the caller appends to the
     /// playlist in order.
     ///
     /// `existingPaths` and `existingIDs` are the relative-path and trackID sets
@@ -356,24 +349,14 @@ final class PlaylistRebuildCoordinator {
             return .skippedNoPath
         }
 
-        // Find the Amazon Music equivalent (Odesli throttles internally).
-        let amazonURL: URL?
-        if let spotifyURL = track.url {
-            amazonURL = await amazonMatcher.amazonURL(forTrack: spotifyURL)
-        } else {
-            amazonURL = nil
-        }
-
-        // Download — try each source (Amazon first, Spotify fallback) per round,
-        // and retry the whole round with backoff when every source fails. Lucida
-        // refuses jobs transiently when busy/rate-limited; a few spaced retries
+        // Retry the whole download with backoff when it fails transiently.
+        // Lucida refuses jobs when busy/rate-limited; a few spaced retries
         // turn those one-off refusals into successes instead of a failure wall.
-        let sources = [amazonURL, track.url].compactMap { $0 }
+        let sources = [track.url].compactMap { $0 }
         guard !sources.isEmpty else {
             return .failed(TrackFailure(index: position + 1, title: track.title,
                                         artist: artistLabel, reason: "No source URL."))
         }
-
         var outcome: DownloadCoordinator.JobOutcome = .failed("No source URL.")
         rounds: for attempt in 0..<Self.maxDownloadAttempts {
             // Track whether this round's failures were all *permanent* (no

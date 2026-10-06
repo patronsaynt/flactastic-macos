@@ -19,7 +19,7 @@ extension Track {
             trackNumber: trackNumber,
             duration: duration,
             artwork: artwork,
-            fileFormat: AudioFileFormat.classify(newURL) ?? fileFormat,
+            fileFormat: AudioFileFormat.classify(newURL, keeping: fileFormat),
             sampleRate: sampleRate,
             bitDepth: bitDepth,
             genre: genre,

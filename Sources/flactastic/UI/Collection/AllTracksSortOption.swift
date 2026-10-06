@@ -5,6 +5,16 @@ enum AllTracksSortOption: String, CaseIterable, Identifiable {
     case dateAdded = "Date Added"
     case songName = "Song Name"
     case artistName = "Artist"
+    case fidelity = "Fidelity"
+
+    /// The direction a sort starts in when chosen: newest first for date
+    /// added, best first for fidelity, A to Z otherwise.
+    var defaultAscending: Bool {
+        switch self {
+        case .dateAdded, .fidelity: return false
+        case .songName, .artistName: return true
+        }
+    }
 
     var id: String { rawValue }
 }

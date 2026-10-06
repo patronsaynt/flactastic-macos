@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Builds FLACtastic, creates a .app bundle, embeds dynamic dependencies,
-# and applies ad-hoc code signing for development distribution.
+# and code signs it for development distribution.
+#
+# Signing identity: $FLACTASTIC_SIGN_IDENTITY if set, else the stable
+# "FLACtastic Development" identity when it exists (create it once with
+# create-dev-signing-identity.sh), else ad-hoc. Ad-hoc builds get a new
+# identity every time, so macOS forgets privacy grants like Local Network
+# access across rebuilds.
 #
 # Usage: package-macos.sh [--skip-build]
 #
@@ -58,7 +64,15 @@ echo
 if [[ $SKIP_BUILD -eq 0 ]]; then
     echo "▶ Building release binary (swift build -c release)..."
     cd "$PROJECT_ROOT"
-    swift build -c release
+    # Stamp the real SDK version into the binary. The Swift Build backend
+    # (default since Xcode 27) records the deployment target as the SDK
+    # version, so AppKit treats the app as built for macOS 14 and draws
+    # pre-Tahoe controls (e.g. a flat round slider knob instead of the glass
+    # pill).
+    SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+    swift build -c release \
+        -Xlinker -platform_version -Xlinker macos \
+        -Xlinker "$DEPLOYMENT_TARGET" -Xlinker "$SDK_VERSION"
 fi
 
 BIN_DIR="$(swift build -c release --show-bin-path)"
@@ -209,23 +223,38 @@ for dylib in "$FRAMEWORKS_DIR"/*.dylib; do
     fi
 done
 
-# ── Code sign (ad-hoc) ──────────────────────────────────────────────────────
+# ── Code sign ───────────────────────────────────────────────────────────────
+DEV_IDENTITY="FLACtastic Development"
+if [[ -n "${FLACTASTIC_SIGN_IDENTITY:-}" ]]; then
+    SIGN_IDENTITY="$FLACTASTIC_SIGN_IDENTITY"
+elif security find-identity -v -p codesigning 2>/dev/null | grep -q "\"$DEV_IDENTITY\""; then
+    SIGN_IDENTITY="$DEV_IDENTITY"
+else
+    SIGN_IDENTITY="-"
+fi
+
 echo
-echo "▶ Code signing (ad-hoc)..."
+if [[ "$SIGN_IDENTITY" == "-" ]]; then
+    echo "▶ Code signing (ad-hoc)..."
+    echo "  Tip: run Scripts/macos/create-dev-signing-identity.sh once so rebuilds"
+    echo "  keep their Local Network permission."
+else
+    echo "▶ Code signing as \"$SIGN_IDENTITY\"..."
+fi
 
 # Sign embedded dylibs first, then the main binary, then the app bundle.
 for dylib in "$FRAMEWORKS_DIR"/*.dylib; do
     [[ -f "$dylib" ]] || continue
-    codesign --force --sign - --timestamp=none "$dylib"
+    codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$dylib"
 done
 
 if [[ -f "$ENTITLEMENTS_FILE" ]]; then
-    codesign --force --sign - --timestamp=none \
+    codesign --force --sign "$SIGN_IDENTITY" --timestamp=none \
         --entitlements "$ENTITLEMENTS_FILE" \
         --options runtime \
         "$APP_BUNDLE"
 else
-    codesign --force --sign - --timestamp=none "$APP_BUNDLE"
+    codesign --force --sign "$SIGN_IDENTITY" --timestamp=none "$APP_BUNDLE"
 fi
 
 # Verify signature

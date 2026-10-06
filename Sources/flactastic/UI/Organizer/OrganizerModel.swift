@@ -88,25 +88,7 @@ final class OrganizerModel {
         let movedByID = Dictionary(uniqueKeysWithValues: result.moved.map { ($0.trackID, $0.newURL) })
         if !movedByID.isEmpty {
             let updated: [Track] = library.tracks.compactMap { t in
-                guard let newURL = movedByID[t.id] else { return nil }
-                return Track(
-                    id: t.id,
-                    url: newURL,
-                    title: t.title,
-                    artist: t.artist,
-                    albumArtist: t.albumArtist,
-                    album: t.album,
-                    trackNumber: t.trackNumber,
-                    duration: t.duration,
-                    artwork: t.artwork,
-                    fileFormat: AudioFileFormat.classify(newURL) ?? t.fileFormat,
-                    sampleRate: t.sampleRate,
-                    bitDepth: t.bitDepth,
-                    genre: t.genre,
-                    year: t.year,
-                    isCompilation: t.isCompilation,
-                    dateAdded: t.dateAdded
-                )
+                movedByID[t.id].map { t.withURL($0) }
             }
             library.replaceTracks(updated)
 
@@ -149,6 +131,14 @@ final class OrganizerModel {
 
         operations = []
         isPreviewStale = true
+
+        // Rescan so the library matches the new folder layout even where the
+        // in-memory patch above missed something (a track whose plan predates
+        // a refresh, a failed or partial move). Tracks already patched to
+        // their new URLs are kept as-is, so this is cheap when nothing's off.
+        if !ops.isEmpty {
+            library.refreshLibrary()
+        }
     }
 
     private func updateProgress(_ progress: OrganizerExecutor.Progress) {

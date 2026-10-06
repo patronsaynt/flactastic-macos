@@ -3,8 +3,27 @@ import Foundation
 extension LibraryStore {
     /// Build a resolver from the current track set. Cheap to call repeatedly,
     /// but callers in views should hoist it for the duration of a render pass.
+    /// The resolver for the current library, cached until `tracks` changes.
     func makeArtistResolver() -> ArtistResolver {
-        ArtistResolver(tracks: tracks)
+        // Read the revision so callers in a view body still re-render when
+        // the library changes, as they did when this rebuilt every time.
+        _ = tracksRevision
+        if let cached = artistResolverCache { return cached }
+        let resolver = ArtistResolver(tracks: tracks)
+        artistResolverCache = resolver
+        return resolver
+    }
+
+    /// `allArtists` with the current resolver, cached until the library or
+    /// the overrides (identified by `overridesRevision`) change.
+    func cachedAllArtists(overrides: [String: ArtistOverride], overridesRevision: Int) -> [ArtistSummary] {
+        _ = tracksRevision
+        if let cached = artistSummariesCache, cached.overridesRevision == overridesRevision {
+            return cached.summaries
+        }
+        let summaries = allArtists(resolver: makeArtistResolver(), overrides: overrides)
+        artistSummariesCache = (overridesRevision, summaries)
+        return summaries
     }
 
     /// Normalise multi-artist credit strings in-memory so collaboration tags

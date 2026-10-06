@@ -43,7 +43,12 @@ final class PlayerEngine {
     /// instead of advancing to the next.
     var isRepeatOne: Bool = false {
         didSet {
-            guard oldValue != isRepeatOne, !_queue.isEmpty, isPrepared else { return }
+            guard oldValue != isRepeatOne, !_queue.isEmpty else { return }
+            if remote != nil {
+                remoteQueueDidChange()
+                return
+            }
+            guard isPrepared else { return }
             if isRepeatOne {
                 // Only flush if a different track has already been pre-scheduled.
                 // With the throttle capped at ~10 s, this only happens for short tracks
@@ -86,6 +91,29 @@ final class PlayerEngine {
         var endFrame: AVAudioFramePosition
     }
 
+    // MARK: - Remote playback state
+
+    /// The network device playing in place of the local graph, if any.
+    private(set) var remote: (any RemotePlaybackTarget)?
+    var isRemote: Bool { remote != nil }
+
+    /// Remote position is reported roughly once a second; between reports the
+    /// tick interpolates from this anchor so the seek bar stays smooth.
+    private var remoteAnchorTime: TimeInterval = 0
+    private var remoteAnchorDate: Date?
+
+    /// False from the moment we ask the device to start (load, play, seek)
+    /// until it reports it is actually playing. Speakers buffer for a few
+    /// seconds first; the clock stays frozen meanwhile so the seek bar never
+    /// runs ahead of what's audible.
+    private var remoteClockConfirmed = false
+
+    /// Playing was requested but the device hasn't started yet.
+    var isAwaitingRemoteStart: Bool { remote != nil && isPlaying && !remoteClockConfirmed }
+
+    /// Local volume saved while the slider drives the remote device's volume.
+    private var localVolume: Float = 0.75
+
     // MARK: - Init
 
     init(graph: (any AudioGraphProtocol)? = nil) {
@@ -114,6 +142,21 @@ final class PlayerEngine {
     // MARK: - Transport API
 
     func setQueue(_ tracks: [Track], startAt index: Int) {
+        if let remote {
+            _queue = tracks
+            _currentIndex = min(index, max(tracks.count - 1, 0))
+            currentTrack = _queue.isEmpty ? nil : _queue[_currentIndex]
+            duration = currentTrack?.duration
+            currentTime = 0
+            if _queue.isEmpty { isPlaying = false; stopTick() }
+            remoteClockConfirmed = false
+            setRemoteAnchor(0)
+            notifyStateUpdate()
+            if let track = currentTrack {
+                remote.load(track, next: remoteNextTrack, startAt: 0, autoplay: isPlaying)
+            }
+            return
+        }
         ensurePrepared()
         cancelDecode()
         graph.flush()
@@ -143,6 +186,16 @@ final class PlayerEngine {
     }
 
     func play() {
+        if let remote {
+            guard currentTrack != nil else { return }
+            remote.play()
+            isPlaying = true
+            remoteClockConfirmed = false
+            setRemoteAnchor(currentTime)
+            startTick()
+            notifyStateUpdate()
+            return
+        }
         ensurePrepared()
         graph.play()
         isPlaying = true
@@ -151,6 +204,14 @@ final class PlayerEngine {
     }
 
     func pause() {
+        if let remote {
+            remote.pause()
+            isPlaying = false
+            setRemoteAnchor(currentTime)
+            stopTick()
+            notifyStateUpdate()
+            return
+        }
         graph.pause()
         isPlaying = false
         stopTick()
@@ -176,6 +237,15 @@ final class PlayerEngine {
     /// If decode is still running, it will pick up the new tracks on its next iteration.
     func appendTracks(_ tracks: [Track]) {
         guard !tracks.isEmpty else { return }
+        if remote != nil {
+            if _queue.isEmpty {
+                setQueue(tracks, startAt: 0)
+            } else {
+                _queue.append(contentsOf: tracks)
+                remoteQueueDidChange()
+            }
+            return
+        }
         ensurePrepared()
         let wasEmpty = _queue.isEmpty
         let resumeIndex = _queue.count
@@ -218,6 +288,11 @@ final class PlayerEngine {
         // If insertion is at or before the current track, current index shifts.
         if clampedIndex <= _currentIndex {
             _currentIndex += tracks.count
+        }
+
+        if remote != nil {
+            remoteQueueDidChange()
+            return
         }
 
         // If no future track has been pre-buffered yet, the running decode task will
@@ -265,6 +340,12 @@ final class PlayerEngine {
     /// to a full flush only when the removed track's audio is already in the player node.
     func removeFromQueue(at index: Int) {
         guard index > _currentIndex, index < _queue.count else { return }
+
+        if remote != nil {
+            _queue.remove(at: index)
+            remoteQueueDidChange()
+            return
+        }
 
         let removedTrack = _queue[index]
         let alreadyScheduled = scheduledEntries.contains(where: { $0.track.id == removedTrack.id })
@@ -323,6 +404,15 @@ final class PlayerEngine {
 
     func seek(to seconds: TimeInterval) {
         guard !_queue.isEmpty else { return }
+        if let remote {
+            let clamped = max(0, seconds)
+            currentTime = clamped
+            remoteClockConfirmed = false
+            setRemoteAnchor(clamped)
+            remote.seek(to: clamped)
+            notifyStateUpdate()
+            return
+        }
         let wasPlaying = isPlaying
         cancelDecode()
         graph.flush()
@@ -342,7 +432,12 @@ final class PlayerEngine {
 
     func setVolume(_ v: Float) {
         volume = max(0, min(1, v))
-        graph.setOutputVolume(volume)
+        if let remote {
+            // The stream stays bit-perfect: volume is applied on the device.
+            remote.setVolume(volume)
+        } else {
+            graph.setOutputVolume(volume)
+        }
         notifyStateUpdate()
     }
 
@@ -391,6 +486,11 @@ final class PlayerEngine {
         guard !tracks.isEmpty else { return }
         _queue = tracks
         _currentIndex = currentIndex
+
+        if remote != nil {
+            remoteQueueDidChange()
+            return
+        }
 
         // Check whether a track other than the current one has already been decoded
         // into the player node's buffer queue.
@@ -691,6 +791,148 @@ final class PlayerEngine {
         }
     }
 
+    // MARK: - Remote playback
+
+    /// Hand playback to `target`, continuing the current track at the current
+    /// position. `volume` is the device's own volume (nil if it has none);
+    /// the local volume is restored on detach.
+    func attachRemote(_ target: any RemotePlaybackTarget, volume remoteVolume: Float?) {
+        let wasPlaying = isPlaying
+        let resumeAt = currentTime
+        if remote == nil {
+            localVolume = volume
+            stopLocalOutput()
+        }
+        remote = target
+        if let remoteVolume { volume = max(0, min(1, remoteVolume)) }
+        isPlaying = wasPlaying && currentTrack != nil
+        remoteClockConfirmed = false
+        setRemoteAnchor(resumeAt)
+        if isPlaying { startTick() }
+        notifyStateUpdate()
+        if let track = currentTrack {
+            target.load(track, next: remoteNextTrack, startAt: resumeAt, autoplay: isPlaying)
+        }
+    }
+
+    /// Return playback to the local graph at the last known remote position.
+    func detachRemote(resumePlaying: Bool) {
+        guard remote != nil else { return }
+        let resumeAt = currentTime
+        let shouldPlay = isPlaying && resumePlaying
+        remote = nil
+        remoteAnchorDate = nil
+        stopTick()
+        isPlaying = false
+        volume = localVolume
+        graph.setOutputVolume(localVolume)
+
+        guard !_queue.isEmpty else {
+            notifyStateUpdate()
+            return
+        }
+        setQueue(_queue, startAt: _currentIndex)
+        if resumeAt > 0 { seek(to: resumeAt) }
+        if shouldPlay { play() }
+    }
+
+    /// Position / play-state report from the device. Small drift is ignored so
+    /// coarse (whole-second) device clocks don't make the seek bar jitter.
+    func remoteDidReport(position: TimeInterval?, isPlaying playing: Bool) {
+        guard remote != nil, currentTrack != nil else { return }
+        let starting = playing && !remoteClockConfirmed
+        if let position, starting || abs(position - currentTime) > 1.5 || playing != isPlaying {
+            currentTime = position
+        }
+        if playing { remoteClockConfirmed = true }
+        if playing != isPlaying {
+            isPlaying = playing
+            playing ? startTick() : stopTick()
+        }
+        setRemoteAnchor(currentTime)
+        notifyStateUpdate()
+    }
+
+    /// The device moved on to the pre-armed next track by itself (gapless).
+    func remoteDidAdvance() {
+        guard remote != nil, !_queue.isEmpty else { return }
+        if !isRepeatOne {
+            guard _currentIndex + 1 < _queue.count else { return }
+            _currentIndex += 1
+        }
+        currentTrack = _queue[_currentIndex]
+        duration = currentTrack?.duration
+        currentTime = 0
+        setRemoteAnchor(0)
+        notifyStateUpdate()
+        remote?.setNext(remoteNextTrack)
+    }
+
+    /// The device stopped at the end of a track without advancing. Load the
+    /// next track explicitly, or finish — the UI's repeat-all handling then
+    /// takes over exactly as it does for local playback.
+    func remoteDidReachEnd() {
+        guard let remote, !_queue.isEmpty else { return }
+        if remoteNextTrack != nil {
+            if !isRepeatOne { _currentIndex += 1 }
+            currentTrack = _queue[_currentIndex]
+            duration = currentTrack?.duration
+            currentTime = 0
+            remoteClockConfirmed = false
+            setRemoteAnchor(0)
+            notifyStateUpdate()
+            if let track = currentTrack {
+                remote.load(track, next: remoteNextTrack, startAt: 0, autoplay: true)
+            }
+        } else {
+            if let duration { currentTime = duration }
+            isPlaying = false
+            setRemoteAnchor(currentTime)
+            stopTick()
+            notifyStateUpdate()
+        }
+    }
+
+    /// What should follow the current track on the device.
+    private var remoteNextTrack: Track? {
+        guard !_queue.isEmpty else { return nil }
+        if isRepeatOne { return currentTrack }
+        let next = _currentIndex + 1
+        return next < _queue.count ? _queue[next] : nil
+    }
+
+    private func remoteQueueDidChange() {
+        notifyStateUpdate()
+        remote?.setNext(remoteNextTrack)
+    }
+
+    private func setRemoteAnchor(_ time: TimeInterval) {
+        remoteAnchorTime = time
+        remoteAnchorDate = isPlaying && remoteClockConfirmed ? Date() : nil
+    }
+
+    private func updateRemoteTime() {
+        guard let anchor = remoteAnchorDate else { return }
+        var time = remoteAnchorTime + Date().timeIntervalSince(anchor)
+        if let duration { time = min(time, duration) }
+        currentTime = time
+        notifyStateUpdate()
+    }
+
+    /// Silence the local graph and drop everything scheduled on it.
+    private func stopLocalOutput() {
+        cancelDecode()
+        stopTick()
+        if isPrepared {
+            graph.flush()
+            graph.pause()
+        }
+        scheduledEntries.removeAll()
+        nextScheduleFrame = 0
+        liveScheduleEnd.withLock { $0 = 0 }
+        currentEntryStartFrame = -1
+    }
+
     // MARK: - Time tracking tick
 
     private func startTick() {
@@ -709,6 +951,10 @@ final class PlayerEngine {
     }
 
     private func updateTime() {
+        if remote != nil {
+            updateRemoteTime()
+            return
+        }
         guard let sampleTime = graph.currentPlayerSampleTime(), sampleTime >= 0 else { return }
         let canonicalRate = graph.canonicalFormat.sampleRate
 
@@ -774,7 +1020,9 @@ final class PlayerEngine {
     /// position. The canonical rate stays fixed afterwards, so gapless
     /// transitions between tracks are unaffected.
     func applyOutputConfiguration(_ config: AudioOutputConfig) {
-        guard isPrepared, !_queue.isEmpty else {
+        // While a remote device plays, the local graph is idle — reroute it
+        // directly so detaching resumes on the right device.
+        guard isPrepared, !_queue.isEmpty, remote == nil else {
             do {
                 try graph.applyOutput(config)
             } catch {
@@ -807,6 +1055,11 @@ final class PlayerEngine {
     /// Flush everything, let `reconfigure` change the graph, then restart
     /// decoding at the saved position against the (possibly new) canonical rate.
     private func rebuildOutput(_ reconfigure: () -> Void) {
+        if remote != nil {
+            reconfigure()
+            throttle.setLimit(Int64(graph.canonicalFormat.sampleRate * 10))
+            return
+        }
         let wasPlaying = isPlaying
         let savedTime = currentTime
         let savedIndex = _currentIndex

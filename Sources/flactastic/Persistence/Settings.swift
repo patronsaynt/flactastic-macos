@@ -51,8 +51,10 @@ final class Settings {
         didSet { UserDefaults.standard.set(hasCompletedOnboarding, forKey: "flactastic.hasCompletedOnboarding") }
     }
 
-    var groupByArtist: Bool {
-        didSet { UserDefaults.standard.set(groupByArtist, forKey: "flactastic.groupByArtist") }
+    /// When false (the default), the Artists grid leaves out artists whose
+    /// only entries are appearances on other artists' releases.
+    var showAllArtists: Bool {
+        didSet { UserDefaults.standard.set(showAllArtists, forKey: "flactastic.showAllArtists") }
     }
 
     var customGenres: [String] {
@@ -133,6 +135,12 @@ final class Settings {
         didSet { UserDefaults.standard.set(outputBitDepth, forKey: "flactastic.outputBitDepth") }
     }
 
+    /// Cap on what's streamed to network (DLNA) speakers. `.original` sends
+    /// the untouched file.
+    var networkStreamQuality: NetworkStreamQuality {
+        didSet { UserDefaults.standard.set(networkStreamQuality.rawValue, forKey: "flactastic.networkStreamQuality") }
+    }
+
     init() {
         lastRootPath = UserDefaults.standard.string(forKey: "flactastic.lastRootPath")
         let stored = UserDefaults.standard.object(forKey: "flactastic.volume")
@@ -152,7 +160,7 @@ final class Settings {
         let storedDir = UserDefaults.standard.string(forKey: "flactastic.fadeAnimationDirection")
         fadeAnimationDirection = storedDir.flatMap(FadeAnimationDirection.init(rawValue:)) ?? .up
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "flactastic.hasCompletedOnboarding")
-        groupByArtist = UserDefaults.standard.bool(forKey: "flactastic.groupByArtist")
+        showAllArtists = UserDefaults.standard.bool(forKey: "flactastic.showAllArtists")
         customGenres = UserDefaults.standard.stringArray(forKey: "flactastic.customGenres") ?? []
         let storedAutoFetch = UserDefaults.standard.object(forKey: "flactastic.autoFetchArtistImages")
         autoFetchArtistImages = (storedAutoFetch as? Bool) ?? true
@@ -185,6 +193,8 @@ final class Settings {
         outputDeviceUID = UserDefaults.standard.string(forKey: "flactastic.outputDeviceUID")
         outputSampleRate = UserDefaults.standard.object(forKey: "flactastic.outputSampleRate") as? Double
         outputBitDepth = UserDefaults.standard.object(forKey: "flactastic.outputBitDepth") as? Int
+        networkStreamQuality = UserDefaults.standard.string(forKey: "flactastic.networkStreamQuality")
+            .flatMap(NetworkStreamQuality.init(rawValue:)) ?? .original
     }
 }
 

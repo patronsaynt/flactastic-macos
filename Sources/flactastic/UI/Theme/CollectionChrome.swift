@@ -259,8 +259,8 @@ struct FLActionPillStyle: ButtonStyle {
     }
 }
 
-/// Chevron + label back control used by the album and playlist detail views.
-/// (`DetailBackButton` remains for the artist detail view.)
+/// Chevron + label back control used by the playlist detail view. (The
+/// album and artist pages use `HeroBackButton` over their artwork.)
 struct FLBackLink: View {
     let title: String
     let action: () -> Void
@@ -310,17 +310,17 @@ struct FLTrackListHeader: View {
             Text("FORMAT")
                 .font(.system(size: 11))
                 .tracking(1.5)
-                .frame(minWidth: TrackRow.formatColumnWidth, alignment: .center)
+                .frame(width: TrackRow.formatColumnWidth, alignment: .center)
 
             Text("QUALITY")
                 .font(.system(size: 11))
                 .tracking(1.5)
-                .frame(minWidth: TrackRow.qualityColumnWidth, alignment: .center)
+                .frame(width: TrackRow.qualityColumnWidth, alignment: .center)
 
             Text("LENGTH")
                 .font(.system(size: 11))
                 .tracking(1.5)
-                .frame(minWidth: TrackRow.lengthColumnWidth, alignment: .trailing)
+                .frame(width: TrackRow.lengthColumnWidth, alignment: .trailing)
 
             if showDragHandle {
                 Color.clear.frame(width: 18)

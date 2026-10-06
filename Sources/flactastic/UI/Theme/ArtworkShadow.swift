@@ -15,6 +15,7 @@ import SwiftUI
 struct ArtworkShadow: ViewModifier {
     @Environment(Settings.self) private var settings
     let size: CGFloat
+    var enabled: Bool = true
 
     private var radius: CGFloat {
         // Gentle curve: tiny thumbs ~2pt blur, hero art ~14pt.
@@ -32,7 +33,7 @@ struct ArtworkShadow: ViewModifier {
     }
 
     func body(content: Content) -> some View {
-        if settings.showArtworkShadow {
+        if enabled && settings.showArtworkShadow {
             // Flattening art+shadow into one rasterized layer
             // (`.drawingGroup()`) saves re-blurring during scroll compositing,
             // but each instance costs an offscreen Metal pass — worth it for
@@ -66,7 +67,7 @@ struct ArtworkShadow: ViewModifier {
 extension View {
     /// Apply after the artwork's `.clipShape` so the shadow matches the
     /// current corner-rounding setting automatically.
-    func artworkShadow(size: CGFloat) -> some View {
-        modifier(ArtworkShadow(size: size))
+    func artworkShadow(size: CGFloat, enabled: Bool = true) -> some View {
+        modifier(ArtworkShadow(size: size, enabled: enabled))
     }
 }

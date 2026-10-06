@@ -140,13 +140,34 @@ final class ArtworkImageCache: @unchecked Sendable {
     /// Removes all cached sizes for `id`, in memory and on disk. Call this
     /// wherever the underlying artwork can change (album/track metadata
     /// edits) so stale thumbnails don't linger after a save.
-    func invalidate(id: String, pointSizes: [CGFloat] = [36, 48, 180, 200, 280], scale: CGFloat = 2) {
+    func invalidate(id: String, pointSizes: [CGFloat] = ArtworkImageCache.invalidationSizes, scale: CGFloat = 2) {
         for size in pointSizes {
             let key = Self.cacheKey(id: id, pointSize: size, scale: scale)
             cache.removeObject(forKey: key as NSString)
             try? fileManager.removeItem(at: diskURL(forKey: key))
         }
     }
+
+    // MARK: - Size buckets
+
+    /// Point sizes the grids and lists have always used; kept exact so their
+    /// cached thumbnails stay valid.
+    private static let standardSizes: Set<CGFloat> = [36, 48, 180, 200, 280]
+
+    /// The size to decode for artwork drawn at `displaySize`. Standard and
+    /// small sizes pass through; anything else rounds up to a 64pt step, so
+    /// layouts that size covers from the window width (the artist page) share
+    /// a handful of cache entries instead of decoding again on every resize.
+    /// Rounding up means the image is only ever drawn at or below its pixel
+    /// size, never stretched.
+    static func decodePointSize(for displaySize: CGFloat) -> CGFloat {
+        if displaySize <= 64 || standardSizes.contains(displaySize) { return displaySize }
+        return min((displaySize / 64).rounded(.up) * 64, 1024)
+    }
+
+    /// Every size `invalidate` clears: the standard sizes plus each bucket.
+    static let invalidationSizes: [CGFloat] =
+        Array(standardSizes).sorted() + stride(from: 128, through: 1024, by: 64).map { CGFloat($0) }
 
     // MARK: - Keys
 

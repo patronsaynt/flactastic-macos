@@ -20,7 +20,14 @@ final class HomeHighlight {
         let imageData: Data?
     }
 
-    private(set) var pick: Pick?
+    private(set) var pick: Pick? {
+        didSet { refreshPalette() }
+    }
+    /// Colors sampled from the pick's banner image; nil while sampling, when
+    /// there's no image, or when the image is essentially gray. Home falls
+    /// back to monochrome in those cases.
+    private(set) var palette: HomePalette?
+    private var paletteGeneration = 0
     private(set) var isPinned = false
     private var hasPicked = false
 
@@ -136,6 +143,24 @@ final class HomeHighlight {
                 return nil
             }
         }.value
+    }
+
+    // MARK: - Palette
+
+    /// Re-sample the banner palette off the main actor whenever the pick
+    /// changes. A generation counter drops results for a superseded pick.
+    private func refreshPalette() {
+        paletteGeneration += 1
+        let generation = paletteGeneration
+        palette = nil
+        guard let data = pick?.imageData else { return }
+        Task {
+            let sampled = await Task.detached(priority: .utility) {
+                HomePalette.extract(from: data)
+            }.value
+            guard generation == paletteGeneration else { return }
+            palette = sampled
+        }
     }
 
     // MARK: - Helpers

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Embedded into debug executables (`swift build` / `swift run`) by
+     Package.swift. A bare executable has no bundle Info.plist, and without
+     NSLocalNetworkUsageDescription macOS silently refuses its local-network
+     traffic (library sync, network speakers) without ever prompting.
+
+     CFBundleIdentifier is deliberately "flactastic": that's the defaults
+     domain unbundled debug runs already use, so settings carry over.
+     Packaged builds use Scripts/macos/generate-info-plist.sh instead; keep
+     the privacy strings here in sync with it. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>flactastic</string>
+    <key>CFBundleName</key>
+    <string>FLACtastic (Debug)</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>FLACtastic uses the local network to find your other devices and sync your music library between them, and to find and play music on network speakers. Nothing is sent over the internet.</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_flactastic._tcp</string>
+    </array>
+</dict>
+</plist>

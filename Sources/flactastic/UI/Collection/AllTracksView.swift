@@ -45,6 +45,19 @@ struct AllTracksView: View {
     @State private var hasComputed = false
 
     private func recomputeVisible() {
+        // Switching sections remounts this view; reuse the last result when
+        // nothing it depends on has changed instead of re-sorting the library.
+        let key = VisibleTracksCache.Key(
+            revision: library.tracksRevision,
+            searchText: searchText,
+            sort: sortOption,
+            ascending: ascending
+        )
+        if let cached = VisibleTracksCache.last, cached.key == key {
+            cachedVisible = cached.tracks
+            hasComputed = true
+            return
+        }
         let filtered: [Track]
         if searchText.isEmpty {
             filtered = tracks
@@ -57,6 +70,7 @@ struct AllTracksView: View {
             }
         }
         cachedVisible = sorted(filtered, by: sortOption, ascending: ascending)
+        VisibleTracksCache.last = (key, cachedVisible)
         hasComputed = true
     }
 
@@ -77,7 +91,9 @@ struct AllTracksView: View {
         }
         .task { canAnimateEntrances = true }
         .onAppear { recomputeVisible() }
-        .onChange(of: tracks) { _, _ in recomputeVisible() }
+        // The revision, not `tracks`: comparing the arrays byte-compares
+        // every track's artwork each time this view updates.
+        .onChange(of: library.tracksRevision) { _, _ in recomputeVisible() }
         .onChange(of: searchText) { _, _ in recomputeVisible() }
         .onChange(of: sortOption) { _, _ in recomputeVisible() }
         .onChange(of: ascending) { _, _ in recomputeVisible() }
@@ -321,6 +337,19 @@ struct AllTracksView: View {
                 if lhs.isEmpty != rhs.isEmpty { return !lhs.isEmpty }
                 return lhs.localizedStandardCompare(rhs) == .orderedAscending
             }
+        case .fidelity:
+            // Tier, then bit depth, then sample rate: ascending is lowest
+            // quality first, so the default (descending) leads with the best.
+            func score(_ t: Track) -> Double {
+                Double(AudioQuality.of(t).rank) * 1_000_000
+                    + Double(t.bitDepth ?? 0) * 1_000
+                    + (t.sampleRate ?? 0) / 1_000
+            }
+            result = tracks.sorted { a, b in
+                let lhs = score(a), rhs = score(b)
+                if lhs != rhs { return lhs < rhs }
+                return a.title.localizedStandardCompare(b.title) == .orderedAscending
+            }
         case .dateAdded:
             // Tracks missing a timestamp sort to the end regardless of order.
             result = tracks.sorted { a, b in
@@ -334,4 +363,17 @@ struct AllTracksView: View {
         }
         return ascending ? result : result.reversed()
     }
+}
+
+/// The most recent sorted and filtered track list, kept across remounts of
+/// `AllTracksView`.
+@MainActor
+private enum VisibleTracksCache {
+    struct Key: Equatable {
+        let revision: Int
+        let searchText: String
+        let sort: AllTracksSortOption
+        let ascending: Bool
+    }
+    static var last: (key: Key, tracks: [Track])?
 }

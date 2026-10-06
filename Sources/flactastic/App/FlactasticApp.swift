@@ -17,6 +17,7 @@ struct FlactasticApp: App {
     @State private var lyricsRemoteCache: LyricsRemoteCache
     @State private var lyricsFetcher: LyricsFetcher
     @State private var audioOutput: AudioOutputManager
+    @State private var castManager: CastManager
 
     init() {
         // A write to a closed socket/pipe should surface as EPIPE, not kill the
@@ -32,7 +33,9 @@ struct FlactasticApp: App {
         _listening = State(initialValue: listeningStore)
         let playerState = PlayerState(listening: listeningStore, settings: settingsStore)
         _player = State(initialValue: playerState)
-        _audioOutput = State(initialValue: AudioOutputManager(settings: settingsStore, engine: playerState.engine))
+        let outputManager = AudioOutputManager(settings: settingsStore, engine: playerState.engine)
+        _audioOutput = State(initialValue: outputManager)
+        _castManager = State(initialValue: CastManager(player: playerState, audioOutput: outputManager, settings: settingsStore))
 
         let store = ArtistStore()
         let cache = ArtistRemoteCache()
@@ -47,12 +50,7 @@ struct FlactasticApp: App {
         // paste-and-resolve.
         let registry = StreamerRegistry()
         let lucidaController = LucidaWebController()
-        // Shared across the provider (per-track fallback when Lucida's own
-        // Spotify downloader fails) and the playlist rebuild pipeline
-        // (Amazon-first source ordering) so both respect the same Odesli
-        // rate-limit throttle instead of racing two independent ones.
-        let amazonMatcher = AmazonMatchService()
-        let lucidaProvider = LucidaWebProvider(controller: lucidaController, amazonMatcher: amazonMatcher)
+        let lucidaProvider = LucidaWebProvider(controller: lucidaController)
         registry.register(lucidaProvider)
         _lucidaController = State(initialValue: lucidaController)
         let lib = LibraryStore()
@@ -64,8 +62,8 @@ struct FlactasticApp: App {
         _library = State(initialValue: lib)
         _metadataWriter = State(initialValue: writer)
 
-        // Spotify-playlist rebuild: matches each track to Amazon Music via
-        // Odesli, downloads through the shared coordinator, and assembles a
+        // Spotify-playlist rebuild: downloads each track (via a matched
+        // non-Spotify source when possible) through the shared coordinator, and assembles a
         // local playlist. Shares the playlistStore/library/Lucida instances.
         let plStore = PlaylistStore()
         _playlistStore = State(initialValue: plStore)
@@ -74,8 +72,7 @@ struct FlactasticApp: App {
             downloads: downloads,
             playlistStore: plStore,
             library: lib,
-            lucidaProvider: lucidaProvider,
-            amazonMatcher: amazonMatcher
+            lucidaProvider: lucidaProvider
         ))
 
         let lyricsCache = LyricsRemoteCache()
@@ -113,6 +110,7 @@ struct FlactasticApp: App {
                             .environment(listening)
                             .environment(settings)
                             .environment(audioOutput)
+                            .environment(castManager)
                             .environment(playlistStore)
                             .environment(syncModel)
                             .environment(artistStore)

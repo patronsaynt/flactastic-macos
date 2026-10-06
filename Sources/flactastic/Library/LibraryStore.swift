@@ -18,6 +18,8 @@ final class LibraryStore {
         didSet {
             albumsCache = nil
             albumsByIDCache = nil
+            artistResolverCache = nil
+            artistSummariesCache = nil
             tracksRevision &+= 1
         }
     }
@@ -28,6 +30,12 @@ final class LibraryStore {
     /// whole thing, for passes like `deduplicateArtworkStorage` that change
     /// storage but not values — gets byte-compared on the main thread.
     private(set) var tracksRevision: Int = 0
+    /// Built on first use after each `tracks` change. Building one walks the
+    /// whole library, and artist links ask for it from every row they draw.
+    @ObservationIgnored var artistResolverCache: ArtistResolver?
+    /// The artist index, kept until `tracks` or the artist overrides change
+    /// so the Artists section doesn't rebuild it every time it appears.
+    @ObservationIgnored var artistSummariesCache: (overridesRevision: Int, summaries: [ArtistSummary])?
     var scanState: ScanState = .idle
     /// Flips to `true` once the app's initial library load resolves (either a
     /// successful scan, a failure, or a confirmed no-op when there's nothing
@@ -36,10 +44,10 @@ final class LibraryStore {
     /// later manual refreshes do not reset it.
     var hasCompletedInitialLoad: Bool = false
 
-    /// Ids that have already played their Collection-grid/list entrance
-    /// (`riseFadeIn`) animation at least once this run. Deliberately kept
-    /// here rather than as local `@State` on `CollectionView`/
-    /// `ArtistsCollectionView`/`AllTracksView`: `ContentView` remounts each
+    /// Ids that have already played their Collection album-grid or track-list
+    /// entrance (`riseFadeIn`) animation at least once this run. Deliberately
+    /// kept here rather than as local `@State` on `CollectionView`/
+    /// `AllTracksView`: `ContentView` remounts each
     /// tab's content via `.id(router.selectedTab)` on every switch, which
     /// would reset local `@State` and replay every cell's fade-in each time
     /// you navigate away and back. Living on this long-lived store means an
@@ -49,9 +57,8 @@ final class LibraryStore {
     /// while scrolling, and no view renders differently when membership
     /// changes — `riseFadeIn` reads the value once at cell init via a Binding
     /// getter. Observing them made each newly revealed cell invalidate the
-    /// entire grid/list container mid-scroll.
+    /// entire grid or list container mid-scroll.
     @ObservationIgnored var revealedAlbumIDs:  Set<String> = []
-    @ObservationIgnored var revealedArtistIDs: Set<String> = []
     @ObservationIgnored var revealedTrackIDs:  Set<UUID> = []
 
     /// Per-album artwork cache. Keyed by album ID (artist|name). A key's

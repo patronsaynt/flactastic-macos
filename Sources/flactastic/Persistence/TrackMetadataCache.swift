@@ -19,6 +19,10 @@ struct TrackMetadataCacheEntry: Codable, Sendable {
     var isCompilation: Bool
     var isMixCompilation: Bool
     var hasArtwork: Bool
+    /// Codec-refined format (`.m4a` → ALAC vs AAC). Optional so sidecars
+    /// written before it existed still decode; `nil` there means an `.m4a`
+    /// entry predates refinement and must be re-parsed once.
+    var fileFormat: String?
     var fileSize: Int64
     var mtime: Date
 
@@ -37,6 +41,7 @@ struct TrackMetadataCacheEntry: Codable, Sendable {
         isCompilation = track.isCompilation
         isMixCompilation = track.isMixCompilation
         hasArtwork = track.artwork != nil
+        fileFormat = track.fileFormat.rawValue
         self.fileSize = fileSize
         self.mtime = mtime
     }
@@ -50,10 +55,20 @@ struct TrackMetadataCacheEntry: Codable, Sendable {
         return size == fileSize && abs(modified.timeIntervalSince(mtime)) < 0.001
     }
 
-    /// Hydrates every field this entry covers. `id`, `url`, `fileFormat`,
-    /// `dateAdded`, and `artwork` are deliberately untouched — the first four
-    /// come from the cheap scan, artwork is re-read from the file.
+    /// False for `.m4a` entries cached before codec refinement — they'd keep
+    /// every AAC file labeled ALAC until the file itself changed.
+    func hasFormat(forFileAt url: URL) -> Bool {
+        fileFormat != nil || url.pathExtension.lowercased() != "m4a"
+    }
+
+    /// Hydrates every field this entry covers. `id`, `url`, `dateAdded`, and
+    /// `artwork` are deliberately untouched — the first three come from the
+    /// cheap scan, artwork is re-read from the file. `fileFormat` overrides
+    /// the scan's extension guess only when the entry recorded one.
     func apply(to track: inout Track) {
+        if let fileFormat, let format = AudioFileFormat(rawValue: fileFormat) {
+            track.fileFormat = format
+        }
         track.title = title
         track.artist = artist
         track.albumArtist = albumArtist

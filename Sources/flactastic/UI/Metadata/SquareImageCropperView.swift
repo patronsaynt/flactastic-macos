@@ -13,7 +13,7 @@ struct CroppingPayload: Identifiable {
 /// via `onComplete`.
 ///
 /// Used by album artwork (1:1), playlist covers (1:1), artist profile
-/// images (1:1), and artist banners (3:1) so all stored images are
+/// images (1:1), and artist banners (16:9) so all stored images are
 /// guaranteed to match the surface they'll render on.
 struct ImageCropperView: View {
     let sourceData: Data
@@ -21,6 +21,14 @@ struct ImageCropperView: View {
     var aspectRatio: CGFloat = 1.0
     /// Title shown in the sheet header.
     var title: String = "Crop Image"
+    /// Longest output width, in pixels. Crops smaller than this are never
+    /// upscaled past 1200px.
+    var maxOutputPixelWidth: CGFloat = 1200
+    /// JPEG quality for the stored result; nil keeps PNG. Large photographic
+    /// crops (banners) use JPEG so the override store stays small.
+    var jpegQuality: CGFloat? = nil
+    /// Crop window width in points; nil picks a default from the ratio.
+    var cropWindowWidth: CGFloat? = nil
     let onComplete: (Data) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -30,11 +38,8 @@ struct ImageCropperView: View {
     @State private var dragStart: CGSize = .zero
 
     /// Width of the crop window, in points. Height is derived from aspectRatio.
-    private var cropWidth: CGFloat { aspectRatio >= 1 ? 380 : 320 }
+    private var cropWidth: CGFloat { cropWindowWidth ?? (aspectRatio >= 1 ? 380 : 320) }
     private var cropHeight: CGFloat { cropWidth / aspectRatio }
-    /// Output pixel width — keeps ~1000px on the long edge regardless of ratio.
-    private var outputPixelWidth: CGFloat { 1200 }
-    private var outputPixelHeight: CGFloat { outputPixelWidth / aspectRatio }
     private let minScale: CGFloat = 1.0
     private let maxScale: CGFloat = 4.0
 
@@ -199,8 +204,9 @@ struct ImageCropperView: View {
         let cropRect = CGRect(x: srcX, y: srcY, width: srcW, height: srcH).integral
         guard let cropped = cg.cropping(to: cropRect) else { return }
 
-        let outW = Int(outputPixelWidth)
-        let outH = Int(outputPixelHeight)
+        let outputWidth = min(maxOutputPixelWidth, max(cropRect.width, 1200))
+        let outW = Int(outputWidth)
+        let outH = Int(outputWidth / aspectRatio)
         guard let ctx = CGContext(
             data: nil,
             width: outW,
@@ -215,7 +221,9 @@ struct ImageCropperView: View {
         guard let outCG = ctx.makeImage() else { return }
 
         let rep = NSBitmapImageRep(cgImage: outCG)
-        guard let data = rep.representation(using: .png, properties: [:]) else { return }
+        let encoded = jpegQuality.map { rep.representation(using: .jpeg, properties: [.compressionFactor: $0]) }
+            ?? rep.representation(using: .png, properties: [:])
+        guard let data = encoded else { return }
 
         onComplete(data)
         dismiss()

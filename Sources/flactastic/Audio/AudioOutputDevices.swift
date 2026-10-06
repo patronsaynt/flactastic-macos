@@ -10,6 +10,13 @@ struct AudioOutputDevice: Identifiable, Hashable, Sendable {
     let id: AudioDeviceID
     let uid: String
     let name: String
+    var transportType: UInt32 = 0
+
+    /// An AirPlay receiver macOS has routed to. Fixed at 44.1 kHz and buffered
+    /// by AirPlay itself (~2 s), so it's offered from the player bar's speaker
+    /// picker rather than pinned in Settings.
+    var isAirPlay: Bool { transportType == kAudioDeviceTransportTypeAirPlay }
+    var isBuiltIn: Bool { transportType == kAudioDeviceTransportTypeBuiltIn }
 }
 
 /// What the audio graph should output through. `nil` rate / bit depth means
@@ -42,7 +49,8 @@ enum AudioHAL {
             guard !outputStreams(id).isEmpty,
                   let uid = string(id, kAudioDevicePropertyDeviceUID) else { return nil }
             let name = string(id, kAudioObjectPropertyName) ?? uid
-            return AudioOutputDevice(id: id, uid: uid, name: name)
+            let transport: UInt32 = value(id, address(kAudioDevicePropertyTransportType)) ?? 0
+            return AudioOutputDevice(id: id, uid: uid, name: name, transportType: transport)
         }
     }
 
@@ -266,8 +274,20 @@ final class AudioOutputManager {
 
     var defaultDevice: AudioOutputDevice? { devices.first { $0.id == defaultDeviceID } }
 
-    /// The saved device when it's connected, otherwise the system default.
+    /// Session-only route chosen from the player bar's speaker picker (an
+    /// AirPlay receiver, or "This Mac" while the system default is AirPlay).
+    /// Takes precedence over the saved device and is never persisted.
+    private(set) var overrideDeviceUID: String?
+
+    /// Called after the device list or system default changes.
+    @ObservationIgnored var onHardwareChange: (() -> Void)?
+
+    /// The override, else the saved device when it's connected, otherwise
+    /// the system default.
     var effectiveDevice: AudioOutputDevice? {
+        if let uid = overrideDeviceUID, let device = devices.first(where: { $0.uid == uid }) {
+            return device
+        }
         if let uid = settings.outputDeviceUID, let device = devices.first(where: { $0.uid == uid }) {
             return device
         }
@@ -314,6 +334,13 @@ final class AudioOutputManager {
             settings.outputSampleRate = nil
         }
         dropUnsupportedBitDepth()
+        apply()
+    }
+
+    func setOverrideDevice(uid: String?) {
+        guard uid != overrideDeviceUID else { return }
+        overrideDeviceUID = uid
+        refreshCapabilities()
         apply()
     }
 
@@ -367,6 +394,7 @@ final class AudioOutputManager {
         if effectiveDeviceID != previous {
             apply()
         }
+        onHardwareChange?()
     }
 
     private func refreshDevices() {

@@ -112,6 +112,34 @@ extension Track {
     }
 }
 
+extension Track {
+    /// Returns a copy of this track pointing at `newURL`, with every other
+    /// field (including its stable ID) carried over. Used after a file move;
+    /// the format is re-derived from the new extension when recognizable.
+    func withURL(_ newURL: URL) -> Track {
+        Track(
+            id: id,
+            url: newURL,
+            title: title,
+            artist: artist,
+            albumArtist: albumArtist,
+            album: album,
+            trackNumber: trackNumber,
+            duration: duration,
+            artwork: artwork,
+            fileFormat: AudioFileFormat.classify(newURL, keeping: fileFormat),
+            sampleRate: sampleRate,
+            bitDepth: bitDepth,
+            genre: genre,
+            secondaryGenres: secondaryGenres,
+            year: year,
+            isCompilation: isCompilation,
+            isMixCompilation: isMixCompilation,
+            dateAdded: dateAdded
+        )
+    }
+}
+
 extension Array where Element == Track {
     /// Sort tracks by (album, trackNumber, title) with stable fallbacks for missing metadata.
     func sortedForLibrary() -> [Track] {

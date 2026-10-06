@@ -7,6 +7,7 @@ struct FloatingPlayerBar: View {
     @Environment(PlaylistAddCoordinator.self) private var playlistAddCoordinator
     @Environment(LibraryStore.self)      private var library
     @Environment(NavigationRouter.self)  private var router
+    @Environment(CastManager.self)       private var cast
 
     var body: some View {
         if player.currentTrack != nil {
@@ -33,6 +34,7 @@ struct FloatingPlayerBar: View {
                     Spacer(minLength: 0)
                     addToPlaylistButton
                     queueToggleButton
+                    SpeakerPickerButton()
                     VolumeSliderView()
                 }
             }
@@ -59,6 +61,13 @@ struct FloatingPlayerBar: View {
                         Text(artist)
                             .font(.system(size: 11.5))
                             .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    if let speaker = cast.activeSpeaker {
+                        Label("Playing on \(speaker.name)",
+                              systemImage: speaker.isAirPlay ? "airplay.audio" : "hifispeaker.fill")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(Theme.accent)
                             .lineLimit(1)
                     }
                 }

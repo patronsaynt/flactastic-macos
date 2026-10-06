@@ -911,14 +911,26 @@ struct DownloadTabView: View {
                     Text(job.track.artists.map(\.name).joined(separator: ", "))
                         .font(.system(size: 12)).foregroundStyle(Theme.textTertiary).lineLimit(1)
                 }
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Theme.divider)
-                        Capsule().fill(jobAccentColor(job.status))
-                            .frame(width: geo.size.width * jobProgress(job.status))
+                if case .failed(let reason) = job.status {
+                    // Full cause in place of the bar — the status column is
+                    // too narrow for multi-source reasons.
+                    Text(reason)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.qualityLow)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                        .help(reason)
+                } else {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Theme.divider)
+                            Capsule().fill(jobAccentColor(job.status))
+                                .frame(width: geo.size.width * jobProgress(job.status))
+                        }
                     }
+                    .frame(height: 4)
                 }
-                .frame(height: 4)
             }
             Text(jobStatusLabel(job.status))
                 .font(.system(size: 12).monospacedDigit())
@@ -1209,55 +1221,7 @@ struct DownloadTabView: View {
     }
 
     private func playlistCard(_ p: SpotifyAuthController.PlaylistSummary) -> some View {
-        Button { openPlaylist(p) } label: {
-            VStack(alignment: .leading, spacing: 12) {
-                ZStack {
-                    if let url = p.coverArtURL {
-                        AsyncImage(url: url) { image in
-                            image.resizable().aspectRatio(contentMode: .fill)
-                        } placeholder: {
-                            LinearGradient(colors: [Color(white: 0.16), Color(white: 0.07)],
-                                           startPoint: .topLeading, endPoint: .bottomTrailing)
-                        }
-                    } else {
-                        LinearGradient(
-                            colors: p.id == SpotifyAuthController.likedSongsID
-                                ? [Color(red: 0.35, green: 0.16, blue: 0.5), Color(red: 0.1, green: 0.08, blue: 0.22)]
-                                : [Color(white: 0.16), Color(white: 0.07)],
-                            startPoint: .topLeading, endPoint: .bottomTrailing)
-                        .overlay(
-                            Image(systemName: p.id == SpotifyAuthController.likedSongsID ? "heart.fill" : "music.note.list")
-                                .font(.system(size: 28, weight: .thin))
-                                .foregroundStyle(Color.white.opacity(p.id == SpotifyAuthController.likedSongsID ? 0.85 : 0.22)))
-                    }
-                }
-                .aspectRatio(1, contentMode: .fill)
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-                .shadow(color: .black.opacity(0.4), radius: 11, x: 0, y: 8)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(p.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        // Always reserve two lines so 1- and 2-line titles
-                        // produce identical card heights across the grid.
-                        .lineLimit(2, reservesSpace: true)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(p.trackCount < 0 ? "your saved tracks" : "\(p.owner ?? "you") · \(p.trackCount) tracks")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.horizontal, 2).padding(.bottom, 2)
-            }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.divider, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
+        SpotifyPlaylistCard(playlist: p) { openPlaylist(p) }
     }
 
     // ── Error ────────────────────────────────────────────────────────────
@@ -1505,7 +1469,7 @@ struct DownloadTabView: View {
         case .tagging:    return "Tagging…"
         case .finishing:  return "Moving into library…"
         case .completed:  return "Done"
-        case .failed(let m): return "Failed — \(m)"
+        case .failed:     return "Failed"
         case .cancelled:  return "Cancelled"
         case .skipped:    return "Already in library"
         }
@@ -1645,5 +1609,83 @@ private struct VpnNoticeSheet: View {
         .background(Theme.surface)
         .clipShape(RoundedRectangle(cornerRadius: 18))
         .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 8)
+    }
+}
+
+/// A Spotify playlist tile in the Downloads grid. Own view so it can carry
+/// the same hover rise + cover glow as library cards.
+private struct SpotifyPlaylistCard: View {
+    let playlist: SpotifyAuthController.PlaylistSummary
+    let onOpen: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 12) {
+                ZStack {
+                    if let url = playlist.coverArtURL {
+                        AsyncImage(url: url) { image in
+                            image.resizable().aspectRatio(contentMode: .fill)
+                        } placeholder: {
+                            LinearGradient(colors: [Color(white: 0.16), Color(white: 0.07)],
+                                           startPoint: .topLeading, endPoint: .bottomTrailing)
+                        }
+                    } else {
+                        LinearGradient(
+                            colors: playlist.id == SpotifyAuthController.likedSongsID
+                                ? [Color(red: 0.35, green: 0.16, blue: 0.5), Color(red: 0.1, green: 0.08, blue: 0.22)]
+                                : [Color(white: 0.16), Color(white: 0.07)],
+                            startPoint: .topLeading, endPoint: .bottomTrailing)
+                        .overlay(
+                            Image(systemName: playlist.id == SpotifyAuthController.likedSongsID ? "heart.fill" : "music.note.list")
+                                .font(.system(size: 28, weight: .thin))
+                                .foregroundStyle(Color.white.opacity(playlist.id == SpotifyAuthController.likedSongsID ? 0.85 : 0.22)))
+                    }
+                }
+                // Square slot first, cover overlaid and clipped to it, so
+                // non-square Spotify mosaics/photos are cropped instead of
+                // widening the card off-grid.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .modifier(SquareSlot())
+                .clipShape(RoundedRectangle(cornerRadius: 9))
+                .shadow(color: .black.opacity(0.4), radius: 11, x: 0, y: 8)
+                .coverHoverHighlight(isHovering: isHovering, cornerRadius: 9)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(playlist.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                        // Always reserve two lines so 1- and 2-line titles
+                        // produce identical card heights across the grid.
+                        .lineLimit(2, reservesSpace: true)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Text(playlist.trackCount < 0 ? "your saved tracks" : "\(playlist.owner ?? "you") · \(playlist.trackCount) tracks")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textTertiary)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(.horizontal, 2).padding(.bottom, 2)
+            }
+            .padding(12)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.surface))
+            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.divider, lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .cardHoverLift(isHovering: isHovering)
+        .onHover { isHovering = $0 }
+    }
+}
+
+/// Fixes content to a square of the proposed width, centering and clipping
+/// whatever is inside.
+private struct SquareSlot: ViewModifier {
+    func body(content: Content) -> some View {
+        Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay { content }
+            .clipped()
     }
 }

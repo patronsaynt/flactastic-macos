@@ -61,7 +61,7 @@ actor LibraryScanner {
     /// none at all when the cache says the file has no artwork). A mismatch
     /// falls through to the full parse below.
     func loadMetadata(for track: Track, cached: TrackMetadataCacheEntry? = nil) async -> Track {
-        if let cached, cached.isValid(forFileAt: track.url.path) {
+        if let cached, cached.isValid(forFileAt: track.url.path), cached.hasFormat(forFileAt: track.url) {
             var updated = track
             cached.apply(to: &updated)
             if cached.hasArtwork {
@@ -141,6 +141,9 @@ actor LibraryScanner {
         if let file = try? AVAudioFile(forReading: track.url) {
             updated.sampleRate = file.processingFormat.sampleRate
             let asbd = file.fileFormat.streamDescription.pointee
+            if let refined = AudioFileFormat.refine(updated.fileFormat, codec: asbd.mFormatID) {
+                updated.fileFormat = refined
+            }
             if asbd.mBitsPerChannel > 0 {
                 updated.bitDepth = Int(asbd.mBitsPerChannel)
             }

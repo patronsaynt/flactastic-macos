@@ -331,6 +331,7 @@ private struct CountedPlayThresholdRow: View {
 
 private struct AudioSettingsPane: View {
     @Environment(AudioOutputManager.self) private var audioOutput
+    @Environment(Settings.self) private var settings
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
@@ -344,7 +345,9 @@ private struct AudioSettingsPane: View {
                     )) {
                         Text(systemDefaultLabel).tag("")
                         Divider()
-                        ForEach(audioOutput.devices) { device in
+                        // AirPlay receivers come and go with the route, so
+                        // they're picked from the player bar instead.
+                        ForEach(audioOutput.devices.filter { !$0.isAirPlay }) { device in
                             Text(device.name).tag(device.uid)
                         }
                         if audioOutput.isSelectedDeviceMissing, let uid = audioOutput.selectedDeviceUID {
@@ -386,6 +389,23 @@ private struct AudioSettingsPane: View {
                         }
                     }
                     .disabled(audioOutput.availableBitDepths.isEmpty)
+                }
+            }
+
+            // Network Speakers ─────────────────────────────────────────────
+            SettingsGroup(title: "Network Speakers") {
+                PickerRow(
+                    label: "Streaming Quality",
+                    subtitle: "Network speakers fetch the original file and buffer it, so playback holds up on busy Wi-Fi. Lower this only if a speaker stutters or can't play hi-res files. Applies the next time you connect."
+                ) {
+                    Picker("", selection: Binding(
+                        get: { settings.networkStreamQuality },
+                        set: { settings.networkStreamQuality = $0 }
+                    )) {
+                        ForEach(NetworkStreamQuality.allCases) { quality in
+                            Text(quality.label).tag(quality)
+                        }
+                    }
                 }
             }
 
@@ -571,9 +591,9 @@ private struct AppearanceSettingsPane: View {
             // Playlists tabs now, so it no longer appears here.
             SettingsGroup(title: "Library View") {
                 ToggleRow(
-                    label: "Group Albums by Artist",
-                    subtitle: "In grid view, cluster albums under their artist.",
-                    isOn: $settings.groupByArtist
+                    label: "Show All Artists",
+                    subtitle: "Also list artists who only appear as features on other artists' releases.",
+                    isOn: $settings.showAllArtists
                 )
             }
 

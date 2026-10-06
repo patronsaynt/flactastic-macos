@@ -30,7 +30,12 @@ struct ArtistOverride: Codable, Sendable, Hashable {
 @Observable
 @MainActor
 final class ArtistStore {
-    private(set) var overrides: [String: ArtistOverride] = [:]
+    private(set) var overrides: [String: ArtistOverride] = [:] {
+        didSet { revision &+= 1 }
+    }
+    /// Bumps on every change to `overrides`: a cheap value for views to key
+    /// cached work on, instead of comparing the image-carrying dictionary.
+    private(set) var revision = 0
 
     private let fileURL: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!

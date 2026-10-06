@@ -5,15 +5,24 @@ struct AlbumCardView: View {
     @Environment(\.displayScale) private var displayScale
 
     let album: Album
+    /// Size the cover is drawn at, when a layout makes it larger than the
+    /// standard grid cell. Decoding at 180pt and stretching looks soft.
+    var artworkPointSize: CGFloat? = nil
 
     /// Drives the card's rise and the cover's highlight together, so hovering
     /// anywhere on the card — cover or captions — lights the whole thing.
     @State private var isHovering = false
 
     private let artSize: CGFloat = 180
+    private var decodeSize: CGFloat {
+        guard let artworkPointSize, artworkPointSize > artSize else { return artSize }
+        return ArtworkImageCache.decodePointSize(for: artworkPointSize)
+    }
     private var cornerRadius: CGFloat { settings.roundedArtwork ? Theme.Radius.md : 0 }
 
     private var artworkCacheID: String { "album:\(album.id)" }
+    /// Identity of the decoded image: the album plus the size it was decoded at.
+    private var decodedKey: String { "\(artworkCacheID)#\(decodeSize)" }
 
     /// Off-main-decoded image, tagged with the cache id it was decoded for so
     /// a cell whose identity changes never shows the previous album's cover.
@@ -48,13 +57,13 @@ struct AlbumCardView: View {
         }
         .cardHoverLift(isHovering: isHovering)
         .onHover { isHovering = $0 }
-        .task(id: artworkCacheID) {
+        .task(id: decodedKey) {
             guard resolvedImage == nil, let data = album.artwork else { return }
             let box = await ArtworkImageCache.shared.thumbnailAsync(
-                for: data, id: artworkCacheID, pointSize: artSize, scale: displayScale
+                for: data, id: artworkCacheID, pointSize: decodeSize, scale: displayScale
             )
             guard let image = box.image else { return }
-            decoded = DecodedImage(key: artworkCacheID, image: image)
+            decoded = DecodedImage(key: decodedKey, image: image)
         }
     }
 
@@ -62,11 +71,11 @@ struct AlbumCardView: View {
     /// happens in the `.task` above so scrolling never blocks on it.
     private var resolvedImage: NSImage? {
         if let hit = ArtworkImageCache.shared.cachedThumbnail(
-            id: artworkCacheID, pointSize: artSize, scale: displayScale
+            id: artworkCacheID, pointSize: decodeSize, scale: displayScale
         ) {
             return hit
         }
-        if let decoded, decoded.key == artworkCacheID { return decoded.image }
+        if let decoded, decoded.key == decodedKey { return decoded.image }
         return nil
     }
 

@@ -19,6 +19,10 @@ struct ArtistEditorView: View {
     /// cropped result.
     @State private var pendingCrop: PendingCrop? = nil
 
+    /// The artist page's banner fills the window below the top bar, so
+    /// banners are cropped to a widescreen frame rather than a strip.
+    static let bannerAspectRatio: CGFloat = 16.0 / 9.0
+
     private struct PendingCrop: Identifiable {
         let id = UUID()
         enum Target { case banner, profile }
@@ -34,14 +38,18 @@ struct ArtistEditorView: View {
             Divider().foregroundStyle(Theme.divider)
             footer
         }
-        .frame(width: 580, height: 620)
+        .frame(width: 580, height: 720)
         .background(Theme.surface)
         .onAppear(perform: loadOverride)
         .sheet(item: $pendingCrop) { crop in
+            let isBanner = crop.target == .banner
             ImageCropperView(
                 sourceData: crop.data,
-                aspectRatio: crop.target == .banner ? 3.0 : 1.0,
-                title: crop.target == .banner ? "Crop Banner" : "Crop Profile Image"
+                aspectRatio: isBanner ? Self.bannerAspectRatio : 1.0,
+                title: isBanner ? "Crop Banner" : "Crop Profile Image",
+                maxOutputPixelWidth: isBanner ? 2400 : 1200,
+                jpegQuality: isBanner ? 0.86 : nil,
+                cropWindowWidth: isBanner ? 560 : nil
             ) { cropped in
                 switch crop.target {
                 case .banner:
@@ -128,7 +136,7 @@ struct ArtistEditorView: View {
                     .buttonStyle(.plain)
                 }
                 Spacer()
-                Text("Cropped to a 3:1 banner.")
+                Text("Cropped to 16:9 to fill the artist page.")
                     .font(.system(size: 10))
                     .foregroundStyle(Theme.textTertiary)
             }
@@ -137,17 +145,26 @@ struct ArtistEditorView: View {
 
     private var bannerPreview: some View {
         let displayData = currentBannerData ?? fallbackArtwork
-        return ZStack {
-            if let data = displayData, let img = NSImage(data: data) {
-                Image(nsImage: img)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } else {
-                Theme.surfaceElevated
+        // Size a clear 16:9 box first and lay the image over it. A fill-mode
+        // image as the base would report its own size and stretch the sheet.
+        return Color.clear
+            .aspectRatio(Self.bannerAspectRatio, contentMode: .fit)
+            .frame(maxWidth: .infinity)
+            .overlay {
+                if let data = displayData, let img = NSImage(data: data) {
+                    Image(nsImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .allowsHitTesting(false)
+                } else {
+                    Theme.surfaceElevated
+                }
             }
+            .clipped()
+            .contentShape(Rectangle())
+            .overlay(alignment: .bottomLeading) {
+            if displayData != nil { pageLayoutGuide }
         }
-        .frame(height: 120)
-        .frame(maxWidth: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
         .overlay {
             if currentBannerData == nil {
@@ -156,6 +173,31 @@ struct ArtistEditorView: View {
                     .foregroundStyle(Theme.textTertiary)
             }
         }
+    }
+
+    /// Faint stand-ins for the profile picture, name and buttons, so the
+    /// user can see which part of the banner sits under them on the page.
+    private var pageLayoutGuide: some View {
+        ZStack(alignment: .bottomLeading) {
+            LinearGradient(colors: [.clear, .black.opacity(0.45)], startPoint: .center, endPoint: .bottom)
+            HStack(alignment: .bottom, spacing: 10) {
+                Circle()
+                    .strokeBorder(.white.opacity(0.7), lineWidth: 1.5)
+                    .frame(width: 58, height: 58)
+                VStack(alignment: .leading, spacing: 6) {
+                    Capsule().fill(.white.opacity(0.55)).frame(width: 150, height: 16)
+                    Capsule().fill(.white.opacity(0.35)).frame(width: 80, height: 5)
+                    HStack(spacing: 5) {
+                        Capsule().fill(.white.opacity(0.5)).frame(width: 30, height: 11)
+                        Capsule().fill(.white.opacity(0.3)).frame(width: 34, height: 11)
+                    }
+                    .padding(.top, 3)
+                }
+            }
+            .padding(.leading, 12)
+            .padding(.bottom, 30)
+        }
+        .allowsHitTesting(false)
     }
 
     // MARK: - Profile image

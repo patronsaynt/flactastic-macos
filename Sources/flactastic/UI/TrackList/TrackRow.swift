@@ -3,9 +3,12 @@ import SwiftUI
 struct TrackRow: View {
     /// Shared with `FLTrackListHeader` so the FORMAT / QUALITY / LENGTH column
     /// headers stay aligned with these badges regardless of content length.
-    static let formatColumnWidth: CGFloat = 46
-    static let qualityColumnWidth: CGFloat = 92
-    static let lengthColumnWidth: CGFloat = 44
+    /// Fixed, not minimum, widths: sized for the longest values ("Hi-Res ·
+    /// 24/192", "Mid · 44.1 kHz", "1:00:03") so a long badge or an hour-long
+    /// track can't push its neighbours out of line.
+    static let formatColumnWidth: CGFloat = 56
+    static let qualityColumnWidth: CGFloat = 124
+    static let lengthColumnWidth: CGFloat = 60
 
     let track: Track
     let isPlaying: Bool
@@ -51,7 +54,8 @@ struct TrackRow: View {
                 .font(.system(size: 10, weight: .medium))
                 .tracking(0.3)
                 .foregroundStyle(Theme.textTertiary)
-                .frame(minWidth: Self.formatColumnWidth - 14, alignment: .center)
+                .lineLimit(1)
+                .frame(width: Self.formatColumnWidth - 14, alignment: .center)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 3)
                 .background(
@@ -67,8 +71,7 @@ struct TrackRow: View {
                 .foregroundStyle(Theme.textSecondary)
                 .monospacedDigit()
                 .lineLimit(1)
-                .fixedSize()
-                .frame(minWidth: Self.lengthColumnWidth, alignment: .trailing)
+                .frame(width: Self.lengthColumnWidth, alignment: .trailing)
 
             if showDragHandle {
                 Image(systemName: "line.3.horizontal")
@@ -128,24 +131,6 @@ struct TrackRow: View {
     }
 
     private var qualityBadge: some View {
-        let quality = AudioQuality.classify(
-            sampleRate: track.sampleRate,
-            bitDepth: track.bitDepth,
-            format: track.fileFormat
-        )
-        let detail = FormatUtils.formatSampleRate(track.sampleRate, bitDepth: track.bitDepth)
-        let label = detail.map { "\(quality.label) · \($0)" } ?? quality.label
-
-        return Text(label)
-            .font(.system(size: 10, weight: .semibold))
-            .tracking(0.3)
-            .foregroundStyle(quality.color)
-            .frame(minWidth: Self.qualityColumnWidth - 14, alignment: .center)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                    .fill(quality.color.opacity(0.12))
-            )
+        TrackQualityBadge(track: track)
     }
 }

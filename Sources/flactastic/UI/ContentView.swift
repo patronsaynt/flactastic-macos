@@ -174,14 +174,16 @@ struct ContentView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if router.selectedTab != .visualizer && router.selectedTab != .download {
+            if router.selectedTab != .visualizer && router.selectedTab != .download
+                && !router.hidesPlayerBar {
                 FloatingPlayerBar()
                     .frame(maxWidth: 700)
                     .padding(.bottom, 16)
                     .offset(x: player.isQueueVisible ? -180 : 0)
-                    .transition(.opacity)
+                    .transition(.opacity.combined(with: .offset(y: 24)))
             }
         }
+        .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.5), value: router.hidesPlayerBar)
         .overlay {
             if let data = router.artworkZoomData {
                 artworkZoomOverlay(data: data)
@@ -259,7 +261,10 @@ struct ContentView: View {
     private func prefetchArtistImages() {
         guard settings.autoFetchArtistImages else { return }
         let resolver = library.makeArtistResolver()
+        // Artists hidden from the lineup (feature-only, unless "Show All
+        // Artists" is on) fetch their image when their page opens instead.
         let summaries = library.allArtists(resolver: resolver, overrides: artistStore.overrides)
+            .filter { settings.showAllArtists || !$0.albums.isEmpty || !$0.singles.isEmpty }
         let artists = summaries.map { (key: $0.id, displayName: $0.displayName) }
         artistImageFetcher.prefetchAll(artists)
     }

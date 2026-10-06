@@ -1,5 +1,9 @@
 import SwiftUI
 
+/// An album, in the artist page's language: a hero on a blurred wash of the
+/// cover, then the tracklist and more from the same artist. Arrives with the
+/// artist page's entrance: the page zooms in from blurred, then the cover,
+/// title, details and buttons follow in sequence.
 struct AlbumDetailView: View {
     let albumID: String
 
@@ -9,6 +13,9 @@ struct AlbumDetailView: View {
     @Environment(PlaylistAddCoordinator.self) private var playlistAddCoordinator
     @Environment(NavigationRouter.self) private var router
     @Environment(ListeningStore.self) private var listening
+    @Environment(Settings.self) private var settings
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// Track IDs we've observed belonging to this album. Used as a fallback
     /// for resolving the album after a metadata edit renames the album/artist
@@ -28,29 +35,56 @@ struct AlbumDetailView: View {
     @State private var isEditingAlbum = false
     @State private var editingTrack: Track? = nil
     @State private var removalRequest: LibraryRemovalRequest? = nil
+    @State private var hasEntered = false
+    /// The cover, blurred once off the main thread for the backdrop.
+    @State private var backdrop: NSImage?
+    /// Width of one "More by" cover, so it decodes at the size it's drawn.
+    @State private var moreCellWidth: CGFloat = 180
+
+    private static let heroHeight: CGFloat = 560
+
+    private var isLight: Bool { colorScheme == .light }
+    private var calmMotion: Bool { reduceMotion || !settings.fadeAnimationsEnabled }
+    private var ink: Color { isLight ? Theme.textPrimary : .white }
+    private var inkSecondary: Color { isLight ? Color(white: 0.28) : .white.opacity(0.85) }
 
     var body: some View {
         if let album {
-            ZStack {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        FLBackLink(title: router.collectionBackTitle) {
-                            router.goBackInCollection()
-                        }
-                        .padding(.top, 24)
-
-                        albumHeader(album)
-                            .padding(.top, 22)
-                            .padding(.bottom, 28)
-
-                        FLTrackListHeader()
-                        trackList(album.tracks)
-                    }
-                    .padding(.horizontal, collectionGutter)
-                    .padding(.bottom, 100)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    hero(album)
+                    trackList(album)
+                        .padding(.horizontal, collectionGutter - 16)
+                        .padding(.top, 8)
+                        .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.8))
+                    moreByArtist(album)
+                        .padding(.horizontal, collectionGutter)
+                        .padding(.top, 56)
+                        .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.9))
+                }
+                .padding(.bottom, 110)
+            }
+            .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
+            .blur(radius: hasEntered || calmMotion ? 0 : 28)
+            .opacity(hasEntered ? 1 : 0)
+            .background(Theme.background)
+            .onAppear {
+                knownTrackIDs = Set(album.tracks.map(\.id))
+                withAnimation(calmMotion
+                              ? .easeOut(duration: 0.3)
+                              : .timingCurve(0.16, 1, 0.3, 1, duration: 1.1)) {
+                    hasEntered = true
                 }
             }
-            .background(Theme.background)
+            .onChange(of: album.tracks.map(\.id)) { _, ids in
+                knownTrackIDs = Set(ids)
+            }
+            .task(id: backdropID(album)) {
+                backdrop = BlurredArtworkCache.shared.cached(id: backdropID(album))
+                if backdrop == nil {
+                    backdrop = await BlurredArtworkCache.shared.image(for: album.artwork, id: backdropID(album)).image
+                }
+            }
             .sheet(isPresented: $isEditingAlbum) {
                 AlbumMetadataEditorView(album: album)
                     .environment(library)
@@ -60,12 +94,6 @@ struct AlbumDetailView: View {
                 TrackMetadataEditorView(track: track)
                     .environment(library)
             }
-            .onAppear {
-                knownTrackIDs = Set(album.tracks.map(\.id))
-            }
-            .onChange(of: album.tracks.map(\.id)) { _, ids in
-                knownTrackIDs = Set(ids)
-            }
         } else {
             Text("Album not found")
                 .foregroundStyle(Theme.textTertiary)
@@ -74,137 +102,236 @@ struct AlbumDetailView: View {
         }
     }
 
-    // MARK: - Album Header
+    private var arrive: Animation { .timingCurve(0.16, 1, 0.3, 1, duration: 0.7) }
 
-    private func albumHeader(_ album: Album) -> some View {
-        HStack(alignment: .bottom, spacing: 28) {
-            ArtworkView(data: album.artwork, size: 180, id: "album:\(album.id)")
-                .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.3)) {
-                        router.artworkZoomData = album.artwork
-                    }
-                }
-                .onHover { hovering in
-                    if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-                }
+    /// Shared with the artist spotlight, so an album's backdrop is blurred once.
+    private func backdropID(_ album: Album) -> String {
+        "spotlight:\(album.id):\(album.artwork?.count ?? 0)"
+    }
 
-            VStack(alignment: .leading, spacing: 0) {
-                FLEyebrow(text: album.isMixCompilation ? "Mix Compilation" : "Album")
+    // MARK: - Hero
 
-                Text(album.name)
-                    .font(.system(size: 30, weight: .bold))
-                    .tracking(-0.8)
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                    .padding(.top, 6)
+    private func hero(_ album: Album) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            backdropLayer
+                .scaleEffect(hasEntered || calmMotion ? 1 : 1.14)
+                .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 1.9), value: hasEntered)
 
-                metadataLine(album)
-                    .padding(.top, 8)
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(isLight ? 0.12 : 0.35), location: 0),
+                    .init(color: .clear, location: 0.3),
+                    .init(color: Theme.background.opacity(0.25), location: 0.6),
+                    .init(color: Theme.background, location: 1),
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
 
-                HStack(spacing: 10) {
-                    Button {
-                        playAlbum(album, shuffle: false)
-                    } label: {
-                        HStack(spacing: Theme.Spacing.sm) {
-                            Image(systemName: "play.fill")
-                                .font(.system(size: 11))
-                            Text("Play")
+            HStack(alignment: .bottom, spacing: 40) {
+                ArtworkView(data: album.artwork, size: 320, id: "album:\(album.id)")
+                    .shadow(color: .black.opacity(isLight ? 0.25 : 0.6), radius: 30, y: 24)
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            router.artworkZoomData = album.artwork
                         }
                     }
-                    .buttonStyle(FLActionPillStyle(isPrimary: true))
-
-                    Button {
-                        playAlbum(album, shuffle: true)
-                    } label: {
-                        HStack(spacing: Theme.Spacing.sm) {
-                            Image(systemName: "shuffle")
-                                .font(.system(size: 12))
-                            Text("Shuffle")
-                        }
+                    .onHover { hovering in
+                        if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
                     }
-                    .buttonStyle(FLActionPillStyle())
+                    .help("View artwork")
+                    .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
+                    .opacity(hasEntered ? 1 : 0)
+                    .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.9).delay(calmMotion ? 0 : 0.22), value: hasEntered)
 
-                    FLCircleIconButton(systemImage: "pencil") {
-                        isEditingAlbum = true
-                    }
-                    .help("Edit album")
+                heroDetails(album)
+                    .padding(.bottom, 6)
+            }
+            .padding(.horizontal, collectionGutter)
+            .padding(.bottom, 44)
+        }
+        .frame(height: Self.heroHeight)
+        .frame(maxWidth: .infinity)
+        .clipped()
+        .overlay(alignment: .topLeading) {
+            HeroBackButton { router.goBackInCollection() }
+                .padding(.leading, collectionGutter)
+                .padding(.top, Theme.Spacing.xl)
+                .opacity(hasEntered ? 1 : 0)
+                .animation(.easeOut(duration: 0.5).delay(calmMotion ? 0 : 0.15), value: hasEntered)
+        }
+    }
+
+    /// The pre-blurred cover, drawn scaled up with no live blur.
+    private var backdropLayer: some View {
+        Color.clear
+            .overlay {
+                if let backdrop {
+                    Image(nsImage: backdrop)
+                        .resizable()
+                        .interpolation(.medium)
+                        .aspectRatio(contentMode: .fill)
+                        .scaleEffect(1.2)
+                        .saturation(1.4)
+                        .brightness(isLight ? 0.18 : -0.2)
+                } else {
+                    Theme.surface
                 }
-                .padding(.top, 18)
+            }
+            .clipped()
+            .allowsHitTesting(false)
+    }
+
+    private func heroDetails(_ album: Album) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // The title rises out of its own line, clipped like a reveal.
+            Text(album.name)
+                .font(.system(size: 80, weight: .heavy))
+                .tracking(-3)
+                .foregroundStyle(ink)
+                .lineLimit(2)
+                .minimumScaleFactor(0.45)
+                .offset(y: hasEntered || calmMotion ? 0 : 160)
+                .padding(.bottom, 6)
+                .clipped()
+                .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.95).delay(calmMotion ? 0 : 0.32), value: hasEntered)
+
+            HStack(spacing: 0) {
+                if album.isCompilation {
+                    Text("Compilation")
+                        .foregroundStyle(ink)
+                } else {
+                    ArtistLink(credit: album.albumArtist ?? album.artist, font: .system(size: 16, weight: .semibold), color: ink)
+                }
+                Text(kindLine(album))
+                    .foregroundStyle(inkSecondary)
+            }
+            .font(.system(size: 16))
+            .lineLimit(1)
+            .padding(.top, 8)
+            .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.52))
+
+            HStack(spacing: 12) {
+                Text(FormatUtils.playlistSummary(trackCount: album.trackCount, duration: album.totalDuration))
+                    .font(.system(size: 14))
+                    .foregroundStyle(inkSecondary)
+                if let quality = album.qualitySummary {
+                    Text(quality.text)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(quality.color)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(quality.color.opacity(isLight ? 0.14 : 0.18)))
+                }
+            }
+            .padding(.top, 10)
+            .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.52))
+
+            HStack(spacing: Theme.Spacing.md) {
+                Button { playAlbum(album, shuffle: false) } label: {
+                    Label("Play", systemImage: "play.fill")
+                }
+                .buttonStyle(HeroPillStyle(kind: .primary, ink: ink, isLight: isLight))
+                Button { playAlbum(album, shuffle: true) } label: {
+                    Label("Shuffle", systemImage: "shuffle")
+                }
+                .buttonStyle(HeroPillStyle(kind: .secondary, ink: ink, isLight: isLight))
+                Button { isEditingAlbum = true } label: {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(HeroPillStyle(kind: .secondary, ink: ink, isLight: isLight))
+                .help("Edit album")
+                .accessibilityLabel("Edit album")
+            }
+            .padding(.top, 24)
+            .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.62))
+        }
+    }
+
+    /// " · Album · 2024 · Electronic" after the artist.
+    private func kindLine(_ album: Album) -> String {
+        var parts = [album.isMixCompilation ? "Mix Compilation" : "Album"]
+        if let year = album.year { parts.append(String(year)) }
+        if let genre = album.genre { parts.append(genre) }
+        parts.append(contentsOf: album.secondaryGenres)
+        return " · " + parts.joined(separator: " · ")
+    }
+
+    // MARK: - Track list
+
+    private func trackList(_ album: Album) -> some View {
+        // Lazy so a 100-track box set doesn't build every row up front.
+        LazyVStack(spacing: 2) {
+            ForEach(Array(album.tracks.enumerated()), id: \.element.id) { index, track in
+                AlbumTrackRow(
+                    track: track,
+                    number: track.trackNumber ?? index + 1,
+                    fallbackArtist: album.albumArtist ?? album.artist,
+                    isCurrent: player.currentTrack?.id == track.id,
+                    play: { play(album, from: index) }
+                )
+                .flContextMenu {
+                    playbackContextMenuItems(for: [track], player: player)
+                    FLContextMenuItem.divider
+                    FLContextMenuItem.button("Edit...", systemImage: "pencil") { editingTrack = track }
+                    FLContextMenuItem.button("Remove from Library", systemImage: "trash") { removalRequest = LibraryRemovalRequest(title: track.title, tracks: [track]) }
+                    FLContextMenuItem.divider
+                    addToPlaylistMenuItem(track: track)
+                    let artistItems = artistContextMenuItems(
+                        credit: track.artist ?? track.albumArtist,
+                        library: library,
+                        router: router
+                    )
+                    if !artistItems.isEmpty {
+                        FLContextMenuItem.divider
+                        artistItems
+                    }
+                }
             }
         }
     }
 
-    /// `artist · year · genre · N tracks · duration` — replaces the old row of
-    /// metadata chips. The artist segment stays clickable.
-    private func metadataPieces(_ album: Album) -> [String] {
-        var trailing: [String] = []
-        if let year = album.year { trailing.append("\(year)") }
-        if let genre = album.genre { trailing.append(genre) }
-        trailing.append(contentsOf: album.secondaryGenres)
-        trailing.append("\(album.trackCount) track\(album.trackCount == 1 ? "" : "s")")
-        trailing.append(FormatUtils.formatDuration(album.totalDuration))
-        return trailing
+    // MARK: - More by
+
+    /// Other albums by the same album artist, newest first.
+    private func otherAlbums(_ album: Album) -> [Album] {
+        guard !album.isCompilation, let artist = album.albumArtist ?? album.artist else { return [] }
+        return library.albums
+            .filter { $0.id != album.id && ($0.albumArtist ?? $0.artist) == artist }
+            .sorted { ($0.year ?? 0) > ($1.year ?? 0) }
     }
 
     @ViewBuilder
-    private func metadataLine(_ album: Album) -> some View {
-        HStack(spacing: 0) {
-            if album.isCompilation {
-                Text("Compilation")
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(Theme.textSecondary)
-            } else {
-                ArtistLink(
-                    credit: album.artist,
-                    font: .system(size: 13.5),
-                    color: Theme.textSecondary
-                )
-            }
-
-            ForEach(Array(metadataPieces(album).enumerated()), id: \.offset) { _, piece in
-                Text(" · \(piece)")
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-        }
-        .lineLimit(1)
-    }
-
-    // MARK: - Track List
-
-    private func trackList(_ tracks: [Track]) -> some View {
-        // Lazy so a 100-track box set doesn't instantiate every TrackRow
-        // (each with artwork) eagerly — rows materialize as they scroll in.
-        LazyVStack(spacing: 0) {
-            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                TrackRow(track: track, isPlaying: player.currentTrack?.id == track.id)
-                    .flRowStyle(fill: player.currentTrack?.id == track.id ? Theme.surfaceElevated : nil)
-                    .onTapGesture(count: 2) {
-                        player.startFreshQueue(tracks, startAt: index, source: album?.name)
-                        player.engine.play()
-                        if let album { listening.recordAlbumPlay(album) }
-                    }
-                    .flContextMenu {
-                        playbackContextMenuItems(for: [track], player: player)
-                        FLContextMenuItem.divider
-                        FLContextMenuItem.button("Edit...", systemImage: "pencil") { editingTrack = track }
-                        FLContextMenuItem.button("Remove from Library", systemImage: "trash") { removalRequest = LibraryRemovalRequest(title: track.title, tracks: [track]) }
-                        FLContextMenuItem.divider
-                        addToPlaylistMenuItem(track: track)
-                        let artistItems = artistContextMenuItems(
-                            credit: track.artist ?? track.albumArtist,
-                            library: library,
-                            router: router
-                        )
-                        if !artistItems.isEmpty {
-                            FLContextMenuItem.divider
-                            artistItems
+    private func moreByArtist(_ album: Album) -> some View {
+        let others = otherAlbums(album)
+        if !others.isEmpty, let artist = ArtistResolver.displayString(album.albumArtist ?? album.artist) {
+            VStack(alignment: .leading, spacing: 20) {
+                Text("More by \(artist)")
+                    .font(.system(size: 28, weight: .heavy))
+                    .tracking(-0.5)
+                    .foregroundStyle(Theme.textPrimary)
+                LazyVGrid(
+                    columns: Array(repeating: GridItem(.flexible(), spacing: Self.moreSpacing), count: Self.moreColumns),
+                    alignment: .leading,
+                    spacing: 28
+                ) {
+                    ForEach(others.prefix(Self.moreColumns * 2)) { other in
+                        Button { router.collectionPath.append(other.id) } label: {
+                            AlbumCardView(album: other, artworkPointSize: moreCellWidth)
                         }
+                        .buttonStyle(.plain)
                     }
-                    .riseFadeIn(index: index)
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                    moreCellWidth = (width - Self.moreSpacing * CGFloat(Self.moreColumns - 1)) / CGFloat(Self.moreColumns)
+                }
             }
         }
     }
+
+    private static let moreColumns = 6
+    private static let moreSpacing: CGFloat = 20
+
+    // MARK: - Actions
 
     private func addToPlaylistMenuItem(track: Track) -> FLContextMenuItem {
         let newItem: FLContextMenuItem = .textField("New playlist name…", systemImage: "plus") { name in
@@ -234,11 +361,101 @@ struct AlbumDetailView: View {
         return .submenu("Add to Playlist", systemImage: "plus.square.on.square", items: children)
     }
 
+    private func play(_ album: Album, from index: Int) {
+        player.startFreshQueue(album.tracks, startAt: index, source: album.name)
+        player.engine.play()
+        listening.recordAlbumPlay(album)
+    }
+
     private func playAlbum(_ album: Album, shuffle: Bool) {
+        guard !album.tracks.isEmpty else { return }
         player.isShuffleEnabled = shuffle
         let startIndex = shuffle ? Int.random(in: 0..<album.tracks.count) : 0
         player.startFreshQueue(album.tracks, startAt: startIndex, source: album.name)
         player.engine.play()
         listening.recordAlbumPlay(album)
+    }
+}
+
+// MARK: - Track row
+
+/// One track: number (a play button on hover), title with every credited
+/// artist beneath it, the quality badge and the length.
+private struct AlbumTrackRow: View {
+    let track: Track
+    let number: Int
+    /// Shown when the track carries no artist tag of its own.
+    let fallbackArtist: String?
+    let isCurrent: Bool
+    let play: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: 18) {
+            Button(action: play) {
+                Group {
+                    if isCurrent {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.accent)
+                    } else if isHovering {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.textPrimary)
+                    } else {
+                        Text("\(number)")
+                            .font(.system(size: 14).monospacedDigit())
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                }
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Play \(track.title)")
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(track.title)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isCurrent ? Theme.accent : Theme.textPrimary)
+                    .lineLimit(1)
+                ArtistLink(
+                    credit: track.artist ?? fallbackArtist,
+                    font: .system(size: 13),
+                    color: Theme.textSecondary
+                )
+                .lineLimit(1)
+            }
+
+            Spacer(minLength: Theme.Spacing.md)
+
+            TrackQualityBadge(track: track)
+
+            Text(FormatUtils.formatDuration(track.duration))
+                .font(.system(size: 14).monospacedDigit())
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+                .frame(width: TrackRow.lengthColumnWidth, alignment: .trailing)
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 64)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(isCurrent ? Theme.surfaceElevated : (isHovering ? Theme.surface : .clear))
+        )
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .onTapGesture(count: 2, perform: play)
+    }
+}
+
+private extension View {
+    /// Fades and lifts into place when `active` flips, after the zoom.
+    func arrival(_ active: Bool, calm: Bool, animation: Animation) -> some View {
+        self
+            .opacity(active ? 1 : 0)
+            .offset(y: active || calm ? 0 : 16)
+            .animation(calm ? .easeOut(duration: 0.3) : animation, value: active)
     }
 }
