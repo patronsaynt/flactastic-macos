@@ -122,12 +122,17 @@ struct AlbumMetadataEditorView: View {
     }
 
     var body: some View {
-        FLSheet(title: "Edit Album", width: 540, height: 720) {
-            VStack(alignment: .leading, spacing: 0) {
-                formBody
-                Divider().foregroundStyle(Theme.divider)
-                trackListSection
+        FLSheet(title: "Edit Album", width: 740, height: 780) {
+            // One scroll for the whole form, so long tracklists don't sit in
+            // a cramped inner list; the footer stays put.
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    formBody
+                    trackListSection
+                }
+                .padding(.bottom, 20)
             }
+            .scrollIndicators(.automatic)
         } footer: {
             footerButtons
         }
@@ -153,94 +158,75 @@ struct AlbumMetadataEditorView: View {
 
     // MARK: - Form body
 
+    /// Laid out like the album page: the cover, then the name in display
+    /// type with the credits and details under it.
     private var formBody: some View {
-        HStack(alignment: .top, spacing: Theme.Spacing.xl) {
+        HStack(alignment: .top, spacing: 28) {
             artworkSection
             fieldsSection
         }
-        .padding(Theme.Spacing.xl)
+        .padding(.horizontal, 28)
+        .padding(.top, 14)
     }
 
     private var artworkSection: some View {
-        VStack(spacing: Theme.Spacing.sm) {
+        VStack(spacing: 6) {
             Button { pickArtwork() } label: {
-                ArtworkView(data: artworkData, size: 130)
-                    .overlay(alignment: .bottom) {
-                        if artworkData == nil {
-                            Text("Click to add")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.textTertiary)
-                                .padding(.bottom, 6)
-                        }
+                ArtworkView(data: artworkData, size: 184, showsShadow: false)
+                    .overlay {
+                        // "Change cover" shows on hover; "Add cover" when empty.
+                        CoverEditOverlay(isEmpty: artworkData == nil)
                     }
+                    .shadow(color: .black.opacity(0.45), radius: 20, y: 12)
             }
             .buttonStyle(.plain)
-            .help("Click to choose album artwork")
+            .help(artworkData == nil ? "Add album artwork" : "Change album artwork")
+            .accessibilityLabel(artworkData == nil ? "Add cover" : "Change cover")
 
             if artworkData != nil {
-                Button("Remove") {
+                Button("Remove cover") {
                     artworkData    = nil
                     artworkChanged = false
                     artworkRemoved = true
                 }
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textTertiary)
-                .buttonStyle(.plain)
+                .buttonStyle(QuietTextButtonStyle())
             }
         }
-        .frame(width: 130)
+        .frame(width: 184)
+        .disabled(isSaving)
     }
 
     private var fieldsSection: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            metaField("Album Name",   text: $albumName, required: true)
+        VStack(alignment: .leading, spacing: 16) {
+            TextField("Album name", text: $albumName)
+                .textFieldStyle(QuietFieldStyle(font: .system(size: 34, weight: .heavy)))
+                .accessibilityLabel("Album name")
+
             ArtistsFieldView(artists: $albumArtists, label: "Album Artist")
 
-            Toggle(isOn: $isCompilation) {
-                Text("Compilation")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            .toggleStyle(.checkbox)
-            .disabled(isSaving)
-            .onChange(of: isCompilation) { _, on in
-                // Compilation and Mix Compilation are mutually exclusive.
-                if on { isMixCompilation = false }
-            }
-
-            Toggle(isOn: $isMixCompilation) {
-                Text("Mix Compilation")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            .toggleStyle(.checkbox)
-            .disabled(isSaving || (!mixCompilationEligible && !isMixCompilation))
-            .help(mixCompilationEligible
-                  ? "Mark this album's single track as a mix, live set, radio show, or concert recording. Disables lyrics and enables chapter markers."
-                  : "Only available for single-track albums longer than 10 minutes")
-            .onChange(of: isMixCompilation) { _, on in
-                // Compilation and Mix Compilation are mutually exclusive.
-                if on { isCompilation = false }
-            }
-
-            HStack(spacing: Theme.Spacing.md) {
-                metaField("Year",  text: $year,  width: 80, numericOnly: true)
+            HStack(alignment: .top, spacing: 16) {
+                metaField("Year", text: $year, width: 80, numericOnly: true)
                 GenreFieldView(text: $genre)
             }
             SecondaryGenresFieldView(genres: $secondaryGenres, primaryGenre: genre)
 
-            if isSaving {
-                HStack(spacing: Theme.Spacing.xs) {
-                    Image(systemName: "music.note.list")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.textTertiary)
-                    Text("Saved \(savedCount) of \(editableTracks.count)…")
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(Theme.textTertiary)
-                }
+            HStack(spacing: 8) {
+                SheetTogglePill(title: "Compilation", isOn: $isCompilation)
+                    .onChange(of: isCompilation) { _, on in
+                        // Compilation and Mix Compilation are mutually exclusive.
+                        if on { isMixCompilation = false }
+                    }
+                SheetTogglePill(title: "Mix Compilation", isOn: $isMixCompilation)
+                    .disabled(!mixCompilationEligible && !isMixCompilation)
+                    .help(mixCompilationEligible
+                          ? "Mark this album's single track as a mix, live set, radio show, or concert recording. Disables lyrics and enables chapter markers."
+                          : "Only available for single-track albums longer than 10 minutes")
+                    .onChange(of: isMixCompilation) { _, on in
+                        // Compilation and Mix Compilation are mutually exclusive.
+                        if on { isCompilation = false }
+                    }
             }
-
-            Spacer(minLength: 0)
+            .disabled(isSaving)
         }
     }
 
@@ -259,26 +245,20 @@ struct AlbumMetadataEditorView: View {
         width: CGFloat? = nil,
         numericOnly: Bool = false
     ) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 3) {
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                if required {
-                    Text("*").font(.system(size: 11)).foregroundStyle(Theme.accent)
-                }
-            }
+        VStack(alignment: .leading, spacing: 4) {
+            SheetLabel(text: required ? "\(label) *" : label)
             TextField("", text: text)
                 .textFieldStyle(.plain)
-                .font(Theme.Font.body)
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.horizontal, Theme.Spacing.sm)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                        .fill(Theme.surfaceElevated)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Theme.textPrimary.opacity(0.05))
                 )
                 .frame(width: width)
+                .accessibilityLabel(label)
                 .onChange(of: text.wrappedValue) { _, v in
                     if numericOnly {
                         let filtered = v.filter(\.isNumber)
@@ -290,96 +270,100 @@ struct AlbumMetadataEditorView: View {
 
     // MARK: - Track list section
 
+    /// One quiet row per track: number, title, artists, and a grip on the
+    /// right to drag it to a new place (which renumbers the album).
     private var trackListSection: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            Text("TRACKS")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Theme.textTertiary)
-                .padding(.horizontal, Theme.Spacing.xl)
-                .padding(.top, Theme.Spacing.md)
-
-            ScrollView {
-                VStack(spacing: 6) {
-                    ForEach(editableTracks.indices, id: \.self) { index in
-                        VStack(spacing: 4) {
-                            HStack(spacing: Theme.Spacing.sm) {
-                                TextField("", text: trackNumberText(index))
-                                    .textFieldStyle(.plain)
-                                    .multilineTextAlignment(.trailing)
-                                    .font(Theme.Font.captionMono)
-                                    .foregroundStyle(Theme.textTertiary)
-                                    .frame(width: 28)
-
-                                TextField("", text: $editableTracks[index].title)
-                                    .textFieldStyle(.plain)
-                                    .font(Theme.Font.body)
-                                    .foregroundStyle(Theme.textPrimary)
-                                    .padding(.horizontal, Theme.Spacing.sm)
-                                    .padding(.vertical, 5)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                                            .fill(Theme.surfaceElevated)
-                                    )
-
-                                Image(systemName: "line.3.horizontal")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(
-                                        draggingIndex == index
-                                            ? Theme.accent.opacity(0.8)
-                                            : Theme.textTertiary.opacity(0.6)
-                                    )
-                                    .frame(width: 18)
-                                    .onDrag {
-                                        draggingIndex = index
-                                        return NSItemProvider(object: "\(index)" as NSString)
-                                    }
-                            }
-
-                            HStack(alignment: .top, spacing: Theme.Spacing.sm) {
-                                Color.clear.frame(width: 28)
-                                ArtistsFieldView(
-                                    artists: $editableTracks[index].artists,
-                                    label: nil,
-                                    placeholder: "Artists for this track…",
-                                    compact: true
-                                )
-                                Color.clear.frame(width: 18)
-                            }
-                        }
-                        .padding(.horizontal, Theme.Spacing.xl)
-                        .padding(.vertical, 4)
-                        .background(
-                            draggingIndex == index
-                                ? Theme.surfaceElevated.opacity(0.6)
-                                : Color.clear
-                        )
-                        .onDrop(
-                            of: [UTType.plainText],
-                            delegate: TrackDropDelegate(
-                                toIndex: index,
-                                tracks: $editableTracks,
-                                draggingIndex: $draggingIndex
-                            )
-                        )
-                    }
-                }
-                .padding(.bottom, Theme.Spacing.md)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                SheetLabel(text: "Tracks")
+                Text("\(editableTracks.count)")
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(Theme.textTertiary)
+                Spacer()
+                Text("Drag to reorder")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
             }
-            .frame(maxHeight: 260)
+            .padding(.horizontal, 28)
+
+            VStack(spacing: 2) {
+                ForEach(editableTracks.indices, id: \.self) { index in
+                    HStack(alignment: .center, spacing: 12) {
+                        TextField("", text: trackNumberText(index))
+                            .textFieldStyle(.plain)
+                            .multilineTextAlignment(.trailing)
+                            .font(.system(size: 13).monospacedDigit())
+                            .foregroundStyle(Theme.textTertiary)
+                            .frame(width: 28)
+                            .accessibilityLabel("Track number")
+
+                        TextField("Title", text: $editableTracks[index].title)
+                            .textFieldStyle(QuietFieldStyle(font: .system(size: 14.5, weight: .semibold)))
+                            .frame(maxWidth: .infinity)
+                            .accessibilityLabel("Title of track \(index + 1)")
+
+                        ArtistsFieldView(
+                            artists: $editableTracks[index].artists,
+                            label: nil,
+                            placeholder: "Artists…",
+                            compact: true
+                        )
+                        .frame(maxWidth: .infinity)
+
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(draggingIndex == index ? Theme.textPrimary : Theme.textTertiary)
+                            .frame(width: 22, height: 30)
+                            .contentShape(Rectangle())
+                            .onHover { inside in
+                                if inside { NSCursor.openHand.push() } else { NSCursor.pop() }
+                            }
+                            .onDrag {
+                                draggingIndex = index
+                                return NSItemProvider(object: "\(index)" as NSString)
+                            }
+                            .help("Drag to reorder")
+                            .accessibilityLabel("Reorder track \(index + 1)")
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Theme.textPrimary.opacity(draggingIndex == index ? 0.07 : 0))
+                    )
+                    .onDrop(
+                        of: [UTType.plainText],
+                        delegate: TrackDropDelegate(
+                            toIndex: index,
+                            tracks: $editableTracks,
+                            draggingIndex: $draggingIndex
+                        )
+                    )
+                }
+            }
+            .padding(.horizontal, 16)
+            .disabled(isSaving)
         }
+        .padding(.top, 30)
     }
 
     // MARK: - Footer
 
     private var footerButtons: some View {
-        HStack {
+        HStack(spacing: 10) {
+            Text(isSaving
+                 ? "Saved \(savedCount) of \(editableTracks.count)…"
+                 : "Saves to all \(editableTracks.count) file\(editableTracks.count == 1 ? "" : "s").")
+                .font(.system(size: 12).monospacedDigit())
+                .foregroundStyle(Theme.textTertiary)
             Spacer()
             Button("Cancel") { dismiss() }
-                .buttonStyle(PillButtonStyle())
+                .buttonStyle(SheetPillStyle())
+                .keyboardShortcut(.cancelAction)
                 .disabled(isSaving)
 
-            Button(isSaving ? "Saving…" : "Save All") { save() }
-                .buttonStyle(PillButtonStyle(isPrimary: true))
+            Button(isSaving ? "Saving…" : "Save") { save() }
+                .buttonStyle(SheetPillStyle(isPrimary: true))
                 .disabled(isSaving || albumName.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }

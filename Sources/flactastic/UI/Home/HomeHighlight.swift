@@ -15,17 +15,20 @@ final class HomeHighlight {
         let lyric: String
         let songTitle: String
         let artistDisplay: String?
-        /// Resolved artist image (or track artwork). `nil` → the hero shows a
-        /// generic gray blob instead of a photo.
+        /// Resolved banner image: the artist's custom banner, else their
+        /// profile picture, else the track's artwork. `nil` → the hero shows
+        /// a generic gray glow instead of a photo.
         let imageData: Data?
+        /// The artist, so Home can show a banner set after the pick (or
+        /// after it was pinned). Absent from pins saved before it existed.
+        var artistKey: String? = nil
     }
 
-    private(set) var pick: Pick? {
-        didSet { refreshPalette() }
-    }
-    /// Colors sampled from the pick's banner image; nil while sampling, when
-    /// there's no image, or when the image is essentially gray. Home falls
-    /// back to monochrome in those cases.
+    private(set) var pick: Pick?
+    /// Colors sampled from the image the Home banner is showing (see
+    /// `updatePalette(from:)`); nil while sampling, when there's no image, or
+    /// when the image is essentially gray. Home falls back to monochrome in
+    /// those cases.
     private(set) var palette: HomePalette?
     private var paletteGeneration = 0
     private(set) var isPinned = false
@@ -147,13 +150,24 @@ final class HomeHighlight {
 
     // MARK: - Palette
 
-    /// Re-sample the banner palette off the main actor whenever the pick
-    /// changes. A generation counter drops results for a superseded pick.
-    private func refreshPalette() {
+    /// The image the palette was last sampled from, so the same image isn't
+    /// sampled twice.
+    private var paletteSourceID: String?
+
+    /// Sample the palette from `data`, the image the banner is showing. Home
+    /// calls this with its banner source, which can differ from the pick's
+    /// own image (an artist banner set after the pick, or a pin saved before
+    /// banners were used), so the colors always match what's on screen. Runs
+    /// off the main actor; a generation counter drops results for an image
+    /// that has since been replaced.
+    func updatePalette(from data: Data?) {
+        let sourceID = data.map(ArtworkImageCache.contentID(for:))
+        guard sourceID != paletteSourceID else { return }
+        paletteSourceID = sourceID
         paletteGeneration += 1
         let generation = paletteGeneration
         palette = nil
-        guard let data = pick?.imageData else { return }
+        guard let data, !data.isEmpty else { return }
         Task {
             let sampled = await Task.detached(priority: .utility) {
                 HomePalette.extract(from: data)
@@ -174,7 +188,9 @@ final class HomeHighlight {
     ) {
         let credit = track.artist ?? track.albumArtist
         let artistKey = resolver.keys(forCredit: credit).first
-        let image = artistKey.flatMap {
+        // The artist's banner first; their picture if they have none.
+        let banner = artistKey.flatMap { artistStore.override(forKey: $0)?.bannerImage }
+        let image = banner ?? artistKey.flatMap {
             artistStore.resolvedProfileImage(forKey: $0, remoteCache: artistRemoteCache)
         } ?? track.artwork
 
@@ -182,7 +198,8 @@ final class HomeHighlight {
             lyric: line,
             songTitle: track.title,
             artistDisplay: ArtistResolver.displayString(credit),
-            imageData: image
+            imageData: image,
+            artistKey: artistKey
         )
     }
 

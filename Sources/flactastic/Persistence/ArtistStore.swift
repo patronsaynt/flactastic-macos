@@ -1,4 +1,5 @@
 import Foundation
+import os
 import Observation
 
 /// User-supplied display overrides for an artist. Display-only — never
@@ -73,13 +74,31 @@ final class ArtistStore {
         overrides = Dictionary(uniqueKeysWithValues: loaded.map { ($0.canonicalKey, $0) })
     }
 
+    /// Serial, so writes land in the order they were made.
+    private let saveQueue = DispatchQueue(label: "flactastic.artiststore.save", qos: .utility)
+    /// Bumped per save; a queued write that's been superseded skips itself.
+    private var saveGeneration = 0
+    private let latestSave = OSAllocatedUnfairLock(initialState: 0)
+
+    /// Encodes and writes off the main thread. The file holds every
+    /// artist's banner and picture, so encoding it can take a noticeable
+    /// moment; doing it here kept Save in the editor from responding until
+    /// it finished. Only the newest of several quick saves is written.
     func save() {
-        do {
-            let list = Array(overrides.values).sorted { $0.canonicalKey < $1.canonicalKey }
-            let data = try JSONEncoder().encode(list)
-            try data.write(to: fileURL, options: .atomic)
-        } catch {
-            print("[ArtistStore] Failed to save artist overrides: \(error)")
+        let list = Array(overrides.values).sorted { $0.canonicalKey < $1.canonicalKey }
+        saveGeneration += 1
+        let generation = saveGeneration
+        let url = fileURL
+        let latest = latestSave
+        latest.withLock { $0 = generation }
+        saveQueue.async {
+            guard latest.withLock({ $0 }) == generation else { return }
+            do {
+                let data = try JSONEncoder().encode(list)
+                try data.write(to: url, options: .atomic)
+            } catch {
+                print("[ArtistStore] Failed to save artist overrides: \(error)")
+            }
         }
     }
 
@@ -101,3 +120,4 @@ final class ArtistStore {
         save()
     }
 }
+

@@ -15,61 +15,59 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header: centered wordmark + trailing close button.
-            ZStack {
-                Wordmark(height: 16)
+            // The logo, small, then the sections as a rail of words, like
+            // the app's top bar; close on the right.
+            HStack(spacing: 16) {
+                Wordmark(height: 13)
                     .opacity(0.9)
-                HStack {
-                    Spacer()
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.trailing, Theme.Spacing.xl)
-                }
+                    .accessibilityLabel("FLACtastic")
+                Rectangle()
+                    .fill(Theme.divider)
+                    .frame(width: 1, height: 14)
+                SettingsTabBar(selectedTab: $selectedTab)
+                    .padding(.leading, -8)
+                Spacer(minLength: Theme.Spacing.md)
+                SheetCloseButton { dismiss() }
             }
-            .frame(height: 52)
+            .padding(.leading, 26)
+            .padding(.trailing, 18)
+            .padding(.top, 18)
 
-            Divider().foregroundStyle(Theme.divider)
-
-            // Centered tab bar.
-            SettingsTabBar(selectedTab: $selectedTab)
-                .padding(.vertical, Theme.Spacing.sm + 2)
-
-            Divider().foregroundStyle(Theme.divider)
-
-            // Scrollable content pane.
             ScrollView(.vertical, showsIndicators: true) {
-                Group {
-                    switch selectedTab {
-                    case .general:
-                        GeneralSettingsPane(openFolder: openFolder)
-                    case .audio:
-                        AudioSettingsPane()
-                    case .connections:
-                        ConnectionsSettingsPane()
-                    case .devices:
-                        DevicesSettingsPane()
-                    case .appearance:
-                        AppearanceSettingsPane()
-                    case .visualizer:
-                        VisualizerSettingsPane()
-                    case .debug:
-                        DebugSettingsPane()
+                VStack(alignment: .leading, spacing: 30) {
+                    Text(selectedTab.rawValue)
+                        .font(.system(size: 40, weight: .heavy))
+                        .tracking(-1.6)
+                        .foregroundStyle(Theme.textPrimary)
+                    Group {
+                        switch selectedTab {
+                        case .general:
+                            GeneralSettingsPane(openFolder: openFolder)
+                        case .audio:
+                            AudioSettingsPane()
+                        case .connections:
+                            ConnectionsSettingsPane()
+                        case .devices:
+                            DevicesSettingsPane()
+                        case .appearance:
+                            AppearanceSettingsPane()
+                        case .visualizer:
+                            VisualizerSettingsPane()
+                        case .debug:
+                            DebugSettingsPane()
+                        }
                     }
+                    .transition(.opacity)
                 }
+                .id(selectedTab)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(.horizontal, Theme.Spacing.lg + 4)
-                .padding(.top, Theme.Spacing.lg + 4)
-                .padding(.bottom, Theme.Spacing.xl)
+                .padding(.horizontal, 34)
+                .padding(.top, 22)
+                .padding(.bottom, 34)
             }
             .scrollBounceBehavior(.basedOnSize)
         }
-        .frame(width: 700, height: 560)
+        .frame(width: 800, height: 680)
         .background(Theme.surface)
     }
 
@@ -114,7 +112,7 @@ private struct SettingsTabBar: View {
     @Namespace private var tabAnimation
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 0) {
             ForEach(SettingsTab.allCases) { tab in
                 tabButton(tab)
             }
@@ -124,24 +122,29 @@ private struct SettingsTabBar: View {
     private func tabButton(_ tab: SettingsTab) -> some View {
         let isSelected = selectedTab == tab
         return Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(.timingCurve(0.25, 0.1, 0.25, 1, duration: 0.25)) {
                 selectedTab = tab
             }
         } label: {
             Text(tab.rawValue)
-                .font(isSelected ? Theme.Font.bodyMedium : Theme.Font.body)
-                .foregroundStyle(isSelected ? Theme.textPrimary : Theme.textSecondary)
-                .padding(.horizontal, Theme.Spacing.md + 2)
-                .padding(.vertical, Theme.Spacing.sm)
-                .background {
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(isSelected ? Theme.textPrimary : Theme.textTertiary)
+                .padding(.horizontal, 10)
+                .frame(height: 32)
+                .overlay(alignment: .bottom) {
                     if isSelected {
-                        RoundedRectangle(cornerRadius: Theme.Radius.md)
-                            .fill(Theme.surfaceElevated)
+                        Capsule()
+                            .fill(Theme.textPrimary)
+                            .frame(height: 2)
+                            .padding(.horizontal, 10)
+                            .padding(.bottom, 2)
                             .matchedGeometryEffect(id: "activeSettingsTab", in: tabAnimation)
                     }
                 }
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }
 
@@ -158,19 +161,18 @@ private struct ToggleRow: View {
         HStack(alignment: subtitle != nil ? .top : .center, spacing: Theme.Spacing.lg) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(label)
-                    .font(Theme.Font.body)
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
                 if let subtitle {
                     Text(subtitle)
-                        .font(Theme.Font.caption)
+                        .font(.system(size: 12.5))
                         .foregroundStyle(Theme.textTertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
             Spacer()
-            Toggle("", isOn: $isOn)
-                .toggleStyle(.switch)
-                .tint(Theme.accent)
+            Toggle(label, isOn: $isOn)
+                .toggleStyle(FLSwitchStyle())
                 .labelsHidden()
                 .disabled(!isEnabled)
         }

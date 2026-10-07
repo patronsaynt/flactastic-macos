@@ -185,6 +185,10 @@ struct FlactasticApp: App {
             CommandGroup(replacing: .appInfo) {
                 Button("About FLACtastic") { openWindow(id: "about") }
             }
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { router.showSettings = true }
+                    .keyboardShortcut(",", modifiers: .command)
+            }
             // Sync takes the (emptied) New Item slot at the top of the File
             // menu. It is a task with a beginning and an end rather than a
             // place in the library, so it opens a window instead of occupying

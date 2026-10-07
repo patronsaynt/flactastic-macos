@@ -62,12 +62,14 @@ final class BlurredArtworkCache: @unchecked Sendable {
         cache.object(forKey: id as NSString)
     }
 
-    func image(for data: Data?, id: String) async -> ArtworkImageCache.ImageBox {
+    /// The defaults suit a backdrop blurred past any detail, where a tiny
+    /// source is plenty; pass a larger `maxPixel` and gentler `radius` for
+    /// an image that should still read as a picture.
+    func image(for data: Data?, id: String, maxPixel: Int = 96, radius: Double = 5) async -> ArtworkImageCache.ImageBox {
         if let hit = cached(id: id) { return .init(image: hit) }
         guard let data else { return .init(image: nil) }
         return await Task.detached(priority: .userInitiated) { [cache] in
-            // A tiny source is plenty: the backdrop is blurred past any detail.
-            let image = PrerenderedImage.nsImage(PrerenderedImage.blurred(data, maxPixel: 96, radius: 5))
+            let image = PrerenderedImage.nsImage(PrerenderedImage.blurred(data, maxPixel: maxPixel, radius: radius))
             if let image { cache.setObject(image, forKey: id as NSString) }
             return ArtworkImageCache.ImageBox(image: image)
         }.value

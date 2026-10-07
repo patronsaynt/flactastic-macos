@@ -9,11 +9,9 @@ struct VisualizerView: View {
     var body: some View {
         @Bindable var settings = settings
         ZStack {
-            // Deliberately NOT `.ignoresSafeArea()`: a safe-area-ignoring child
-            // grows the enclosing ZStack, which let the whole visualizer canvas
-            // — backdrop and lyrics alike — spill upward over the custom top
-            // bar. The canvas stays inside the content area; only fullscreen
-            // takes the top bar away (see ContentView).
+            // The canvas fills the window, running up under the floating top
+            // bar (which ContentView layers above it); fullscreen takes the
+            // bar away entirely.
             Theme.background
 
             content(for: settings.visualizerMode)
@@ -23,8 +21,7 @@ struct VisualizerView: View {
                 // clickable. It has to opt out of hit testing because
                 // `.clipped()` bounds drawing but NOT interaction: the Lyrics
                 // backdrop is scaled 1.25× and blurred 60pt, so its hit area
-                // reached up over the custom top bar and swallowed clicks on
-                // the tab pills. If a mode ever grows a control, it should
+                // reaches well past the canvas. If a mode ever grows a control, it should
                 // re-enable hit testing on just that control.
                 .allowsHitTesting(false)
 

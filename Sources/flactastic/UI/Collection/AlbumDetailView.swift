@@ -7,6 +7,7 @@ import SwiftUI
 struct AlbumDetailView: View {
     let albumID: String
 
+    @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerState.self) private var player
     @Environment(PlaylistStore.self) private var playlistStore
@@ -40,6 +41,14 @@ struct AlbumDetailView: View {
     @State private var backdrop: NSImage?
     /// Width of one "More by" cover, so it decodes at the size it's drawn.
     @State private var moreCellWidth: CGFloat = 180
+    /// "More by": the album's artists and their other albums, worked out
+    /// once per album and library change rather than on every redraw.
+    @State private var moreBy = MoreBy()
+
+    private struct MoreBy {
+        var names: [String] = []
+        var albums: [Album] = []
+    }
 
     private static let heroHeight: CGFloat = 560
 
@@ -78,6 +87,9 @@ struct AlbumDetailView: View {
             }
             .onChange(of: album.tracks.map(\.id)) { _, ids in
                 knownTrackIDs = Set(ids)
+            }
+            .task(id: "\(album.id)|\(library.tracksRevision)") {
+                moreBy = computeMoreBy(album)
             }
             .task(id: backdropID(album)) {
                 backdrop = BlurredArtworkCache.shared.cached(id: backdropID(album))
@@ -139,6 +151,13 @@ struct AlbumDetailView: View {
                         if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
                     }
                     .help("View artwork")
+                    .flContextMenu {
+                        menus.album(
+                            album,
+                            edit: { isEditingAlbum = true },
+                            remove: { removalRequest = LibraryRemovalRequest(title: album.name, tracks: album.tracks) }
+                        )
+                    }
                     .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
                     .opacity(hasEntered ? 1 : 0)
                     .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.9).delay(calmMotion ? 0 : 0.22), value: hasEntered)
@@ -149,13 +168,14 @@ struct AlbumDetailView: View {
             .padding(.horizontal, collectionGutter)
             .padding(.bottom, 44)
         }
-        .frame(height: Self.heroHeight)
+        // Runs up under the top bar, so the bar floats over the backdrop.
+        .frame(height: Self.heroHeight + topBarInset)
         .frame(maxWidth: .infinity)
         .clipped()
         .overlay(alignment: .topLeading) {
             HeroBackButton { router.goBackInCollection() }
                 .padding(.leading, collectionGutter)
-                .padding(.top, Theme.Spacing.xl)
+                .padding(.top, Theme.Spacing.xl + topBarInset)
                 .opacity(hasEntered ? 1 : 0)
                 .animation(.easeOut(duration: 0.5).delay(calmMotion ? 0 : 0.15), value: hasEntered)
         }
@@ -270,21 +290,12 @@ struct AlbumDetailView: View {
                     play: { play(album, from: index) }
                 )
                 .flContextMenu {
-                    playbackContextMenuItems(for: [track], player: player)
-                    FLContextMenuItem.divider
-                    FLContextMenuItem.button("Edit...", systemImage: "pencil") { editingTrack = track }
-                    FLContextMenuItem.button("Remove from Library", systemImage: "trash") { removalRequest = LibraryRemovalRequest(title: track.title, tracks: [track]) }
-                    FLContextMenuItem.divider
-                    addToPlaylistMenuItem(track: track)
-                    let artistItems = artistContextMenuItems(
-                        credit: track.artist ?? track.albumArtist,
-                        library: library,
-                        router: router
+                    menus.track(
+                        track,
+                        viewAlbum: false,
+                        edit: { editingTrack = track },
+                        remove: { removalRequest = LibraryRemovalRequest(title: track.title, tracks: [track]) }
                     )
-                    if !artistItems.isEmpty {
-                        FLContextMenuItem.divider
-                        artistItems
-                    }
                 }
             }
         }
@@ -293,17 +304,43 @@ struct AlbumDetailView: View {
     // MARK: - More by
 
     /// Other albums by the same album artist, newest first.
-    private func otherAlbums(_ album: Album) -> [Album] {
-        guard !album.isCompilation, let artist = album.albumArtist ?? album.artist else { return [] }
-        return library.albums
-            .filter { $0.id != album.id && ($0.albumArtist ?? $0.artist) == artist }
-            .sorted { ($0.year ?? 0) > ($1.year ?? 0) }
+    /// Other albums by any of this album's artists, each on their own: a
+    /// collaboration by three artists also brings in each one's solo work
+    /// and their other collaborations. Albums sharing more of the artists
+    /// come first, then newest first.
+    private func computeMoreBy(_ album: Album) -> MoreBy {
+        guard !album.isCompilation else { return MoreBy() }
+        let resolver = library.makeArtistResolver()
+        let keys = resolver.keys(forCredit: album.albumArtist ?? album.artist)
+        guard !keys.isEmpty else { return MoreBy() }
+        let keySet = Set(keys)
+        var scored: [(album: Album, shared: Int)] = []
+        for other in library.albums where other.id != album.id && !other.isCompilation {
+            let shared = Set(resolver.keys(forCredit: other.albumArtist ?? other.artist))
+                .intersection(keySet).count
+            if shared > 0 { scored.append((other, shared)) }
+        }
+        scored.sort { a, b in
+            if a.shared != b.shared { return a.shared > b.shared }
+            return (a.album.year ?? 0) > (b.album.year ?? 0)
+        }
+        return MoreBy(names: keys.map(resolver.displayName(forKey:)), albums: scored.map(\.album))
+    }
+
+    /// "ISOxo", "ISOxo and Knock2", "ISOKNOCK, ISOxo and Knock2".
+    private static func joinedNames(_ names: [String]) -> String {
+        switch names.count {
+        case 0: return ""
+        case 1: return names[0]
+        default: return names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+        }
     }
 
     @ViewBuilder
     private func moreByArtist(_ album: Album) -> some View {
-        let others = otherAlbums(album)
-        if !others.isEmpty, let artist = ArtistResolver.displayString(album.albumArtist ?? album.artist) {
+        let others = moreBy.albums
+        if !others.isEmpty {
+            let artist = Self.joinedNames(moreBy.names)
             VStack(alignment: .leading, spacing: 20) {
                 Text("More by \(artist)")
                     .font(.system(size: 28, weight: .heavy))
@@ -319,6 +356,14 @@ struct AlbumDetailView: View {
                             AlbumCardView(album: other, artworkPointSize: moreCellWidth)
                         }
                         .buttonStyle(.plain)
+                        .flContextMenu {
+                            menus.album(
+                                other,
+                                open: { router.collectionPath.append(other.id) },
+                                remove: { removalRequest = LibraryRemovalRequest(title: other.name, tracks: other.tracks) },
+                                showArtists: false
+                            )
+                        }
                     }
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
@@ -333,32 +378,8 @@ struct AlbumDetailView: View {
 
     // MARK: - Actions
 
-    private func addToPlaylistMenuItem(track: Track) -> FLContextMenuItem {
-        let newItem: FLContextMenuItem = .textField("New playlist name…", systemImage: "plus") { name in
-            playlistAddCoordinator.createPlaylistAndAdd(
-                name: name,
-                tracks: [track],
-                rootURL: library.rootURL,
-                store: playlistStore
-            )
-        }
-        var children: [FLContextMenuItem] = []
-        if !playlistStore.playlists.isEmpty {
-            for playlist in playlistStore.playlists {
-                children.append(.button(playlist.name) {
-                    playlistAddCoordinator.request(
-                        tracks: [track],
-                        playlistID: playlist.id,
-                        playlistName: playlist.name,
-                        rootURL: library.rootURL,
-                        store: playlistStore
-                    )
-                })
-            }
-            children.append(.divider)
-        }
-        children.append(newItem)
-        return .submenu("Add to Playlist", systemImage: "plus.square.on.square", items: children)
+    private var menus: LibraryMenus {
+        LibraryMenus(player: player, library: library, playlistStore: playlistStore, playlistAdd: playlistAddCoordinator, router: router)
     }
 
     private func play(_ album: Album, from index: Int) {

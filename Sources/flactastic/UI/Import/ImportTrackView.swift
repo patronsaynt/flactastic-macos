@@ -33,7 +33,7 @@ struct ImportTrackView: View {
     private let scanner = LibraryScanner()
 
     var body: some View {
-        FLSheet(title: "Import Track", width: 520, height: 500) {
+        FLSheet(title: "Import Track", width: 560, height: 620) {
             content
         } footer: {
             footerButtons
@@ -86,27 +86,18 @@ struct ImportTrackView: View {
         VStack(spacing: Theme.Spacing.sm) {
             Button { pickArtwork() } label: {
                 ArtworkView(data: artworkData, size: 130)
-                    .overlay(alignment: .bottom) {
-                        if artworkData == nil {
-                            Text("Click to add")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.textTertiary)
-                                .padding(.bottom, 6)
-                        }
-                    }
+                    .overlay { CoverEditOverlay(isEmpty: artworkData == nil) }
             }
             .buttonStyle(.plain)
             .help("Click to choose cover artwork")
 
             if artworkData != nil {
-                Button("Remove") {
+                Button("Remove cover") {
                     artworkData = nil
                     artworkChanged = false
                     artworkRemoved = true
                 }
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textTertiary)
-                .buttonStyle(.plain)
+                .buttonStyle(QuietTextButtonStyle())
             }
         }
         .frame(width: 130)
@@ -131,11 +122,11 @@ struct ImportTrackView: View {
         HStack {
             Spacer()
             Button("Cancel") { dismiss() }
-                .buttonStyle(PillButtonStyle())
+                .buttonStyle(SheetPillStyle())
                 .disabled(isSaving)
 
             Button(isSaving ? "Importing…" : "Import") { save() }
-                .buttonStyle(PillButtonStyle(isPrimary: true))
+                .buttonStyle(SheetPillStyle(isPrimary: true))
                 .disabled(
                     stage != .editing
                         || isSaving
@@ -250,9 +241,7 @@ struct ImportMetaField: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 3) {
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
+                SheetLabel(text: label)
                 if required {
                     Text("*")
                         .font(.system(size: 11))
@@ -266,8 +255,8 @@ struct ImportMetaField: View {
                 .padding(.horizontal, Theme.Spacing.sm)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                        .fill(Theme.surfaceElevated)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Theme.textPrimary.opacity(0.05))
                 )
                 .frame(width: width)
                 .onChange(of: text) { _, v in

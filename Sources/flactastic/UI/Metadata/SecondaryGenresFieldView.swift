@@ -20,9 +20,7 @@ struct SecondaryGenresFieldView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 4) {
-                Text("Secondary Genres")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
+                SheetLabel(text: "Secondary Genres")
                 Spacer()
                 Text("\(genres.count)/\(cap)")
                     .font(.system(size: 10))
@@ -53,8 +51,8 @@ struct SecondaryGenresFieldView: View {
                         .foregroundStyle(showPicker ? Theme.accent : Theme.textTertiary)
                         .padding(6)
                         .background(
-                            RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                                .fill(Theme.surfaceElevated)
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Theme.textPrimary.opacity(0.05))
                         )
                 }
                 .buttonStyle(.plain)
@@ -73,8 +71,8 @@ struct SecondaryGenresFieldView: View {
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                    .fill(Theme.surfaceElevated)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Theme.textPrimary.opacity(0.05))
             )
         }
         .onChange(of: primaryGenre) { _, newPrimary in
@@ -100,7 +98,7 @@ struct SecondaryGenresFieldView: View {
         }
         .padding(.horizontal, 8)
         .frame(height: 22)
-        .background(Capsule().fill(Theme.surfaceHover))
+        .background(Capsule().fill(Theme.textPrimary.opacity(0.09)))
     }
 }
 
@@ -142,8 +140,8 @@ private struct SecondaryGenrePickerPopover: View {
                         .padding(.horizontal, Theme.Spacing.sm)
                         .padding(.vertical, 5)
                         .background(
-                            RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                                .fill(Theme.surfaceElevated)
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Theme.textPrimary.opacity(0.05))
                         )
                         .onSubmit { addCustomGenre() }
 

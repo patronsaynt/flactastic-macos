@@ -29,7 +29,7 @@ struct ImportDropView: View {
                 .foregroundStyle(Theme.textTertiary)
 
             Button("Select Files…") { pickFiles() }
-                .buttonStyle(PillButtonStyle(isPrimary: true))
+                .buttonStyle(SheetPillStyle(isPrimary: true))
                 .padding(.top, Theme.Spacing.sm)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

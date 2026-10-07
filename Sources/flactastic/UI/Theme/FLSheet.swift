@@ -2,28 +2,28 @@ import SwiftUI
 
 /// Standard chrome for modal sheets in FLACtastic.
 ///
-/// Owns the title bar (title + close button), surface background, fixed frame,
-/// top/bottom dividers, and the trailing `Spacer` that anchors the footer to
-/// the bottom regardless of body height — preventing the "content centered in
-/// a too-tall frame" layout bug that recurs when each sheet builds its own
-/// `VStack` skeleton.
+/// Owns the header (the sheet's name in small spaced capitals and a round
+/// close button), the surface background, the fixed frame, the hairline over
+/// the footer, and the layout that keeps the footer at the bottom however
+/// tall the body is, preventing the "content centered in a too-tall frame"
+/// bug that recurs when each sheet builds its own `VStack` skeleton.
+///
+/// The close button doesn't take Esc: sheets give that to their own Cancel,
+/// which may need to clean up before dismissing.
 ///
 /// Use this for `.sheet`-presented modal editors. **Do not** use it for
 /// popovers, menus, alerts, the queue panel, or `MenuBarExtra` content —
 /// those have legitimately different layout needs.
 ///
-/// For sheets with two body sections (e.g. a form above a track list),
-/// include the intermediate divider yourself inside the `content` builder:
-///
 /// ```swift
-/// FLSheet(title: "Edit Album", width: 540, height: 720) {
-///     VStack(spacing: 0) {
-///         formBody
-///         Divider().foregroundStyle(Theme.divider)
-///         trackListSection
-///     }
+/// FLSheet(title: "Edit Playlist", width: 660, height: 420) {
+///     formBody
 /// } footer: {
-///     HStack { Spacer(); Button("Cancel") { … }; Button("Save") { … } }
+///     HStack {
+///         Spacer()
+///         Button("Cancel") { … }.buttonStyle(SheetPillStyle())
+///         Button("Save") { … }.buttonStyle(SheetPillStyle(isPrimary: true))
+///     }
 /// }
 /// ```
 struct FLSheet<Content: View, Footer: View>: View {
@@ -38,37 +38,46 @@ struct FLSheet<Content: View, Footer: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
-            Divider().foregroundStyle(Theme.divider)
             // Greedy in height with top alignment: natural-height content sticks
             // to the top (header anchored, footer at bottom); greedy content
             // (e.g. a loading spinner using `maxHeight: .infinity`) fills the
             // whole region. Avoids fighting between content and a trailing
             // Spacer when both are vertically flexible.
-            content()
-                .frame(maxHeight: .infinity, alignment: .top)
-            Divider().foregroundStyle(Theme.divider)
+            //
+            // A form taller than the sheet scrolls instead of pushing the
+            // footer out of the frame. Content that fits (or that fills the
+            // space, or scrolls itself) is shown as is.
+            ViewThatFits(in: .vertical) {
+                content()
+                    .frame(maxHeight: .infinity, alignment: .top)
+                ScrollView {
+                    content()
+                }
+                .scrollIndicators(.automatic)
+            }
+            Rectangle()
+                .fill(Theme.divider)
+                .frame(height: 1)
             footer()
-                .padding(.horizontal, Theme.Spacing.xl)
-                .padding(.vertical, Theme.Spacing.lg)
+                .padding(.horizontal, 28)
+                .padding(.vertical, 16)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(width: width, height: height)
         .background(Theme.surface)
     }
 
+    /// The sheet's name in small spaced capitals, and a round close button.
     private var header: some View {
         HStack {
-            Text(title)
-                .font(Theme.Font.title)
-                .foregroundStyle(Theme.textPrimary)
+            SheetLabel(text: title)
             Spacer()
-            Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .buttonStyle(.plain)
+            // Esc stays with each sheet's own Cancel, as before.
+            SheetCloseButton(label: "Close without saving", handlesEscape: false) { dismiss() }
         }
-        .padding(.horizontal, Theme.Spacing.xl)
-        .padding(.vertical, Theme.Spacing.xl)
+        .padding(.leading, 28)
+        .padding(.trailing, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 8)
     }
 }

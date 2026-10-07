@@ -8,15 +8,19 @@ struct PlaylistEditorView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(PlaylistStore.self) private var playlistStore
+    @Environment(LibraryStore.self) private var library
 
     @State private var name: String = ""
     @State private var description: String = ""
     @State private var artworkData: Data?
     @State private var didLoad = false
     @State private var pendingCropData: Data?
+    /// The playlist's tracks, for the cover it shows without a custom one
+    /// and the summary in the footer.
+    @State private var tracks: [Track] = []
 
     var body: some View {
-        FLSheet(title: "Edit Playlist", width: 480, height: 420) {
+        FLSheet(title: "Edit Playlist", width: 660, height: 420) {
             formBody
         } footer: {
             footerButtons
@@ -35,84 +39,65 @@ struct PlaylistEditorView: View {
     // MARK: - Form
 
     private var formBody: some View {
-        HStack(alignment: .top, spacing: Theme.Spacing.xl) {
+        HStack(alignment: .top, spacing: 28) {
             artworkSection
             fieldsSection
         }
-        .padding(Theme.Spacing.xl)
+        .padding(.horizontal, 28)
+        .padding(.top, 14)
     }
 
     private var artworkSection: some View {
-        VStack(spacing: Theme.Spacing.sm) {
+        VStack(spacing: 6) {
             Button { pickArtwork() } label: {
-                ArtworkView(data: artworkData, size: 130)
-                    .overlay(alignment: .bottom) {
-                        if artworkData == nil {
-                            Text("Click to add")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.textTertiary)
-                                .padding(.bottom, 6)
-                        }
-                    }
+                // Without a custom cover, the playlist's own (its first
+                // track's art) shows under "Add cover".
+                ArtworkView(data: artworkData ?? tracks.first?.artwork, size: 200, showsShadow: false)
+                    .overlay { CoverEditOverlay(isEmpty: artworkData == nil) }
+                    .shadow(color: .black.opacity(0.45), radius: 20, y: 12)
             }
             .buttonStyle(.plain)
-            .help("Click to choose a custom cover image")
+            .help(artworkData == nil ? "Choose a custom cover image" : "Change the cover image")
+            .accessibilityLabel(artworkData == nil ? "Add cover" : "Change cover")
 
             if artworkData != nil {
-                Button("Remove") {
-                    artworkData = nil
-                }
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textTertiary)
-                .buttonStyle(.plain)
+                Button("Remove cover") { artworkData = nil }
+                    .buttonStyle(QuietTextButtonStyle())
             }
         }
-        .frame(width: 130)
+        .frame(width: 200)
     }
 
     private var fieldsSection: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Name")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-                TextField("", text: $name)
-                    .textFieldStyle(.plain)
-                    .font(Theme.Font.body)
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, Theme.Spacing.sm)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                            .fill(Theme.surfaceElevated)
-                    )
-            }
+        VStack(alignment: .leading, spacing: 14) {
+            TextField("Playlist name", text: $name)
+                .textFieldStyle(QuietFieldStyle(font: .system(size: 34, weight: .heavy)))
+                .accessibilityLabel("Playlist name")
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text("Description")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
+                    SheetLabel(text: "Description")
                     Spacer()
                     Text("\(description.count)/\(Playlist.descriptionMaxLength)")
-                        .font(Theme.Font.caption)
+                        .font(.system(size: 11, weight: .semibold).monospacedDigit())
                         .foregroundStyle(
-                            description.count > Playlist.descriptionMaxLength
-                                ? Theme.accent
+                            description.count >= Playlist.descriptionMaxLength
+                                ? Theme.textPrimary
                                 : Theme.textTertiary
                         )
                 }
                 TextEditor(text: $description)
-                    .font(Theme.Font.body)
+                    .font(.system(size: 14.5))
                     .foregroundStyle(Theme.textPrimary)
                     .scrollContentBackground(.hidden)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 4)
-                    .frame(height: 110)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 6)
+                    .frame(height: 120)
                     .background(
-                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                            .fill(Theme.surfaceElevated)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Theme.textPrimary.opacity(0.05))
                     )
+                    .accessibilityLabel("Description")
                     .onChange(of: description) { _, v in
                         if v.count > Playlist.descriptionMaxLength {
                             description = String(v.prefix(Playlist.descriptionMaxLength))
@@ -125,14 +110,20 @@ struct PlaylistEditorView: View {
     // MARK: - Footer
 
     private var footerButtons: some View {
-        HStack {
+        HStack(spacing: 10) {
+            Text(FormatUtils.playlistSummary(
+                trackCount: tracks.count,
+                duration: tracks.reduce(0) { $0 + ($1.duration ?? 0) }
+            ))
+            .font(.system(size: 12).monospacedDigit())
+            .foregroundStyle(Theme.textTertiary)
             Spacer()
             Button("Cancel") { dismiss() }
-                .buttonStyle(PillButtonStyle())
+                .buttonStyle(SheetPillStyle())
                 .keyboardShortcut(.cancelAction)
 
             Button("Save") { save() }
-                .buttonStyle(PillButtonStyle(isPrimary: true))
+                .buttonStyle(SheetPillStyle(isPrimary: true))
                 .keyboardShortcut(.defaultAction)
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
         }
@@ -146,6 +137,7 @@ struct PlaylistEditorView: View {
         name = playlist.name
         description = playlist.description ?? ""
         artworkData = playlist.customArtwork
+        tracks = playlistStore.resolvedTracks(for: playlist, in: library)
         didLoad = true
     }
 

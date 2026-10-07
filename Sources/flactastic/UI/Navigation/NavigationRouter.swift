@@ -19,6 +19,9 @@ final class NavigationRouter {
     /// Set by the artist page while its full-window banner is showing, so the
     /// floating player bar stays out of the way until the user scrolls.
     var hidesPlayerBar = false
+    /// The Settings sheet, opened from the FLACtastic menu in the top bar or
+    /// with ⌘, from anywhere.
+    var showSettings = false
 
     /// Where a cross-tab jump started, so Back can return there instead of
     /// popping to the destination tab's root.

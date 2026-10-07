@@ -136,27 +136,18 @@ struct ImportAlbumView: View {
         VStack(spacing: Theme.Spacing.sm) {
             Button { pickArtwork() } label: {
                 ArtworkView(data: artworkData, size: 130)
-                    .overlay(alignment: .bottom) {
-                        if artworkData == nil {
-                            Text("Click to add")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.textTertiary)
-                                .padding(.bottom, 6)
-                        }
-                    }
+                    .overlay { CoverEditOverlay(isEmpty: artworkData == nil) }
             }
             .buttonStyle(.plain)
             .help("Click to choose album artwork")
 
             if artworkData != nil {
-                Button("Remove") {
+                Button("Remove cover") {
                     artworkData = nil
                     artworkChanged = false
                     artworkRemoved = true
                 }
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textTertiary)
-                .buttonStyle(.plain)
+                .buttonStyle(QuietTextButtonStyle())
             }
         }
         .frame(width: 130)
@@ -189,9 +180,7 @@ struct ImportAlbumView: View {
 
     private var trackListSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            Text("TRACKS")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Theme.textTertiary)
+            SheetLabel(text: "Tracks")
                 .padding(.horizontal, Theme.Spacing.xl)
                 .padding(.top, Theme.Spacing.md)
 
@@ -211,8 +200,8 @@ struct ImportAlbumView: View {
                                 .padding(.horizontal, Theme.Spacing.sm)
                                 .padding(.vertical, 5)
                                 .background(
-                                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                                        .fill(Theme.surfaceElevated)
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(Theme.textPrimary.opacity(0.05))
                                 )
 
                             Image(systemName: "line.3.horizontal")
@@ -232,7 +221,7 @@ struct ImportAlbumView: View {
                         .padding(.vertical, 2)
                         .background(
                             draggingIndex == index
-                                ? Theme.surfaceElevated.opacity(0.6)
+                                ? Theme.textPrimary.opacity(0.07)
                                 : Color.clear
                         )
                         .onDrop(
@@ -257,11 +246,11 @@ struct ImportAlbumView: View {
         HStack {
             Spacer()
             Button("Cancel") { dismiss() }
-                .buttonStyle(PillButtonStyle())
+                .buttonStyle(SheetPillStyle())
                 .disabled(isSaving)
 
             Button(isSaving ? "Importing…" : "Import Album") { save() }
-                .buttonStyle(PillButtonStyle(isPrimary: true))
+                .buttonStyle(SheetPillStyle(isPrimary: true))
                 .disabled(
                     stage != .editing
                         || isSaving

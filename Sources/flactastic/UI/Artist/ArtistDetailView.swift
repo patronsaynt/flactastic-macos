@@ -4,6 +4,7 @@ import AppKit
 struct ArtistDetailView: View {
     let artistKey: String
 
+    @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self)        private var library
     @Environment(ArtistStore.self)         private var artistStore
     @Environment(ArtistRemoteCache.self)   private var artistRemoteCache
@@ -266,7 +267,7 @@ struct ArtistDetailView: View {
         .overlay(alignment: .topLeading) {
             HeroBackButton(action: popDetail)
                 .padding(.leading, Theme.Spacing.xxl)
-                .padding(.top, Theme.Spacing.xl)
+                .padding(.top, Theme.Spacing.xl + topBarInset)
                 .opacity(hasEntered ? 1 : 0)
                 .animation(.easeOut(duration: 0.5).delay(calmMotion ? 0 : 0.15), value: hasEntered)
         }
@@ -511,7 +512,7 @@ struct ArtistDetailView: View {
             .floatingGlass()
         }
         .padding(.horizontal, Theme.Spacing.xl)
-        .padding(.top, 14)
+        .padding(.top, 14 + topBarInset)
     }
 
     // MARK: - Actions

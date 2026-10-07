@@ -5,8 +5,14 @@ import Observation
 @MainActor
 final class PlaylistStore {
     var playlists: [Playlist] = [] {
-        didSet { playlistsByIDCache = nil }
+        didSet {
+            playlistsByIDCache = nil
+            revision &+= 1
+        }
     }
+    /// Bumped on every `playlists` change. Views watch this rather than
+    /// `playlists` itself, whose equality byte-compares every custom cover.
+    private(set) var revision = 0
 
     /// Memoized id → playlist lookup, for views that resolve playlists per
     /// render (Home recents). Same discipline as `LibraryStore.albumsByID`.
@@ -225,26 +231,61 @@ final class PlaylistStore {
     func resolvedTracks(for playlist: Playlist, in library: LibraryStore) -> [Track] {
         guard let rootURL = library.rootURL,
               let pi = playlists.firstIndex(where: { $0.id == playlist.id }) else { return [] }
-
-        let byID   = Dictionary(library.tracks.map { ($0.id, $0) },
-                                uniquingKeysWith: { first, _ in first })
-        let byPath = Dictionary(library.tracks.map { ($0.url.path, $0) },
-                                uniquingKeysWith: { first, _ in first })
+        var lookup = TrackLookup(library: library)
         var needsSave = false
-        var result: [Track] = []
+        let result = resolveEntries(at: pi, rootURL: rootURL, lookup: &lookup, needsSave: &needsSave)
+        if needsSave { save() }
+        return result
+    }
 
+    /// Every playlist's tracks, keyed by playlist, from one pass over the
+    /// library instead of one per playlist.
+    func resolvedTracksForAll(in library: LibraryStore) -> [UUID: [Track]] {
+        guard let rootURL = library.rootURL else { return [:] }
+        var lookup = TrackLookup(library: library)
+        var needsSave = false
+        var result: [UUID: [Track]] = [:]
+        for pi in playlists.indices {
+            result[playlists[pi].id] = resolveEntries(at: pi, rootURL: rootURL, lookup: &lookup, needsSave: &needsSave)
+        }
+        if needsSave { save() }
+        return result
+    }
+
+    /// Library tracks by id, plus by path for legacy entries, built only
+    /// when one turns up.
+    private struct TrackLookup {
+        let tracks: [Track]
+        let byID: [UUID: Track]
+        private var byPathCache: [String: Track]?
+
+        @MainActor init(library: LibraryStore) {
+            tracks = library.tracks
+            byID = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        }
+
+        mutating func track(atPath path: String) -> Track? {
+            if byPathCache == nil {
+                byPathCache = Dictionary(tracks.map { ($0.url.path, $0) }, uniquingKeysWith: { first, _ in first })
+            }
+            return byPathCache?[path]
+        }
+    }
+
+    private func resolveEntries(at pi: Int, rootURL: URL, lookup: inout TrackLookup, needsSave: inout Bool) -> [Track] {
+        var result: [Track] = []
         for j in playlists[pi].entries.indices {
             let entry = playlists[pi].entries[j]
 
             // Fast path: stable trackID.
-            if let tid = entry.trackID, let track = byID[tid] {
+            if let tid = entry.trackID, let track = lookup.byID[tid] {
                 result.append(track)
                 continue
             }
 
             // Migration fallback: resolve by absolute path and stamp trackID.
             let absolutePath = rootURL.appendingPathComponent(entry.relativePath).path
-            if let track = byPath[absolutePath] {
+            if let track = lookup.track(atPath: absolutePath) {
                 result.append(track)
                 playlists[pi].entries[j].trackID = track.id
                 needsSave = true
@@ -252,8 +293,6 @@ final class PlaylistStore {
             // Dangling entries (no match by ID or path) are silently skipped;
             // reconcile() handles their removal on the next scan.
         }
-
-        if needsSave { save() }
         return result
     }
 

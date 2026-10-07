@@ -23,8 +23,10 @@ struct SeekBarView: View {
 
                 ZStack(alignment: .leading) {
                     // Track background
+                    // The main bar is glass, so its groove is a tint of the
+                    // ink rather than an opaque surface.
                     Capsule()
-                        .fill(Theme.surfaceElevated)
+                        .fill(prominent ? Theme.textPrimary.opacity(0.14) : Theme.surfaceElevated)
                         .frame(height: trackHeight)
 
                     // Filled portion
@@ -36,6 +38,7 @@ struct SeekBarView: View {
                     Circle()
                         .fill(Theme.accent)
                         .frame(width: thumbSize, height: thumbSize)
+                        .shadow(color: .black.opacity(prominent ? 0.3 : 0), radius: 3, y: 1)
                         .offset(x: max(0, min(CGFloat(progress) * width - thumbSize / 2, width - thumbSize)))
                 }
                 .frame(height: thumbSize)

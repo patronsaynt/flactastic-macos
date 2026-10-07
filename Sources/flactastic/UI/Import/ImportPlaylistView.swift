@@ -28,7 +28,7 @@ struct ImportPlaylistView: View {
     private let scanner = LibraryScanner()
 
     var body: some View {
-        FLSheet(title: "Import Files as Playlist", width: 480, height: 460) {
+        FLSheet(title: "Import Files as Playlist", width: 520, height: 520) {
             content
         } footer: {
             footerButtons
@@ -88,14 +88,7 @@ struct ImportPlaylistView: View {
         VStack(spacing: Theme.Spacing.sm) {
             Button { pickArtwork() } label: {
                 ArtworkView(data: artworkData, size: 130)
-                    .overlay(alignment: .bottom) {
-                        if artworkData == nil {
-                            Text("Click to add")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.textTertiary)
-                                .padding(.bottom, 6)
-                        }
-                    }
+                    .overlay { CoverEditOverlay(isEmpty: artworkData == nil) }
             }
             .buttonStyle(.plain)
             .help("Click to choose a cover image")
@@ -113,9 +106,7 @@ struct ImportPlaylistView: View {
     private var fieldsSection: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
             VStack(alignment: .leading, spacing: 3) {
-                Text("Name")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
+                SheetLabel(text: "Name")
                 TextField("", text: $name)
                     .textFieldStyle(.plain)
                     .font(Theme.Font.body)
@@ -123,16 +114,14 @@ struct ImportPlaylistView: View {
                     .padding(.horizontal, Theme.Spacing.sm)
                     .padding(.vertical, 6)
                     .background(
-                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                            .fill(Theme.surfaceElevated)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Theme.textPrimary.opacity(0.05))
                     )
             }
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
-                    Text("Description")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
+                    SheetLabel(text: "Description")
                     Spacer()
                     Text("\(description.count)/\(Playlist.descriptionMaxLength)")
                         .font(Theme.Font.caption)
@@ -150,8 +139,8 @@ struct ImportPlaylistView: View {
                     .padding(.vertical, 4)
                     .frame(height: 100)
                     .background(
-                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                            .fill(Theme.surfaceElevated)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Theme.textPrimary.opacity(0.05))
                     )
                     .onChange(of: description) { _, v in
                         if v.count > Playlist.descriptionMaxLength {
@@ -177,11 +166,11 @@ struct ImportPlaylistView: View {
         HStack {
             Spacer()
             Button("Cancel") { dismiss() }
-                .buttonStyle(PillButtonStyle())
+                .buttonStyle(SheetPillStyle())
                 .disabled(isSaving)
 
             Button(isSaving ? "Creating…" : "Create Playlist") { save() }
-                .buttonStyle(PillButtonStyle(isPrimary: true))
+                .buttonStyle(SheetPillStyle(isPrimary: true))
                 .disabled(
                     stage != .editing
                         || isSaving

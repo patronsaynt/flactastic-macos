@@ -18,6 +18,11 @@ struct ArtistEditorView: View {
     /// Drives a cropping sheet — `target` decides which field receives the
     /// cropped result.
     @State private var pendingCrop: PendingCrop? = nil
+    /// Previews, decoded off the main thread at the size they're shown.
+    /// Decoding a full-size banner in `body` ran on every redraw, even while
+    /// typing the name.
+    @State private var bannerPreviewImage: NSImage?
+    @State private var profilePreviewImage: NSImage?
 
     /// The artist page's banner fills the window below the top bar, so
     /// banners are cropped to a widescreen frame rather than a strip.
@@ -31,16 +36,19 @@ struct ArtistEditorView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider().foregroundStyle(Theme.divider)
+        FLSheet(title: "Edit Artist", width: 600, height: 740) {
             ScrollView { formBody }
-            Divider().foregroundStyle(Theme.divider)
+                .scrollIndicators(.automatic)
+        } footer: {
             footer
         }
-        .frame(width: 580, height: 720)
-        .background(Theme.surface)
         .onAppear(perform: loadOverride)
+        .task(id: previewKey(currentBannerData ?? fallbackArtwork)) {
+            bannerPreviewImage = await Self.preview(currentBannerData ?? fallbackArtwork, maxPixel: 1100)
+        }
+        .task(id: previewKey(currentProfileData)) {
+            profilePreviewImage = await Self.preview(currentProfileData, maxPixel: 240)
+        }
         .sheet(item: $pendingCrop) { crop in
             let isBanner = crop.target == .banner
             ImageCropperView(
@@ -63,50 +71,26 @@ struct ArtistEditorView: View {
         }
     }
 
-    private var header: some View {
-        HStack {
-            Text("Edit Artist")
-                .font(Theme.Font.title)
-                .foregroundStyle(Theme.textPrimary)
-            Spacer()
-            Button { dismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(Theme.Spacing.xl)
-    }
-
     private var formBody: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+        VStack(alignment: .leading, spacing: 30) {
             displayNameField
             bannerSection
             profileSection
         }
-        .padding(Theme.Spacing.xl)
+        .padding(.horizontal, 28)
+        .padding(.top, 10)
+        .padding(.bottom, 24)
     }
 
     // MARK: - Display name
 
     private var displayNameField: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Display Name")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
             TextField(fallbackName, text: $displayName)
-                .textFieldStyle(.plain)
-                .font(Theme.Font.body)
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, Theme.Spacing.sm)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                        .fill(Theme.surfaceElevated)
-                )
-            Text("Override only — original tags are not modified.")
-                .font(.system(size: 10))
+                .textFieldStyle(QuietFieldStyle(font: .system(size: 34, weight: .heavy)))
+                .accessibilityLabel("Display name")
+            Text("Shown in FLACtastic only; your files' tags aren't changed.")
+                .font(.system(size: 12))
                 .foregroundStyle(Theme.textTertiary)
         }
     }
@@ -114,65 +98,60 @@ struct ArtistEditorView: View {
     // MARK: - Banner
 
     private var bannerSection: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            Text("Banner Image")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                SheetLabel(text: "Banner")
+                Spacer()
+                Text("Cropped to 16:9 to fill the artist page.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+            }
 
             Button { pickImage(for: .banner) } label: {
                 bannerPreview
             }
             .buttonStyle(.plain)
-            .help("Click to choose a banner image")
+            .help(currentBannerData == nil ? "Choose a banner image" : "Change the banner image")
+            .accessibilityLabel(currentBannerData == nil ? "Add banner" : "Change banner")
 
-            HStack(spacing: Theme.Spacing.md) {
-                if currentBannerData != nil {
-                    Button("Remove Banner") {
-                        bannerData = nil
-                        bannerRemoved = true
-                    }
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textTertiary)
-                    .buttonStyle(.plain)
+            if currentBannerData != nil {
+                Button("Remove banner") {
+                    bannerData = nil
+                    bannerRemoved = true
                 }
-                Spacer()
-                Text("Cropped to 16:9 to fill the artist page.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(Theme.textTertiary)
+                .buttonStyle(QuietTextButtonStyle())
+                .padding(.leading, -10)
             }
         }
     }
 
     private var bannerPreview: some View {
-        let displayData = currentBannerData ?? fallbackArtwork
         // Size a clear 16:9 box first and lay the image over it. A fill-mode
         // image as the base would report its own size and stretch the sheet.
-        return Color.clear
+        Color.clear
             .aspectRatio(Self.bannerAspectRatio, contentMode: .fit)
             .frame(maxWidth: .infinity)
             .overlay {
-                if let data = displayData, let img = NSImage(data: data) {
-                    Image(nsImage: img)
+                if let image = bannerPreviewImage {
+                    Image(nsImage: image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .allowsHitTesting(false)
                 } else {
-                    Theme.surfaceElevated
+                    Theme.textPrimary.opacity(0.05)
                 }
             }
             .clipped()
             .contentShape(Rectangle())
             .overlay(alignment: .bottomLeading) {
-            if displayData != nil { pageLayoutGuide }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.md))
-        .overlay {
-            if currentBannerData == nil {
-                Text("Click to choose a banner")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textTertiary)
+                if bannerPreviewImage != nil { pageLayoutGuide }
             }
-        }
+            .overlay {
+                // "Add banner" until one is set (the preview may be the
+                // artist's album art standing in); "Change banner" on hover.
+                CoverEditOverlay(isEmpty: currentBannerData == nil, emptyLabel: "Add banner", changeLabel: "Change banner")
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     /// Faint stand-ins for the profile picture, name and buttons, so the
@@ -203,32 +182,29 @@ struct ArtistEditorView: View {
     // MARK: - Profile image
 
     private var profileSection: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            Text("Profile Image")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
+        VStack(alignment: .leading, spacing: 8) {
+            SheetLabel(text: "Profile Picture")
 
-            HStack(alignment: .top, spacing: Theme.Spacing.md) {
+            HStack(alignment: .center, spacing: 20) {
                 Button { pickImage(for: .profile) } label: {
                     profilePreview
                 }
                 .buttonStyle(.plain)
-                .help("Click to choose a profile image")
+                .help(currentProfileData == nil ? "Choose a profile picture" : "Change the profile picture")
+                .accessibilityLabel(currentProfileData == nil ? "Add profile picture" : "Change profile picture")
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Shown as a circular avatar on the artist page. Cropped to 1:1.")
-                        .font(.system(size: 10))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Shown as a circle on the artist page. Cropped to 1:1.")
+                        .font(.system(size: 12))
                         .foregroundStyle(Theme.textTertiary)
                     if currentProfileData != nil {
-                        Button("Remove Profile Image") {
+                        Button("Remove picture") {
                             profileData = nil
                             profileRemoved = true
                         }
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.textTertiary)
-                        .buttonStyle(.plain)
+                        .buttonStyle(QuietTextButtonStyle())
+                        .padding(.leading, -10)
                     }
-                    Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -237,39 +213,57 @@ struct ArtistEditorView: View {
 
     private var profilePreview: some View {
         ZStack {
-            if let data = currentProfileData, let img = NSImage(data: data) {
-                Image(nsImage: img)
+            if let image = profilePreviewImage {
+                Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
             } else {
-                Theme.surfaceElevated
+                Theme.textPrimary.opacity(0.05)
                     .overlay {
                         Image(systemName: "person.crop.circle")
-                            .font(.system(size: 28, weight: .ultraLight))
+                            .font(.system(size: 30, weight: .ultraLight))
                             .foregroundStyle(Theme.textTertiary.opacity(0.6))
                     }
             }
         }
-        .frame(width: 100, height: 100)
+        .frame(width: 110, height: 110)
         .clipShape(Circle())
-        .overlay(Circle().strokeBorder(Theme.divider, lineWidth: 1))
+        .overlay {
+            CoverEditOverlay(isEmpty: false, changeLabel: currentProfileData == nil ? "Add" : "Change", shape: .circle)
+        }
+        .shadow(color: .black.opacity(0.35), radius: 14, y: 8)
     }
 
     // MARK: - Footer
 
     private var footer: some View {
-        HStack {
+        HStack(spacing: 10) {
             Button("Reset to Default") { resetOverride() }
-                .buttonStyle(PillButtonStyle())
-                .foregroundStyle(Theme.textTertiary)
+                .buttonStyle(QuietTextButtonStyle())
+                .help("Remove this artist's custom name, banner and picture")
             Spacer()
             Button("Cancel") { dismiss() }
-                .buttonStyle(PillButtonStyle())
+                .buttonStyle(SheetPillStyle())
+                .keyboardShortcut(.cancelAction)
             Button("Save") { save() }
-                .buttonStyle(PillButtonStyle(isPrimary: true))
+                .buttonStyle(SheetPillStyle(isPrimary: true))
         }
-        .padding(.horizontal, Theme.Spacing.xl)
-        .padding(.vertical, Theme.Spacing.lg)
+    }
+
+    // MARK: - Previews
+
+    /// Identifies an image cheaply (no hashing of the bytes), so a preview
+    /// is only re-decoded when the image actually changes.
+    private func previewKey(_ data: Data?) -> String {
+        data.map(ArtworkImageCache.contentID(for:)) ?? "none"
+    }
+
+    private static func preview(_ data: Data?, maxPixel: Int) async -> NSImage? {
+        guard let data else { return nil }
+        let box = await Task.detached(priority: .userInitiated) {
+            ArtworkImageCache.ImageBox(image: PrerenderedImage.nsImage(PrerenderedImage.downsampled(data, maxPixel: maxPixel)))
+        }.value
+        return box.image
     }
 
     // MARK: - Computed accessors
@@ -301,9 +295,13 @@ struct ArtistEditorView: View {
         panel.message = target == .banner
             ? "Choose a banner image"
             : "Choose a profile image"
-        guard panel.runModal() == .OK, let url = panel.url,
-              let data = try? Data(contentsOf: url) else { return }
-        pendingCrop = PendingCrop(data: data, target: target)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        // Large originals read off the main thread.
+        Task {
+            let data = await Task.detached(priority: .userInitiated) { try? Data(contentsOf: url) }.value
+            guard let data else { return }
+            pendingCrop = PendingCrop(data: data, target: target)
+        }
     }
 
     private func save() {

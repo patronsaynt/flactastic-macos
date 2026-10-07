@@ -21,6 +21,9 @@ struct ArtistDiscographyView: View {
     @Environment(ListeningStore.self)    private var listening
     @Environment(Settings.self)          private var settings
     @Environment(NavigationRouter.self)  private var router
+    @Environment(LibraryStore.self)      private var library
+    @Environment(PlaylistStore.self)     private var playlistStore
+    @Environment(PlaylistAddCoordinator.self) private var playlistAdd
     @Environment(\.colorScheme)          private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -29,6 +32,9 @@ struct ArtistDiscographyView: View {
     /// Dominant hue per album id, sampled once per album set.
     @State private var albumHues: [String: HomePalette.Swatch] = [:]
     @State private var revealedSections: Set<String> = []
+    @State private var editingAlbum: Album?
+    @State private var editingTrack: Track?
+    @State private var removalRequest: LibraryRemovalRequest?
 
     private static let gutter: CGFloat = Theme.Spacing.xxl
     private static let eraSpacing: CGFloat = 40
@@ -68,6 +74,41 @@ struct ArtistDiscographyView: View {
         .frame(width: width, alignment: .leading)
         .background(alignment: .top) { wash }
         .task(id: eras.map(\.id)) { await sampleHues() }
+        .sheet(item: $editingAlbum) { album in
+            AlbumMetadataEditorView(album: album)
+                .environment(library)
+        }
+        .sheet(item: $editingTrack) { track in
+            TrackMetadataEditorView(track: track)
+                .environment(library)
+        }
+        .removeFromLibraryConfirmation($removalRequest, library: library)
+    }
+
+    // MARK: - Menus
+
+    private var menus: LibraryMenus {
+        LibraryMenus(player: player, library: library, playlistStore: playlistStore, playlistAdd: playlistAdd, router: router)
+    }
+
+    /// The artist's own releases leave out the artist links (this is their
+    /// page); appearances keep them, to reach the album's main artist.
+    private func albumMenu(_ album: Album, showArtists: Bool = false) -> [FLContextMenuItem] {
+        menus.album(
+            album,
+            open: { router.collectionPath.append(album.id) },
+            edit: { editingAlbum = album },
+            remove: { removalRequest = LibraryRemovalRequest(title: album.name, tracks: album.tracks) },
+            showArtists: showArtists
+        )
+    }
+
+    private func trackMenu(_ track: Track) -> [FLContextMenuItem] {
+        menus.track(
+            track,
+            edit: { editingTrack = track },
+            remove: { removalRequest = LibraryRemovalRequest(title: track.title, tracks: [track]) }
+        )
     }
 
     // MARK: - Wash
@@ -163,7 +204,9 @@ struct ArtistDiscographyView: View {
                     trackLimit: Self.spotlightTrackLimit,
                     currentTrackID: player.currentTrack?.id,
                     play: { startIndex, shuffle in play(album, from: startIndex, shuffle: shuffle) },
-                    open: { router.collectionPath.append(album.id) }
+                    open: { router.collectionPath.append(album.id) },
+                    albumMenu: { albumMenu(album) },
+                    trackMenu: trackMenu
                 )
                 .id(album.id)
                 .transition(.asymmetric(
@@ -190,6 +233,7 @@ struct ArtistDiscographyView: View {
                 ) {
                     withAnimation(Self.selectionMotion) { selectedAlbumID = album.id }
                 }
+                .flContextMenu { albumMenu(album) }
                 .onHover { inside in
                     if inside { hoveredAlbumID = album.id }
                     else if hoveredAlbumID == album.id { hoveredAlbumID = nil }
@@ -235,6 +279,7 @@ struct ArtistDiscographyView: View {
                         AlbumCardView(album: album, artworkPointSize: cell)
                     }
                     .buttonStyle(.plain)
+                    .flContextMenu { albumMenu(album) }
                     .sectionReveal(revealed, delay: 0.08 + min(Double(index) * 0.06, 0.42), calm: reduceMotion)
                 }
             }
@@ -256,6 +301,7 @@ struct ArtistDiscographyView: View {
             ) {
                 ForEach(Array(summary.appearsOn.enumerated()), id: \.element.id) { index, album in
                     AppearanceCard(album: album) { router.collectionPath.append(album.id) }
+                        .flContextMenu { albumMenu(album, showArtists: true) }
                         .sectionReveal(revealed, delay: 0.08 + min(Double(index) * 0.06, 0.42), calm: reduceMotion)
                 }
             }
@@ -402,6 +448,8 @@ private struct AlbumSpotlight: View {
     let currentTrackID: UUID?
     let play: (_ startIndex: Int?, _ shuffle: Bool) -> Void
     let open: () -> Void
+    let albumMenu: () -> [FLContextMenuItem]
+    let trackMenu: (Track) -> [FLContextMenuItem]
 
     private var tracks: [Track] { Array(album.tracks.prefix(trackLimit)) }
 
@@ -414,6 +462,8 @@ private struct AlbumSpotlight: View {
             details
                 .frame(width: infoWidth, alignment: .leading)
                 .frame(maxHeight: .infinity, alignment: .top)
+                .contentShape(Rectangle())
+                .flContextMenu { albumMenu() }
             tracklist
         }
         .padding(.horizontal, 40)
@@ -519,6 +569,7 @@ private struct AlbumSpotlight: View {
                     ) {
                         play(index, false)
                     }
+                    .flContextMenu { trackMenu(track) }
                 }
             }
             if album.trackCount > tracks.count {

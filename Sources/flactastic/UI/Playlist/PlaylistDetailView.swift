@@ -1,13 +1,22 @@
 import SwiftUI
 
+/// A playlist, in the album page's language: a hero on a blurred wash of
+/// its cover, then its tracks, which can be dragged to reorder. Arrives
+/// with the same entrance as the artist and album pages: the page zooms in
+/// from blurred, then the cover, title, details and buttons follow.
 struct PlaylistDetailView: View {
     let playlistID: UUID
 
+    @Environment(\.topBarInset) private var topBarInset
     @Environment(PlaylistStore.self) private var playlistStore
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerState.self) private var player
     @Environment(NavigationRouter.self) private var router
     @Environment(ListeningStore.self) private var listening
+    @Environment(PlaylistAddCoordinator.self) private var playlistAdd
+    @Environment(Settings.self) private var settings
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var isEditingName = false
     @State private var editedName = ""
@@ -15,6 +24,19 @@ struct PlaylistDetailView: View {
     @State private var showEditor = false
     @State private var draggingEntryID: UUID? = nil
     @State private var dropTargetEntryID: UUID? = nil
+    @State private var hasEntered = false
+    @State private var editingTrack: Track?
+    @State private var removalRequest: LibraryRemovalRequest?
+    /// The cover, blurred once off the main thread for the backdrop.
+    @State private var backdrop: NSImage?
+
+    private static let heroHeight: CGFloat = 540
+
+    private var isLight: Bool { colorScheme == .light }
+    private var calmMotion: Bool { reduceMotion || !settings.fadeAnimationsEnabled }
+    private var ink: Color { isLight ? Theme.textPrimary : .white }
+    private var inkSecondary: Color { isLight ? Color(white: 0.28) : .white.opacity(0.85) }
+    private var arrive: Animation { .timingCurve(0.16, 1, 0.3, 1, duration: 0.7) }
 
     private var playlist: Playlist? {
         playlistStore.playlists.first { $0.id == playlistID }
@@ -23,32 +45,52 @@ struct PlaylistDetailView: View {
     var body: some View {
         if let playlist {
             let tracks = playlistStore.resolvedTracks(for: playlist, in: library)
+            let cover = playlist.customArtwork ?? tracks.first?.artwork
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    FLBackLink(title: router.playlistsBackTitle) {
-                        router.goBackInPlaylists()
-                    }
-                    .padding(.top, 24)
+                    hero(playlist, tracks: tracks, cover: cover)
 
-                    playlistHeader(playlist, tracks: tracks)
-                        .padding(.top, 22)
-                        .padding(.bottom, 28)
-
-                    if tracks.isEmpty {
-                        emptyState
-                    } else {
-                        FLTrackListHeader(showDragHandle: true)
-                        trackList(playlist)
+                    Group {
+                        if tracks.isEmpty {
+                            emptyState
+                        } else {
+                            FLTrackListHeader(showDragHandle: true)
+                            trackList(playlist)
+                        }
                     }
+                    .padding(.horizontal, collectionGutter)
+                    .padding(.top, 8)
+                    .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.8))
                 }
-                .padding(.horizontal, collectionGutter)
                 .padding(.bottom, 100)
             }
+            .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
+            .blur(radius: hasEntered || calmMotion ? 0 : 28)
+            .opacity(hasEntered ? 1 : 0)
             .background(Theme.background)
+            .onAppear {
+                withAnimation(calmMotion
+                              ? .easeOut(duration: 0.3)
+                              : .timingCurve(0.16, 1, 0.3, 1, duration: 1.1)) {
+                    hasEntered = true
+                }
+            }
+            .task(id: backdropID(playlist, cover: cover)) {
+                let id = backdropID(playlist, cover: cover)
+                backdrop = BlurredArtworkCache.shared.cached(id: id)
+                if backdrop == nil {
+                    backdrop = await BlurredArtworkCache.shared.image(for: cover, id: id).image
+                }
+            }
             .sheet(isPresented: $showEditor) {
                 PlaylistEditorView(playlistID: playlistID)
             }
+            .sheet(item: $editingTrack) { track in
+                TrackMetadataEditorView(track: track)
+                    .environment(library)
+            }
+            .removeFromLibraryConfirmation($removalRequest, library: library)
         } else {
             Text("Playlist not found")
                 .foregroundStyle(Theme.textTertiary)
@@ -57,93 +99,167 @@ struct PlaylistDetailView: View {
         }
     }
 
-    // MARK: - Header
-
-    @ViewBuilder
-    private func playlistHeader(_ playlist: Playlist, tracks: [Track]) -> some View {
-        HStack(alignment: .bottom, spacing: 28) {
-            ArtworkView(data: playlist.customArtwork ?? tracks.first?.artwork, size: 180)
-
-            VStack(alignment: .leading, spacing: 0) {
-                FLEyebrow(text: "Playlist")
-
-                Group {
-                    if isEditingName {
-                        TextField("Playlist name", text: $editedName)
-                            .textFieldStyle(.plain)
-                            .onSubmit { commitRename() }
-                    } else {
-                        Text(playlist.name)
-                            .lineLimit(1)
-                            .onTapGesture(count: 2) {
-                                editedName = playlist.name
-                                isEditingName = true
-                            }
-                            .help("Double-click to rename")
-                    }
-                }
-                .font(.system(size: 30, weight: .bold))
-                .tracking(-0.8)
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.top, 6)
-
-                Text(FormatUtils.playlistSummary(
-                    trackCount: tracks.count,
-                    duration: tracks.reduce(0) { $0 + ($1.duration ?? 0) }
-                ))
-                .font(.system(size: 13.5))
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.top, 8)
-
-                if let desc = playlist.description, !desc.isEmpty {
-                    Text(desc)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.top, 6)
-                }
-
-                HStack(spacing: 10) {
-                    if !tracks.isEmpty {
-                        Button {
-                            player.isShuffleEnabled = false
-                            player.startFreshQueue(tracks, startAt: 0, source: playlist.name)
-                            player.engine.play()
-                            listening.recordPlaylistPlay(playlist)
-                        } label: {
-                            HStack(spacing: Theme.Spacing.sm) {
-                                Image(systemName: "play.fill")
-                                    .font(.system(size: 11))
-                                Text("Play")
-                            }
-                        }
-                        .buttonStyle(FLActionPillStyle(isPrimary: true))
-
-                        Button {
-                            player.isShuffleEnabled = true
-                            let startIndex = Int.random(in: 0..<tracks.count)
-                            player.startFreshQueue(tracks, startAt: startIndex, source: playlist.name)
-                            player.engine.play()
-                            listening.recordPlaylistPlay(playlist)
-                        } label: {
-                            HStack(spacing: Theme.Spacing.sm) {
-                                Image(systemName: "shuffle")
-                                    .font(.system(size: 12))
-                                Text("Shuffle")
-                            }
-                        }
-                        .buttonStyle(FLActionPillStyle())
-                    }
-
-                    FLCircleIconButton(systemImage: "pencil") {
-                        showEditor = true
-                    }
-                    .help("Edit cover, name and description")
-                }
-                .padding(.top, 18)
-            }
+    /// Shared with the Playlists tab's stage, so a cover is blurred once.
+    private func backdropID(_ playlist: Playlist, cover: Data?) -> String {
+        if let custom = playlist.customArtwork {
+            return "playlist-stage:playlist:\(playlist.id):\(custom.count)"
         }
+        return "playlist-stage:\(cover.map(ArtworkImageCache.contentID(for:)) ?? playlist.id.uuidString)"
+    }
+
+    // MARK: - Hero
+
+    private func hero(_ playlist: Playlist, tracks: [Track], cover: Data?) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            backdropLayer
+                .scaleEffect(hasEntered || calmMotion ? 1 : 1.14)
+                .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 1.9), value: hasEntered)
+
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(isLight ? 0.12 : 0.35), location: 0),
+                    .init(color: .clear, location: 0.3),
+                    .init(color: Theme.background.opacity(0.25), location: 0.6),
+                    .init(color: Theme.background, location: 1),
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
+
+            HStack(alignment: .bottom, spacing: 40) {
+                ArtworkView(data: cover, size: 300, id: playlist.customArtwork.map { "playlist:\(playlist.id):\($0.count)" })
+                    .shadow(color: .black.opacity(isLight ? 0.25 : 0.6), radius: 30, y: 24)
+                    .flContextMenu {
+                        playbackContextMenuItems(for: tracks, player: player)
+                        FLContextMenuItem.divider
+                        FLContextMenuItem.button("Edit...", systemImage: "pencil") { showEditor = true }
+                    }
+                    .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
+                    .opacity(hasEntered ? 1 : 0)
+                    .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.9).delay(calmMotion ? 0 : 0.22), value: hasEntered)
+
+                heroDetails(playlist, tracks: tracks)
+                    .padding(.bottom, 6)
+            }
+            .padding(.horizontal, collectionGutter)
+            .padding(.bottom, 44)
+        }
+        // Runs up under the top bar, so the bar floats over the backdrop.
+        .frame(height: Self.heroHeight + topBarInset)
+        .frame(maxWidth: .infinity)
+        .clipped()
+        .overlay(alignment: .topLeading) {
+            HeroBackButton { router.goBackInPlaylists() }
+                .help(router.playlistsBackTitle)
+                .padding(.leading, collectionGutter)
+                .padding(.top, Theme.Spacing.xl + topBarInset)
+                .opacity(hasEntered ? 1 : 0)
+                .animation(.easeOut(duration: 0.5).delay(calmMotion ? 0 : 0.15), value: hasEntered)
+        }
+    }
+
+    /// The pre-blurred cover, drawn scaled up with no live blur.
+    private var backdropLayer: some View {
+        Color.clear
+            .overlay {
+                if let backdrop {
+                    Image(nsImage: backdrop)
+                        .resizable()
+                        .interpolation(.medium)
+                        .aspectRatio(contentMode: .fill)
+                        .scaleEffect(1.2)
+                        .saturation(1.4)
+                        .brightness(isLight ? 0.18 : -0.2)
+                } else {
+                    Theme.surface
+                }
+            }
+            .clipped()
+            .allowsHitTesting(false)
+    }
+
+    private func heroDetails(_ playlist: Playlist, tracks: [Track]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // The title rises out of its own line, clipped like a reveal.
+            // Double-click to rename in place.
+            Group {
+                if isEditingName {
+                    TextField("Playlist name", text: $editedName)
+                        .textFieldStyle(.plain)
+                        .onSubmit { commitRename() }
+                        .onExitCommand { isEditingName = false }
+                } else {
+                    Text(playlist.name)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.45)
+                        .onTapGesture(count: 2) {
+                            editedName = playlist.name
+                            isEditingName = true
+                        }
+                        .help("Double-click to rename")
+                }
+            }
+            .font(.system(size: 80, weight: .heavy))
+            .tracking(-3)
+            .foregroundStyle(ink)
+            .offset(y: hasEntered || calmMotion ? 0 : 160)
+            .padding(.bottom, 6)
+            .clipped()
+            .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.95).delay(calmMotion ? 0 : 0.32), value: hasEntered)
+
+            if let description = playlist.description, !description.isEmpty {
+                Text(description)
+                    .font(.system(size: 16))
+                    .foregroundStyle(inkSecondary)
+                    .lineLimit(2)
+                    .padding(.top, 8)
+                    .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.52))
+            }
+
+            Text("Playlist · " + FormatUtils.playlistSummary(
+                trackCount: tracks.count,
+                duration: tracks.reduce(0) { $0 + ($1.duration ?? 0) }
+            ))
+            .font(.system(size: 14))
+            .foregroundStyle(inkSecondary)
+            .padding(.top, 10)
+            .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.52))
+
+            if !tracks.isEmpty {
+                QualityMixBar(tracks: tracks, width: 220, ink: inkSecondary)
+                    .padding(.top, 10)
+                    .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.52))
+            }
+
+            HStack(spacing: Theme.Spacing.md) {
+                if !tracks.isEmpty {
+                    Button { playAll(tracks, playlist: playlist, shuffle: false) } label: {
+                        Label("Play", systemImage: "play.fill")
+                    }
+                    .buttonStyle(HeroPillStyle(kind: .primary, ink: ink, isLight: isLight))
+                    Button { playAll(tracks, playlist: playlist, shuffle: true) } label: {
+                        Label("Shuffle", systemImage: "shuffle")
+                    }
+                    .buttonStyle(HeroPillStyle(kind: .secondary, ink: ink, isLight: isLight))
+                }
+                Button { showEditor = true } label: {
+                    Image(systemName: "pencil")
+                }
+                .buttonStyle(HeroPillStyle(kind: .secondary, ink: ink, isLight: isLight))
+                .help("Edit cover, name and description")
+                .accessibilityLabel("Edit playlist")
+            }
+            .padding(.top, 24)
+            .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.62))
+        }
+    }
+
+    private func playAll(_ tracks: [Track], playlist: Playlist, shuffle: Bool) {
+        guard !tracks.isEmpty else { return }
+        player.isShuffleEnabled = shuffle
+        let start = shuffle ? Int.random(in: 0..<tracks.count) : 0
+        player.startFreshQueue(tracks, startAt: start, source: playlist.name)
+        player.engine.play()
+        listening.recordPlaylistPlay(playlist)
     }
 
     // MARK: - Track List
@@ -231,34 +347,24 @@ struct PlaylistDetailView: View {
     // MARK: - Context Menu
 
     private func contextMenuItems(for entry: PlaylistEntry, track: Track) -> [FLContextMenuItem] {
-        var items = playbackContextMenuItems(for: [track], player: player)
-        items.append(.divider)
-        items.append(.button("View Album", systemImage: "square.grid.2x2") {
-            if let albumID = library.album(for: track)?.id {
-                router.navigateToAlbum(id: albumID)
-            }
-        })
-        let artistItems = artistContextMenuItems(
-            credit: track.artist ?? track.albumArtist,
-            library: library,
-            router: router
-        )
-        items.append(contentsOf: artistItems)
-        items.append(.divider)
-
+        // Right-clicking one of several selected rows acts on all of them.
         let selectedCount = selection.contains(entry.id) ? selection.count : 0
-        if selectedCount > 1 {
-            items.append(.button("Remove \(selectedCount) Tracks", systemImage: "minus.circle") {
+        let removeFromPlaylist: FLContextMenuItem = selectedCount > 1
+            ? .button("Remove \(selectedCount) Tracks from Playlist", systemImage: "minus.circle") {
                 playlistStore.removeEntries(ids: selection, from: playlistID)
                 selection = []
-            })
-        } else {
-            items.append(.button("Remove from Playlist", systemImage: "minus.circle") {
+            }
+            : .button("Remove from Playlist", systemImage: "minus.circle") {
                 playlistStore.removeEntries(ids: [entry.id], from: playlistID)
                 selection.remove(entry.id)
-            })
-        }
-        return items
+            }
+        let menus = LibraryMenus(player: player, library: library, playlistStore: playlistStore, playlistAdd: playlistAdd, router: router)
+        return menus.track(
+            track,
+            extra: [removeFromPlaylist],
+            edit: { editingTrack = track },
+            remove: { removalRequest = LibraryRemovalRequest(title: track.title, tracks: [track]) }
+        )
     }
 
     // MARK: - Empty State
@@ -327,5 +433,15 @@ struct PlaylistDetailView: View {
             playlistStore.renamePlaylist(id: playlistID, name: trimmed)
         }
         isEditingName = false
+    }
+}
+
+private extension View {
+    /// Fades and lifts into place when `active` flips, after the zoom.
+    func arrival(_ active: Bool, calm: Bool, animation: Animation) -> some View {
+        self
+            .opacity(active ? 1 : 0)
+            .offset(y: active || calm ? 0 : 16)
+            .animation(calm ? .easeOut(duration: 0.3) : animation, value: active)
     }
 }

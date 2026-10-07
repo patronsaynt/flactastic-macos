@@ -55,14 +55,14 @@ final class PlayerState {
     /// The original (unshuffled) queue, stored so we can restore order when shuffle is turned off.
     private var originalQueue: [Track] = []
 
-    /// Track IDs that were added via Play Next / Add to Queue — used to render the
-    /// yellow indicator in the queue panel. Cleared whenever a fresh queue is started
+    /// Track IDs that were added via Play Next / Add to Queue — the queue panel
+    /// groups these under "Queued by you". Cleared whenever a fresh queue is started
     /// (e.g. via Play All, a double-click, or track-list playback).
     var userQueuedTrackIDs: Set<UUID> = []
 
     /// Display name of the source the current queue was started from — e.g. the
-    /// album name or playlist name. Used for the "Next from: <source>" section in
-    /// the queue panel.
+    /// album name or playlist name. The queue panel labels the source's tracks
+    /// "Playing from <source>".
     var playbackSource: String? = nil
 
     /// Whether the queue panel is currently visible.
@@ -286,6 +286,18 @@ final class PlayerState {
         guard engineIndex > engine.currentIndex, engineIndex < q.count else { return }
         userQueuedTrackIDs.remove(q[engineIndex].id)
         engine.removeFromQueue(at: engineIndex)
+    }
+
+    /// Drop everything after the current track. The current track keeps
+    /// playing; turning shuffle off afterwards won't bring the cleared tracks
+    /// back.
+    func clearUpcoming() {
+        let q = engine.queue
+        let cur = engine.currentIndex
+        guard cur + 1 < q.count else { return }
+        for track in q[(cur + 1)...] { userQueuedTrackIDs.remove(track.id) }
+        originalQueue = []
+        engine.reorderQueue(Array(q[...cur]), currentIndex: cur)
     }
 
     /// Jump to a specific index within the current queue.

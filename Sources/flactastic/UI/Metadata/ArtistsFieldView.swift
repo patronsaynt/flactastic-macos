@@ -16,9 +16,7 @@ struct ArtistsFieldView: View {
         VStack(alignment: .leading, spacing: 4) {
             if let label, !compact {
                 HStack(spacing: 4) {
-                    Text(label)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
+                    SheetLabel(text: label)
                     Spacer()
                     if artists.count > 1 {
                         Text("\(artists.count) artists")
@@ -56,8 +54,8 @@ struct ArtistsFieldView: View {
             .padding(.vertical, compact ? 3 : 5)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                    .fill(Theme.surfaceElevated)
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Theme.textPrimary.opacity(0.05))
             )
 
         }
@@ -73,7 +71,7 @@ struct ArtistsFieldView: View {
     private func chip(name: String, onRemove: @escaping () -> Void) -> some View {
         HStack(spacing: 4) {
             Text(name)
-                .font(.system(size: 12))
+                .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
             Button(action: onRemove) {
                 Image(systemName: "xmark")
@@ -82,10 +80,11 @@ struct ArtistsFieldView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, 8)
-        .frame(height: 22)
+        .padding(.leading, 10)
+        .padding(.trailing, 8)
+        .frame(height: 24)
         .background(
-            Capsule().fill(Theme.surfaceHover)
+            Capsule().fill(Theme.textPrimary.opacity(0.09))
         )
     }
 }

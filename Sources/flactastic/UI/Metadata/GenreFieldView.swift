@@ -15,9 +15,7 @@ struct GenreFieldView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("Genre")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(Theme.textSecondary)
+            SheetLabel(text: "Genre")
             HStack(spacing: Theme.Spacing.xs) {
                 TextField("", text: $text)
                     .textFieldStyle(.plain)
@@ -26,8 +24,8 @@ struct GenreFieldView: View {
                     .padding(.horizontal, Theme.Spacing.sm)
                     .padding(.vertical, 6)
                     .background(
-                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                            .fill(Theme.surfaceElevated)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Theme.textPrimary.opacity(0.05))
                     )
 
                 Button {
@@ -38,8 +36,8 @@ struct GenreFieldView: View {
                         .foregroundStyle(showPicker ? Theme.accent : Theme.textTertiary)
                         .padding(6)
                         .background(
-                            RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                                .fill(Theme.surfaceElevated)
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Theme.textPrimary.opacity(0.05))
                         )
                 }
                 .buttonStyle(.plain)
@@ -75,8 +73,8 @@ private struct GenrePickerPopover: View {
                         .padding(.horizontal, Theme.Spacing.sm)
                         .padding(.vertical, 5)
                         .background(
-                            RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                                .fill(Theme.surfaceElevated)
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Theme.textPrimary.opacity(0.05))
                         )
                         .onSubmit { addCustomGenre() }
 

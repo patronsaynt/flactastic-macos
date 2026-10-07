@@ -13,11 +13,9 @@ struct SpeakerPickerButton: View {
         } label: {
             Image(systemName: iconName)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(cast.activeSpeakerID != nil || isPresented ? Theme.accent : Theme.textTertiary)
                 .frame(width: 26, height: 26)
-                .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(GlassIconButtonStyle(isOn: cast.activeSpeakerID != nil || isPresented))
         .frame(width: 26, height: 26)
         .help(cast.activeSpeaker.map { "Playing on \($0.name)" } ?? "Play on a speaker")
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {

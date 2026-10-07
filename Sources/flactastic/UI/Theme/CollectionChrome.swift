@@ -259,30 +259,6 @@ struct FLActionPillStyle: ButtonStyle {
     }
 }
 
-/// Chevron + label back control used by the playlist detail view. (The
-/// album and artist pages use `HeroBackButton` over their artwork.)
-struct FLBackLink: View {
-    let title: String
-    let action: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 12, weight: .semibold))
-                Text(title)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundStyle(isHovering ? Theme.textPrimary : Theme.textTertiary)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-    }
-}
-
 // MARK: - Track list
 
 /// The `# / TITLE / FORMAT / QUALITY / LENGTH` rule above a tracklist. Column

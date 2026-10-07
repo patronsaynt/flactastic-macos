@@ -6,6 +6,7 @@ import SwiftUI
 /// throughout. Sections that depend on listening history are hidden until that
 /// history exists.
 struct HomeView: View {
+    @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self) private var library
     @Environment(ListeningStore.self) private var listening
     @Environment(PlayerState.self) private var player
@@ -18,6 +19,10 @@ struct HomeView: View {
     @Environment(LyricsRemoteCache.self) private var lyricsRemoteCache
     @Environment(\.metadataWriter) private var metadataWriter
     @Environment(\.displayScale) private var displayScale
+    @Environment(Settings.self) private var settings
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(ImportCoordinator.self) private var importCoordinator
 
     /// Time window for the listening-stats section. Persisted so the choice
     /// survives navigating away and back, and across launches.
@@ -64,7 +69,26 @@ struct HomeView: View {
     }
     @State private var metrics = HomeMetrics()
     @State private var removalRequest: LibraryRemovalRequest? = nil
-    @State private var isHeroHovering = false
+    @State private var editingAlbum: Album? = nil
+    /// Tracks of every playlist, resolved once per change to the playlists or
+    /// the library. Resolving walks the whole library (and can migrate old
+    /// entries), so it must not run inside a tile's body.
+    @State private var playlistTracks: [UUID: [Track]] = [:]
+    /// The banner image, blurred once off the main thread.
+    @State private var bannerImage: NSImage?
+    @State private var hasEntered = false
+
+    /// Banner height below the top bar. The page's sections start this far
+    /// down, less `bannerOverlap`, so Recently Played sits in the fade.
+    private static let bannerHeight: CGFloat = 520
+    private static let bannerOverlap: CGFloat = 116
+    private var calmMotion: Bool { reduceMotion || !settings.fadeAnimationsEnabled }
+
+    /// A brand-new library: loaded, and nothing in it yet. Home becomes a
+    /// welcome with ways to add music instead of empty stats.
+    private var isLibraryEmpty: Bool {
+        library.hasCompletedInitialLoad && library.tracks.isEmpty
+    }
 
     private func recomputeMetrics() {
         var m = HomeMetrics()
@@ -108,25 +132,41 @@ struct HomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 34) {
+            VStack(alignment: .leading, spacing: 0) {
                 hero
                 VStack(alignment: .leading, spacing: 56) {
-                    recentlyPlayedSection
-                    listeningSection
-                    topAlbumsSection
-                    FidelidexView(palette: highlight.palette)
-                    homeFooter
+                    if isLibraryEmpty {
+                        gettingStarted
+                    } else {
+                        recentlyPlayedSection
+                        listeningSection
+                        topAlbumsSection
+                        FidelidexView(palette: highlight.palette)
+                        homeFooter
+                    }
                 }
                 .animation(.easeInOut(duration: 0.4), value: highlight.palette)
+                .padding(.horizontal, 36)
+                // Up into the banner's fade.
+                .padding(.top, -Self.bannerOverlap)
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 44)
             .padding(.bottom, 120)   // clear the floating player bar
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
         .removeFromLibraryConfirmation($removalRequest, library: library)
-        .onAppear { recomputeMetrics() }
+        .onAppear {
+            recomputeMetrics()
+            playlistTracks = playlistStore.resolvedTracksForAll(in: library)
+            withAnimation(calmMotion ? .easeOut(duration: 0.3) : .timingCurve(0.16, 1, 0.3, 1, duration: 1.1)) {
+                hasEntered = true
+            }
+        }
+        .task(id: bannerSource.map(ArtworkImageCache.contentID(for:))) {
+            // The colors come from exactly the image the banner shows.
+            highlight.updatePalette(from: bannerSource)
+            await loadBannerImage()
+        }
         .onChange(of: listening.events.count) { _, _ in recomputeMetrics() }
         .onChange(of: listening.recentContexts) { _, _ in recomputeMetrics() }
         .onChange(of: statsRange) { _, range in
@@ -140,7 +180,17 @@ struct HomeView: View {
         .onChange(of: chartWeekOffset) { _, _ in
             withAnimation(.easeInOut(duration: 0.25)) { recomputeChart() }
         }
-        .onChange(of: library.tracksRevision) { _, _ in recomputeMetrics() }
+        .onChange(of: library.tracksRevision) { _, _ in
+            recomputeMetrics()
+            playlistTracks = playlistStore.resolvedTracksForAll(in: library)
+        }
+        .onChange(of: playlistStore.revision) { _, _ in
+            playlistTracks = playlistStore.resolvedTracksForAll(in: library)
+        }
+        .sheet(item: $editingAlbum) { album in
+            AlbumMetadataEditorView(album: album)
+                .environment(library)
+        }
         .task(id: library.hasCompletedInitialLoad) {
             guard library.hasCompletedInitialLoad else { return }
             await highlight.pickIfNeeded(
@@ -155,144 +205,238 @@ struct HomeView: View {
 
     // MARK: - Hero
 
+    /// The banner: the artist image fills the width, runs up under the top
+    /// bar, darkens toward the left for the words and melts into the page
+    /// below, where Recently Played starts. The logo, date, lyric and song
+    /// sit at its lower left; the pin follows the song.
     private var hero: some View {
+        ZStack(alignment: .bottomLeading) {
+            bannerBackdrop
+            heroText
+                .padding(.horizontal, 40)
+                .padding(.bottom, Self.bannerOverlap + 34)
+        }
+        .frame(height: Self.bannerHeight + topBarInset)
+        .frame(maxWidth: .infinity)
+        .clipped()
+    }
+
+    private var heroText: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Wordmark(height: 56)
-                .padding(.bottom, 28)
+            Wordmark(height: 44)
+                .rise(hasEntered, calm: calmMotion, delay: 0.2)
+
             Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()).uppercased())
                 .font(.system(size: 11, weight: .semibold))
-                .tracking(2)
-                .foregroundStyle(Theme.textTertiary)
+                .tracking(2.2)
+                .foregroundStyle(Theme.textSecondary)
+                .padding(.top, 26)
+                .rise(hasEntered, calm: calmMotion, delay: 0.45)
 
             if let pick = highlight.pick {
                 Text("“\(pick.lyric)”")
-                    .font(.system(size: 42, weight: .bold).italic())
+                    .font(.system(size: 54, weight: .heavy).italic())
+                    .tracking(-1.3)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(2)
                     .minimumScaleFactor(0.55)
+                    .frame(maxWidth: 980, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 12)
+                    .rise(hasEntered, calm: calmMotion, delay: 0.2)
+                heroAttribution(pick)
+                    .padding(.top, 18)
+                    .rise(hasEntered, calm: calmMotion, delay: 0.45)
+            } else if isLibraryEmpty {
+                Text("Welcome to FLACtastic.")
+                    .font(.system(size: 54, weight: .heavy))
+                    .tracking(-1.3)
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.top, 12)
+                    .rise(hasEntered, calm: calmMotion, delay: 0.2)
+                Text("Your library is linked and ready. Add some music to hear it properly.")
+                    .font(.system(size: 16))
+                    .foregroundStyle(Theme.textSecondary)
                     .padding(.top, 14)
-                heroAttribution(pick).padding(.top, 16)
+                    .rise(hasEntered, calm: calmMotion, delay: 0.45)
             } else {
                 Text("Welcome to your library.")
-                    .font(.system(size: 42, weight: .bold))
+                    .font(.system(size: 54, weight: .heavy))
+                    .tracking(-1.3)
                     .foregroundStyle(Theme.textPrimary)
-                    .padding(.top, 14)
+                    .padding(.top, 12)
+                    .rise(hasEntered, calm: calmMotion, delay: 0.2)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .topTrailing) {
-            if highlight.pick != nil { heroPinButton }
-        }
-        .onHover { isHeroHovering = $0 }
-        // Banner lives behind the content so its height tracks the content
-        // (which grows when the lyric wraps to two lines). The GeometryReader
-        // pins the (otherwise greedy) blurred image to the content's size —
-        // the negative padding bleeds it to the top/side edges.
-        .background {
-            GeometryReader { geo in
-                heroBanner(size: geo.size)
-            }
-            .padding(.horizontal, -36)
-            .padding(.top, -44)
-            .padding(.bottom, -18)   // fall neatly into the gap below the attribution
-            .allowsHitTesting(false)
-        }
     }
 
-    /// Discreet pin in the banner's top-right corner. Hidden until the hero is
-    /// hovered; stays visible (accent-tinted) while pinned.
-    private var heroPinButton: some View {
-        Button { highlight.togglePin() } label: {
-            Image(systemName: highlight.isPinned ? "pin.fill" : "pin")
-                .font(.system(size: 13))
-                .foregroundStyle(highlight.isPinned ? homeAccent : Theme.textTertiary)
-                .frame(width: 28, height: 28)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .help(highlight.isPinned ? "Unpin lyric" : "Pin lyric")
-        .opacity(highlight.isPinned || isHeroHovering ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isHeroHovering)
-        .offset(y: -8)
-    }
-
-    /// Song credit shown under the lyric: `♪ Title — Artist`.
+    /// `♪ Title — Artist`, the artist a link to their page, then the pin.
     private func heroAttribution(_ pick: HomeHighlight.Pick) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 8) {
             Image(systemName: "music.note")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textSecondary)
             Text(pick.songTitle)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
             if let artist = pick.artistDisplay {
                 Text("—")
-                Text(artist)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.textSecondary)
+                ArtistLink(credit: artist, font: .system(size: 14), color: Theme.textSecondary)
             }
+            heroPinButton
         }
-        .font(.system(size: 13))
-        .foregroundStyle(Theme.textTertiary)
         .lineLimit(1)
     }
 
-    /// Blurred artist image (or a generic gray blob) pushed to the right, with
-    /// gradients fading it out toward the left so the headline stays readable.
-    /// Bleeds past the page padding to the top/right edges. Only shown when a
-    /// lyric has been picked.
-    @ViewBuilder
-    private func heroBanner(size: CGSize) -> some View {
-        if let pick = highlight.pick {
-            Group {
-                // Decode through the downsampling cache instead of full-res
-                // `NSImage(data:)`: under a 28pt blur + gradient mask a 640pt
-                // source is visually indistinguishable, and vastly cheaper to
-                // blur and composite while the page scrolls.
-                if let data = pick.imageData, let nsImage = ArtworkImageCache.shared.thumbnail(
-                    for: data,
-                    id: ArtworkImageCache.contentID(for: data),
-                    pointSize: 640,
-                    scale: displayScale
-                ) {
-                    Image(nsImage: nsImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .blur(radius: 28)
-                } else {
-                    // Generic gray blob when no artist image is available.
-                    RadialGradient(
-                        colors: [Theme.surfaceElevated, .clear],
-                        center: .init(x: 0.85, y: 0.4),
-                        startRadius: 0,
-                        endRadius: 320
-                    )
+    private var heroPinButton: some View {
+        Button { highlight.togglePin() } label: {
+            Image(systemName: highlight.isPinned ? "pin.fill" : "pin")
+                .font(.system(size: 12))
+                .foregroundStyle(highlight.isPinned ? homeAccent : Theme.textSecondary)
+                .frame(width: 30, height: 30)
+                .contentShape(Circle())
+        }
+        .buttonStyle(HeroIconButtonStyle())
+        .help(highlight.isPinned ? "Unpin lyric" : "Keep this lyric on Home")
+        .accessibilityLabel(highlight.isPinned ? "Unpin lyric" : "Pin lyric")
+    }
+
+    /// The artist image (or a soft grey glow when there isn't one), settling
+    /// from a slight zoom, under two washes: one darkening the left for the
+    /// words, one fading the bottom into the page.
+    private var bannerBackdrop: some View {
+        Color.clear
+            .overlay {
+                Group {
+                    if let bannerImage {
+                        Image(nsImage: bannerImage)
+                            .resizable()
+                            .interpolation(.medium)
+                            .aspectRatio(contentMode: .fill)
+                            .saturation(1.15)
+                            .transition(.opacity)
+                    } else {
+                        RadialGradient(
+                            colors: [Theme.surfaceElevated, .clear],
+                            center: .init(x: 0.8, y: 0.4),
+                            startRadius: 0,
+                            endRadius: 520
+                        )
+                    }
+                }
+                .scaleEffect(hasEntered || calmMotion ? 1 : 1.1)
+                .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 1.6), value: hasEntered)
+                .animation(.easeOut(duration: 0.4), value: bannerImage != nil)
+            }
+            .clipped()
+            .overlay {
+                LinearGradient(
+                    stops: [
+                        .init(color: Theme.background.opacity(0.8), location: 0),
+                        .init(color: Theme.background.opacity(0.45), location: 0.42),
+                        .init(color: Theme.background.opacity(0.05), location: 0.75),
+                    ],
+                    startPoint: .leading, endPoint: .trailing
+                )
+            }
+            .overlay {
+                LinearGradient(
+                    stops: [
+                        .init(color: Theme.background.opacity(colorScheme == .light ? 0.15 : 0.35), location: 0),
+                        .init(color: .clear, location: 0.22),
+                        .init(color: .clear, location: 0.46),
+                        .init(color: Theme.background, location: 1),
+                    ],
+                    startPoint: .top, endPoint: .bottom
+                )
+            }
+            .allowsHitTesting(false)
+    }
+
+    /// The artist's banner, looked up live so one set after the pick (or
+    /// after it was pinned) shows; otherwise the pick's own image, which is
+    /// the banner, profile picture or album art it was made with.
+    private var bannerSource: Data? {
+        guard let pick = highlight.pick else { return nil }
+        // Pins saved before picks carried the artist resolve it from the name.
+        let key = pick.artistKey
+            ?? library.makeArtistResolver().keys(forCredit: pick.artistDisplay).first
+        if let key, let banner = artistStore.override(forKey: key)?.bannerImage {
+            return banner
+        }
+        return pick.imageData
+    }
+
+    /// Blurs the banner once, off the main thread, into a small bitmap that's
+    /// drawn scaled up: no live blur runs while the page scrolls, and the
+    /// result is kept for the session, so coming back to Home is instant.
+    private func loadBannerImage() async {
+        guard let data = bannerSource, !data.isEmpty else {
+            bannerImage = nil
+            return
+        }
+        let maxPixel = 640
+        let id = "home-banner:\(ArtworkImageCache.contentID(for: data))"
+        if let cached = BlurredArtworkCache.shared.cached(id: id) {
+            bannerImage = cached
+            return
+        }
+        let box = await BlurredArtworkCache.shared.image(
+            for: data,
+            id: id,
+            maxPixel: maxPixel,
+            radius: PrerenderedImage.pixelRadius(points: 22, maxPixel: maxPixel)
+        )
+        guard !Task.isCancelled else { return }
+        withAnimation(.easeOut(duration: 0.4)) { bannerImage = box.image }
+    }
+
+    // MARK: - Getting started
+
+    /// Home for an empty library: the ways to bring music in, as cards.
+    private var gettingStarted: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            sectionHeader("Get started")
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 230), spacing: 18)],
+                alignment: .leading,
+                spacing: 18
+            ) {
+                StartCard(
+                    icon: "square.stack",
+                    title: "Import an album",
+                    detail: "Copy an album's files into your library and tag them all at once."
+                ) { importCoordinator.begin(.album) }
+                StartCard(
+                    icon: "music.note",
+                    title: "Import a track",
+                    detail: "Add a single song from anywhere on your Mac, checking its tags first."
+                ) { importCoordinator.begin(.track) }
+                if settings.showDownloadTab {
+                    StartCard(
+                        icon: "arrow.down.circle",
+                        title: "Find music",
+                        detail: "Search for albums and tracks in lossless quality."
+                    ) { router.selectedTab = .download }
+                }
+                if let root = library.rootURL {
+                    StartCard(
+                        icon: "folder",
+                        title: "Open library folder",
+                        detail: "Drop music in yourself; FLACtastic picks it up."
+                    ) { NSWorkspace.shared.open(root) }
                 }
             }
-            // Pin to the content-derived size so the (greedy) fill image can't
-            // balloon the banner down the page.
-            .frame(width: size.width, height: size.height, alignment: .trailing)
-            .clipped()
-            // Reveal the right side, with the image fading in further to the
-            // left for a wider, smoother banner.
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .black.opacity(0.10), location: 0.22),
-                        .init(color: .black.opacity(0.5), location: 0.55),
-                        .init(color: .black, location: 1.0),
-                    ],
-                    startPoint: .leading, endPoint: .trailing
-                )
-            )
-            // Keep the left edge (wordmark/headline) firmly on the background.
-            .overlay(
-                LinearGradient(
-                    stops: [
-                        .init(color: Theme.background, location: 0.0),
-                        .init(color: Theme.background.opacity(0.4), location: 0.35),
-                        .init(color: Theme.background.opacity(0.0), location: 0.7),
-                    ],
-                    startPoint: .leading, endPoint: .trailing
-                )
-            )
+            if library.rootURL != nil {
+                Text("Added files outside the app? They show up on their own, or refresh with ⌘R.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textTertiary)
+            }
         }
+        .rise(hasEntered, calm: calmMotion, delay: 0.6)
     }
 
     private var homeFooter: some View {
@@ -393,7 +537,7 @@ struct HomeView: View {
 
     private func recentPlaylistTile(_ item: RecentItem) -> some View {
         let playlist = UUID(uuidString: item.targetID).flatMap { playlistsByID[$0] }
-        let tracks = playlist.map { playlistStore.resolvedTracks(for: $0, in: library) } ?? []
+        let tracks = playlist.flatMap { playlistTracks[$0.id] } ?? []
         let artwork = playlist?.customArtwork ?? tracks.first?.artwork
         return tile(
             artwork: artwork,
@@ -406,39 +550,21 @@ struct HomeView: View {
         )
     }
 
-    /// Custom context menu for an album tile/row on the home page — mirrors the
-    /// Collection's album menu (playback, View Album, Add to Playlist, artist
-    /// actions).
+    /// The shared album menu (see `LibraryMenus`), with Play first.
     private func albumContextMenu(_ album: Album) -> [FLContextMenuItem] {
-        var items: [FLContextMenuItem] = [
-            .button("Play Album", systemImage: "play.fill") {
-                player.startFreshQueue(album.tracks, source: album.name)
-                player.engine.play()
-                listening.recordAlbumPlay(album)
-            }
-        ]
-        items.append(contentsOf: playbackContextMenuItems(for: album.tracks, player: player))
-        items.append(.divider)
-        items.append(.button("View Album", systemImage: "square.grid.2x2") {
-            router.navigateToAlbum(id: album.id)
-        })
-        items.append(addToPlaylistMenuItem(tracks: album.tracks))
-        if !album.isCompilation {
-            let artistItems = artistContextMenuItems(
-                credit: album.albumArtist ?? album.artist,
-                library: library,
-                router: router
-            )
-            if !artistItems.isEmpty {
-                items.append(.divider)
-                items.append(contentsOf: artistItems)
-            }
+        let play: FLContextMenuItem = .button("Play Album", systemImage: "play.fill") {
+            player.isShuffleEnabled = false
+            player.startFreshQueue(album.tracks, source: album.name)
+            player.engine.play()
+            listening.recordAlbumPlay(album)
         }
-        items.append(.divider)
-        items.append(.button("Remove from Library", systemImage: "trash") {
-            removalRequest = LibraryRemovalRequest(title: album.name, tracks: album.tracks)
-        })
-        return items
+        let menus = LibraryMenus(player: player, library: library, playlistStore: playlistStore, playlistAdd: playlistAddCoordinator, router: router)
+        return [play] + menus.album(
+            album,
+            open: { router.navigateToAlbum(id: album.id) },
+            edit: { editingAlbum = album },
+            remove: { removalRequest = LibraryRemovalRequest(title: album.name, tracks: album.tracks) }
+        )
     }
 
     /// Context menu for a playlist tile — "Play" first, then queue actions and
@@ -458,35 +584,6 @@ struct HomeView: View {
             router.navigateToPlaylist(id: playlist.id)
         })
         return items
-    }
-
-    /// "Add to Playlist" submenu for a set of tracks, matching the pattern used
-    /// in AlbumDetailView / AllTracksView.
-    private func addToPlaylistMenuItem(tracks: [Track]) -> FLContextMenuItem {
-        var children: [FLContextMenuItem] = []
-        if !playlistStore.playlists.isEmpty {
-            for playlist in playlistStore.playlists {
-                children.append(.button(playlist.name) {
-                    playlistAddCoordinator.request(
-                        tracks: tracks,
-                        playlistID: playlist.id,
-                        playlistName: playlist.name,
-                        rootURL: library.rootURL,
-                        store: playlistStore
-                    )
-                })
-            }
-            children.append(.divider)
-        }
-        children.append(.textField("New playlist name…", systemImage: "plus") { name in
-            playlistAddCoordinator.createPlaylistAndAdd(
-                name: name,
-                tracks: tracks,
-                rootURL: library.rootURL,
-                store: playlistStore
-            )
-        })
-        return .submenu("Add to Playlist", systemImage: "plus.square.on.square", items: children)
     }
 
     // MARK: - Your Listening
@@ -679,6 +776,10 @@ struct HomeView: View {
                     .foregroundStyle(Theme.textTertiary)
             } else {
                 ForEach(Array(artists.enumerated()), id: \.element.id) { idx, artist in
+                    let key = library.makeArtistResolver().keys(forCredit: artist.name).first
+                    Button {
+                        if let key { router.navigateToArtist(key: key) }
+                    } label: {
                     HStack(spacing: 12) {
                         Text("\(idx + 1)")
                             .font(.system(size: 11))
@@ -702,6 +803,14 @@ struct HomeView: View {
                                 tint: idx == 0 ? homeAccent : Theme.textPrimary.opacity(0.45)
                             )
                         }
+                    }
+                    .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(key == nil)
+                    .help(key == nil ? "" : "Open \(ArtistResolver.displayString(artist.name) ?? artist.name)")
+                    .flContextMenu {
+                        artistContextMenuItems(credit: artist.name, library: library, router: router)
                     }
                 }
             }
@@ -1217,5 +1326,81 @@ private extension Int {
             return String(format: "%.1fk", thousands)
         }
         return formatted()
+    }
+}
+
+/// A quiet round icon button for the banner: a faint fill on hover, a
+/// press scale.
+private struct HeroIconButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HeroIconButton(configuration: configuration)
+    }
+
+    private struct HeroIconButton: View {
+        let configuration: ButtonStyle.Configuration
+        @State private var isHovering = false
+
+        var body: some View {
+            configuration.label
+                .background(Circle().fill(Theme.textPrimary.opacity(isHovering ? 0.1 : 0)))
+                .scaleEffect(configuration.isPressed ? 0.9 : 1)
+                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+                .animation(.easeOut(duration: 0.15), value: isHovering)
+                .onHover { isHovering = $0 }
+        }
+    }
+}
+
+private extension View {
+    /// The banner's words rising into place after the image settles.
+    func rise(_ active: Bool, calm: Bool, delay: Double) -> some View {
+        self
+            .opacity(active ? 1 : 0)
+            .offset(y: active || calm ? 0 : 20)
+            .animation(calm ? .easeOut(duration: 0.3) : .timingCurve(0.16, 1, 0.3, 1, duration: 0.9).delay(delay), value: active)
+    }
+}
+
+/// One way to add music on the empty Home: an icon, a title and a line on
+/// what it does. Lifts a little on hover.
+private struct StartCard: View {
+    let icon: String
+    let title: String
+    let detail: String
+    let action: () -> Void
+
+    @State private var isHovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 0) {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .frame(width: 44, height: 44)
+                    .background(Circle().fill(Theme.textPrimary.opacity(0.08)))
+                Text(title)
+                    .font(.system(size: 17, weight: .bold))
+                    .tracking(-0.3)
+                    .foregroundStyle(Theme.textPrimary)
+                    .padding(.top, 18)
+                Text(detail)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 6)
+            }
+            .frame(maxWidth: .infinity, minHeight: 168, alignment: .topLeading)
+            .padding(22)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(isHovering ? Theme.surfaceElevated : Theme.surface)
+            )
+            .offset(y: isHovering ? -3 : 0)
+            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.18), value: isHovering)
     }
 }

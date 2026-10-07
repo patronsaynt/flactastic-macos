@@ -11,9 +11,12 @@ let collectionGutter: CGFloat = 36
 let cardHoverHeadroom: CGFloat = 8
 
 struct CollectionView: View {
+    @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerState.self) private var player
     @Environment(NavigationRouter.self) private var router
+    @Environment(PlaylistStore.self) private var playlistStore
+    @Environment(PlaylistAddCoordinator.self) private var playlistAdd
 
     @State private var searchText = ""
     /// Persisted across launches so the user's preferred grouping (e.g.
@@ -121,7 +124,7 @@ struct CollectionView: View {
         VStack(spacing: 0) {
             header
                 .padding(.horizontal, collectionGutter)
-                .padding(.top, 28)
+                .padding(.top, 28 + topBarInset)
                 .padding(.bottom, 12)
 
             // Crossfade between sections and views rather than hard-cutting.
@@ -328,23 +331,11 @@ struct CollectionView: View {
     }
 
     private func albumContextMenu(_ album: Album) -> [FLContextMenuItem] {
-        var items = playbackContextMenuItems(for: album.tracks, player: player)
-        items.append(.divider)
-        items.append(.button("Edit...", systemImage: "pencil") { editingAlbum = album })
-        items.append(.button("Remove from Library", systemImage: "trash") {
-            removalRequest = LibraryRemovalRequest(title: album.name, tracks: album.tracks)
-        })
-        if !album.isCompilation {
-            let artistItems = artistContextMenuItems(
-                credit: album.albumArtist ?? album.artist,
-                library: library,
-                router: router
+        LibraryMenus(player: player, library: library, playlistStore: playlistStore, playlistAdd: playlistAdd, router: router)
+            .album(
+                album,
+                edit: { editingAlbum = album },
+                remove: { removalRequest = LibraryRemovalRequest(title: album.name, tracks: album.tracks) }
             )
-            if !artistItems.isEmpty {
-                items.append(.divider)
-                items.append(contentsOf: artistItems)
-            }
-        }
-        return items
     }
 }

@@ -6,6 +6,7 @@ import AppKit
 /// (native Qobuz/Deezer when configured, Lucida otherwise) and we show the
 /// resolved track/album plus any in-flight downloads.
 struct DownloadTabView: View {
+    @Environment(\.topBarInset) private var topBarInset
     @Environment(StreamerRegistry.self) private var registry
     @Environment(DownloadCoordinator.self) private var downloads
     @Environment(PlaylistRebuildCoordinator.self) private var rebuilder
@@ -73,6 +74,7 @@ struct DownloadTabView: View {
 
     var body: some View {
         content
+            .padding(.top, topBarInset)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Theme.background)
             .task {

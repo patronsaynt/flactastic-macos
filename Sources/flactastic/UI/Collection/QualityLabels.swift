@@ -64,3 +64,57 @@ extension Album {
         return ("\(lowest.label) to \(highest.label)", lowest.color)
     }
 }
+
+/// A playlist's spread of quality tiers: a thin bar split by tier, Hi-Res
+/// first, with the leading shares spelled out beside it.
+struct QualityMixBar: View {
+    let tracks: [Track]
+    var width: CGFloat = 200
+    /// Colour for the share text; the tier names keep their own colours.
+    var ink: Color = Theme.textSecondary
+
+    private struct Share: Identifiable {
+        let quality: AudioQuality
+        let count: Int
+        var id: Int { quality.rank }
+    }
+
+    private var shares: [Share] {
+        var counts: [Int: Int] = [:]
+        for track in tracks { counts[AudioQuality.of(track).rank, default: 0] += 1 }
+        return [AudioQuality.hiRes, .cd, .mid, .low].compactMap { quality in
+            counts[quality.rank].map { Share(quality: quality, count: $0) }
+        }
+    }
+
+    var body: some View {
+        let shares = shares
+        let total = max(1, shares.reduce(0) { $0 + $1.count })
+        let gaps = CGFloat(max(0, shares.count - 1)) * 2
+        HStack(spacing: 12) {
+            HStack(spacing: 2) {
+                ForEach(shares) { share in
+                    Capsule()
+                        .fill(share.quality.color)
+                        .frame(width: max(3, (width - gaps) * CGFloat(share.count) / CGFloat(total)))
+                }
+            }
+            .frame(width: width, height: 6, alignment: .leading)
+            .clipShape(Capsule())
+
+            HStack(spacing: 0) {
+                ForEach(Array(shares.prefix(3).enumerated()), id: \.element.id) { index, share in
+                    if index > 0 { Text(" · ").foregroundStyle(ink) }
+                    Text("\(Int((Double(share.count) / Double(total) * 100).rounded()))%")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(share.quality.color)
+                    Text(" \(share.quality.label)").foregroundStyle(ink)
+                }
+            }
+            .font(.system(size: 12).monospacedDigit())
+            .lineLimit(1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(shares.map { "\($0.count) \($0.quality.label)" }.joined(separator: ", "))
+    }
+}

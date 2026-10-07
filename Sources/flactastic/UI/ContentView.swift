@@ -12,7 +12,6 @@ struct ContentView: View {
     @Environment(ArtistImageFetcher.self) private var artistImageFetcher
     @Environment(Settings.self) private var settings
 
-    @State private var showSettings = false
     /// Mirrors the hosting window's fullscreen state. The custom top bar is
     /// the app's own view, not an `NSToolbar`, so hiding it for a fullscreen
     /// visualizer has to happen here in the layout.
@@ -27,17 +26,37 @@ struct ContentView: View {
     /// Past this the UI is revealed while metadata keeps streaming in.
     private static let maxCoverDuration: Duration = .seconds(8)
 
+    /// The player bar's width while the queue is closed.
+    private static let playerBarMaxWidth: CGFloat = 700
+
     var body: some View {
         @Bindable var router = router
-        VStack(spacing: 0) {
-            if !hidesTopBar(router: router) {
-                TopBarView(selectedTab: $router.selectedTab) {
-                    showSettings = true
+        // The top bar floats over the page. Pages run to the top of the
+        // window, under the bar, and keep their own titles and controls
+        // `topBarInset` down.
+        let inset = hidesTopBar(router: router) ? 0 : TopBarView.height
+        mainContent(router: router)
+            .ignoresSafeArea(.container, edges: .top)
+            .environment(\.topBarInset, inset)
+            .overlay(alignment: .top) {
+                if !hidesTopBar(router: router) {
+                    TopBarView(selectedTab: $router.selectedTab)
                 }
             }
-
-            mainContent(router: router)
-        }
+            // The queue runs the full height of the window, over the top bar's
+            // trailing end, with a pull tab on the edge while it's closed.
+            .overlay(alignment: .trailing) {
+                if player.isQueueVisible {
+                    QueuePanelView()
+                        .transition(.move(edge: .trailing))
+                } else if player.currentTrack != nil && router.selectedTab != .visualizer {
+                    QueuePullTab(count: max(0, player.queue.count - player.currentIndex - 1)) {
+                        withAnimation(QueuePanelView.motion) { player.isQueueVisible = true }
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .animation(QueuePanelView.motion, value: player.isQueueVisible)
         .background(WindowFullScreenObserver(isFullScreen: $isFullScreen))
         // Extend into the title-bar region so the top bar shares the row with
         // the traffic lights (the NSWindow is configured for a full-size,
@@ -45,7 +64,7 @@ struct ContentView: View {
         .ignoresSafeArea(.container, edges: .top)
         .background(TitleBarConfigurator())
         .background(Theme.background)
-        .sheet(isPresented: $showSettings) {
+        .sheet(isPresented: $router.showSettings) {
             SettingsView()
         }
         .sheet(item: Binding(
@@ -111,6 +130,10 @@ struct ContentView: View {
         }
     }
 
+    private func showsPlayerBar(router: NavigationRouter) -> Bool {
+        router.selectedTab != .visualizer && router.selectedTab != .download && !router.hidesPlayerBar
+    }
+
     /// Fullscreen is the only thing that takes the top bar away, and only for
     /// the visualizer — every other tab keeps its navigation at all times.
     private func hidesTopBar(router: NavigationRouter) -> Bool {
@@ -162,25 +185,24 @@ struct ContentView: View {
         .onTapGesture {
             NSApp.keyWindow?.makeFirstResponder(nil)
         }
-        .overlay(alignment: .bottomTrailing) {
-            if player.isQueueVisible {
-                QueuePanelView()
-                    .frame(width: 340)
-                    .padding(.top, Theme.Spacing.lg)
-                    .padding(.trailing, Theme.Spacing.lg)
-                    .padding(.bottom, 16)
-                    .frame(maxHeight: .infinity)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
-            }
-        }
         .overlay(alignment: .bottom) {
-            if router.selectedTab != .visualizer && router.selectedTab != .download
-                && !router.hidesPlayerBar {
-                FloatingPlayerBar()
-                    .frame(maxWidth: 700)
-                    .padding(.bottom, 16)
-                    .offset(x: player.isQueueVisible ? -180 : 0)
-                    .transition(.opacity.combined(with: .offset(y: 24)))
+            if showsPlayerBar(router: router) {
+                // Centered at up to 700pt; while the queue is open it stretches
+                // from the window's left edge to where the panel starts. Width
+                // and position are concrete numbers so the change animates.
+                GeometryReader { geo in
+                    let margin = Theme.Spacing.lg
+                    let open = player.isQueueVisible
+                    let room = geo.size.width - margin * 2 - (open ? QueuePanelView.width : 0)
+                    let width = max(0, open ? room : min(Self.playerBarMaxWidth, room))
+                    let leading = open ? margin : (geo.size.width - width) / 2
+                    FloatingPlayerBar()
+                        .frame(width: width)
+                        .padding(.leading, leading)
+                        .padding(.bottom, 16)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                }
+                .transition(.opacity.combined(with: .offset(y: 24)))
             }
         }
         .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.5), value: router.hidesPlayerBar)
@@ -190,7 +212,7 @@ struct ContentView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
-        .animation(.easeInOut(duration: 0.28), value: player.isQueueVisible)
+        .animation(QueuePanelView.motion, value: player.isQueueVisible)
         .animation(.easeInOut(duration: 0.3), value: router.artworkZoomData != nil)
         .animation(.easeInOut(duration: 0.25), value: router.selectedTab)
         .background(Theme.background)

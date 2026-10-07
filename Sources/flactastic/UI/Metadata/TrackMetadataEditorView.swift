@@ -48,7 +48,7 @@ struct TrackMetadataEditorView: View {
     }
 
     var body: some View {
-        FLSheet(title: "Edit Track", width: 520, height: 540) {
+        FLSheet(title: "Edit Track", width: 560, height: 640) {
             formBody
         } footer: {
             footerButtons
@@ -84,27 +84,18 @@ struct TrackMetadataEditorView: View {
         VStack(spacing: Theme.Spacing.sm) {
             Button { pickArtwork() } label: {
                 ArtworkView(data: artworkData, size: 130)
-                    .overlay(alignment: .bottom) {
-                        if artworkData == nil {
-                            Text("Click to add")
-                                .font(.system(size: 10))
-                                .foregroundStyle(Theme.textTertiary)
-                                .padding(.bottom, 6)
-                        }
-                    }
+                    .overlay { CoverEditOverlay(isEmpty: artworkData == nil) }
             }
             .buttonStyle(.plain)
             .help("Click to choose an image file")
 
             if artworkData != nil {
-                Button("Remove") {
+                Button("Remove cover") {
                     artworkData    = nil
                     artworkChanged = false
                     artworkRemoved = true
                 }
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textTertiary)
-                .buttonStyle(.plain)
+                .buttonStyle(QuietTextButtonStyle())
             }
 
             Text(artworkSupportLabel)
@@ -137,12 +128,7 @@ struct TrackMetadataEditorView: View {
             GenreFieldView(text: $genre)
             SecondaryGenresFieldView(genres: $secondaryGenres, primaryGenre: genre)
 
-            Toggle(isOn: $isMixCompilation) {
-                Text("Mix Compilation")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            .toggleStyle(.checkbox)
+            SheetTogglePill(title: "Mix Compilation", isOn: $isMixCompilation)
             .disabled(isSaving || (!mixCompilationEligible && !isMixCompilation))
             .help(mixCompilationEligible
                   ? "Mark this track as a mix, live set, radio show, or concert recording. Disables lyrics and enables chapter markers."
@@ -163,9 +149,7 @@ struct TrackMetadataEditorView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 3) {
-                Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.textSecondary)
+                SheetLabel(text: label)
                 if required {
                     Text("*")
                         .font(.system(size: 11))
@@ -174,13 +158,13 @@ struct TrackMetadataEditorView: View {
             }
             TextField("", text: text)
                 .textFieldStyle(.plain)
-                .font(Theme.Font.body)
+                .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
                 .padding(.horizontal, Theme.Spacing.sm)
                 .padding(.vertical, 6)
                 .background(
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                        .fill(Theme.surfaceElevated)
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Theme.textPrimary.opacity(0.05))
                 )
                 .frame(width: width)
                 .onChange(of: text.wrappedValue) { _, v in
@@ -206,7 +190,7 @@ struct TrackMetadataEditorView: View {
                         Text("Markers…")
                     }
                 }
-                .buttonStyle(PillButtonStyle())
+                .buttonStyle(SheetPillStyle())
                 .disabled(isSaving)
                 .help("Add and edit chapter markers for this mix")
             } else {
@@ -219,18 +203,18 @@ struct TrackMetadataEditorView: View {
                         Text("Lyrics…")
                     }
                 }
-                .buttonStyle(PillButtonStyle())
+                .buttonStyle(SheetPillStyle())
                 .disabled(isSaving)
                 .help("Edit the embedded lyrics for this track")
             }
 
             Spacer()
             Button("Cancel") { dismiss() }
-                .buttonStyle(PillButtonStyle())
+                .buttonStyle(SheetPillStyle())
                 .disabled(isSaving)
 
             Button(isSaving ? "Saving…" : "Save") { save() }
-                .buttonStyle(PillButtonStyle(isPrimary: true))
+                .buttonStyle(SheetPillStyle(isPrimary: true))
                 .disabled(isSaving || title.trimmingCharacters(in: .whitespaces).isEmpty)
         }
     }

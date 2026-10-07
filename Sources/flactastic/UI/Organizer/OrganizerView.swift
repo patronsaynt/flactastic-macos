@@ -7,6 +7,7 @@ import SwiftUI
 /// edited, and Apply is gated behind a confirmation because the operation moves
 /// files in place.
 struct OrganizerView: View {
+    @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self) private var library
     @State private var store = OrganizerProfilesStore()
     @State private var model = OrganizerModel()
@@ -55,6 +56,7 @@ struct OrganizerView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .padding(.top, topBarInset)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
         .overlay {
