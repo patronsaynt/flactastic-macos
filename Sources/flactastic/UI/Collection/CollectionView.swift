@@ -13,6 +13,7 @@ let cardHoverHeadroom: CGFloat = 8
 struct CollectionView: View {
     @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self) private var library
+    @Environment(Settings.self) private var settings
     @Environment(DebugState.self) private var debugState
     @Environment(PlayerState.self) private var player
     @Environment(NavigationRouter.self) private var router
@@ -57,7 +58,11 @@ struct CollectionView: View {
     @State private var cachedFiltered: [Album] = []
 
     private func recomputeVisible() {
-        let albums = library.albums
+        // Singles are left out of browsing when the setting says so, but a
+        // search still reaches them.
+        let albums = settings.hideSinglesInAlbums && searchText.isEmpty
+            ? library.albums.filter { !$0.isSingle || $0.isMixCompilation }
+            : library.albums
         let sorted: [Album]
         switch sortOption {
         case .album:
@@ -114,6 +119,7 @@ struct CollectionView: View {
         .onChange(of: library.tracksRevision) { _, _ in recomputeVisible() }
         .onChange(of: searchText) { _, _ in recomputeVisible() }
         .onChange(of: sortOption) { _, _ in recomputeVisible() }
+        .onChange(of: settings.hideSinglesInAlbums) { _, _ in recomputeVisible() }
         .removeFromLibraryConfirmation($removalRequest, library: library)
         .sheet(item: $editingAlbum) { album in
             AlbumMetadataEditorView(album: album)
@@ -175,10 +181,11 @@ struct CollectionView: View {
         } else {
             switch albumViewStyle {
             case .shelf:
-                // The shelf sizes its covers to fill the space below the
-                // header, so it isn't wrapped in a vertical scroll view.
+                // The rack sizes its spines to fill the space below the
+                // header, and scrolls sideways itself, so it isn't wrapped in
+                // a scroll view.
                 GeometryReader { geo in
-                    AlbumShelfView(
+                    AlbumRackView(
                         albums: cachedFiltered,
                         sort: sortOption,
                         available: CGSize(width: geo.size.width, height: geo.size.height - Self.shelfBottomClearance),

@@ -610,6 +610,12 @@ private struct AppearanceSettingsPane: View {
                     subtitle: "Also list artists who only appear as features on other artists' releases.",
                     isOn: $settings.showAllArtists
                 )
+                GroupDivider()
+                ToggleRow(
+                    label: "Hide Singles in Albums",
+                    subtitle: "Leave releases with fewer than three tracks out of the Albums view. They still show on artist pages and in search.",
+                    isOn: $settings.hideSinglesInAlbums
+                )
             }
 
             // Artwork ──────────────────────────────────────────────────────

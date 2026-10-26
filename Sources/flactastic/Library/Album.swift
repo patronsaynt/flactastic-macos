@@ -27,4 +27,7 @@ struct Album: Identifiable, Hashable {
     var isMixCompilation: Bool {
         tracks.contains(where: \.isMixCompilation)
     }
+    /// A single or EP rather than an album: fewer than three tracks. Artist
+    /// pages list these apart, and the Albums view can leave them out.
+    var isSingle: Bool { tracks.count < 3 }
 }

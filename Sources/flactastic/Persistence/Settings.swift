@@ -60,6 +60,12 @@ final class Settings {
         didSet { UserDefaults.standard.set(showAllArtists, forKey: "flactastic.showAllArtists") }
     }
 
+    /// When true (the default), the Collection's Albums view leaves out
+    /// singles (releases under three tracks; mixes stay). Search still finds them.
+    var hideSinglesInAlbums: Bool {
+        didSet { UserDefaults.standard.set(hideSinglesInAlbums, forKey: "flactastic.hideSinglesInAlbums") }
+    }
+
     var customGenres: [String] {
         didSet { UserDefaults.standard.set(customGenres, forKey: "flactastic.customGenres") }
     }
@@ -164,6 +170,7 @@ final class Settings {
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "flactastic.hasCompletedOnboarding")
         seenTutorials = Set(UserDefaults.standard.stringArray(forKey: "flactastic.seenTutorials") ?? [])
         showAllArtists = UserDefaults.standard.bool(forKey: "flactastic.showAllArtists")
+        hideSinglesInAlbums = (UserDefaults.standard.object(forKey: "flactastic.hideSinglesInAlbums") as? Bool) ?? true
         customGenres = UserDefaults.standard.stringArray(forKey: "flactastic.customGenres") ?? []
         let storedAutoFetch = UserDefaults.standard.object(forKey: "flactastic.autoFetchArtistImages")
         autoFetchArtistImages = (storedAutoFetch as? Bool) ?? true

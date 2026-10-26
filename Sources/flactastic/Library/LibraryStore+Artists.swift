@@ -100,10 +100,10 @@ extension LibraryStore {
                         ?? resolver.displayName(forKey: key)
                 )
                 if !bucket.albumIDs.contains(album.id) {
-                    if album.tracks.count >= 3 {
-                        bucket.albums.append(album)
-                    } else {
+                    if album.isSingle {
                         bucket.singles.append(album)
+                    } else {
+                        bucket.albums.append(album)
                     }
                     bucket.albumIDs.insert(album.id)
                 }

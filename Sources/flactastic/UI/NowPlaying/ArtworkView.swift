@@ -20,9 +20,13 @@ struct ArtworkView: View {
     /// a deck of covers doesn't pay for a blurred, offscreen-rendered shadow
     /// on every card.
     var showsShadow: Bool = true
+    /// `true` where the art is printed on an object with its own shape (the
+    /// album rack's CD case and disc), so the rounded-artwork setting
+    /// doesn't apply.
+    var alwaysSquare: Bool = false
 
     private var cornerRadius: CGFloat {
-        settings.roundedArtwork ? Theme.Radius.lg : 0
+        settings.roundedArtwork && !alwaysSquare ? Theme.Radius.lg : 0
     }
 
     /// Off-main-decoded image for the current cache key. Bridges the gap
