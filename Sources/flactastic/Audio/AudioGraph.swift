@@ -14,6 +14,9 @@ protocol AudioGraphProtocol: AnyObject, Sendable {
     func flush()
     var isNodePlaying: Bool { get }
     func currentPlayerSampleTime() -> AVAudioFramePosition?
+    /// Seconds between a sample being rendered and it being heard — the
+    /// output device's presentation latency. Large on Bluetooth (~0.15–0.3 s).
+    var outputLatency: TimeInterval { get }
     func setOutputVolume(_ volume: Float)
     func onConfigurationChange(_ handler: @escaping @Sendable () -> Void)
 
@@ -31,6 +34,10 @@ protocol AudioGraphProtocol: AnyObject, Sendable {
     func installAnalysisTap(bufferSize: AVAudioFrameCount,
                             _ block: @escaping @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)
     func removeAnalysisTap()
+}
+
+extension AudioGraphProtocol {
+    var outputLatency: TimeInterval { 0 }
 }
 
 // MARK: - Apple AVAudioEngine implementation
@@ -142,6 +149,12 @@ final class AppleAudioGraph: AudioGraphProtocol, @unchecked Sendable {
         guard let nodeTime = playerNode.lastRenderTime, nodeTime.isSampleTimeValid else { return nil }
         guard let playerTime = playerNode.playerTime(forNodeTime: nodeTime) else { return nil }
         return playerTime.sampleTime
+    }
+
+    var outputLatency: TimeInterval {
+        // Read live: it changes with the output device (e.g. switching to
+        // AirPods) and is a cheap property fetch.
+        max(0, engine.outputNode.presentationLatency)
     }
 
     func setOutputVolume(_ volume: Float) {

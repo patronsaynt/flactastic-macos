@@ -228,52 +228,48 @@ struct TitleBarConfigurator: NSViewRepresentable {
 
     private final class ConfiguratorView: NSView {
         /// Offsets applied to the standard window buttons. Tweak to taste:
-        /// `dx` moves the group inward (right); `dy` moves it down (AppKit's
-        /// y-axis points up, so a negative value moves the lights downward).
+        /// `dx` moves the group inward (right); `dy` moves it down.
         private let dx: CGFloat = 8
-        private let dy: CGFloat = -14
+        private let dy: CGFloat = 14
 
-        private let buttonTypes: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
+        /// Stock height of `NSTitlebarContainerView` for a window without a
+        /// toolbar. The buttons sit at a fixed distance from its bottom edge.
+        private let stockTitlebarHeight: CGFloat = 28
 
-        /// Each button's stock origin within its superview (`NSTitlebarView`),
-        /// captured once. This is a fixed OS constant — confirmed by logging
-        /// it across launch-time window-frame restoration and manual resizes,
-        /// it never moves — so the target position can always be recomputed
-        /// from it directly, without ever reading the button's current (and
-        /// possibly already-nudged) frame as if it were a fresh baseline.
-        /// That keeps every reposition idempotent no matter what triggers it.
-        private var stockOrigins: [NSWindow.ButtonType: CGPoint] = [:]
+        // The buttons can't be moved directly: on macOS 26 the title bar
+        // re-lays them out at their stock origin on every layout pass (live
+        // resize, frame restoration, fullscreen), undoing any `setFrameOrigin`
+        // — often synchronously, before a frame-change observer can react.
+        // Instead we reshape the views that contain them, which AppKit's
+        // layout leaves alone: the title-bar container grows taller by `dy`
+        // (the buttons keep their distance from its bottom, so they drop by
+        // `dy`), and the `NSTitlebarView` inside it shifts right by `dx`.
+        // Hit-testing is unaffected: clicks outside the buttons still reach
+        // the content view underneath the transparent title bar.
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
+            NotificationCenter.default.removeObserver(self)
             guard let window else { return }
             configure(window)
-            captureStockOrigins(in: window)
 
+            let center = NotificationCenter.default
             // Re-assert the custom title bar after exiting native fullscreen
             // (Big Picture mode). Fullscreen resets the style mask, which would
             // otherwise restore a real title bar and leave the content offset
             // so clicks miss their targets.
-            NotificationCenter.default.addObserver(
-                self, selector: #selector(didExitFullScreen),
-                name: NSWindow.didExitFullScreenNotification, object: window
-            )
+            center.addObserver(self, selector: #selector(didExitFullScreen),
+                               name: NSWindow.didExitFullScreenNotification, object: window)
+            // Every window resize (live, programmatic, frame restoration at
+            // launch) re-lays out the title bar back to stock, so re-apply
+            // after each one. Deliberately not a frame-change observer on the
+            // title-bar views: that fires mid-layout, and AppKit's remaining
+            // layout then overwrites the correction.
+            center.addObserver(self, selector: #selector(layoutTrafficLights),
+                               name: NSWindow.didResizeNotification, object: window)
 
-            // AppKit re-lays out the standard window buttons on its own schedule
-            // — window-frame restoration at launch, live resize, fullscreen
-            // transitions — and any of those passes can move them. A one-shot
-            // nudge therefore survives only if nothing else lays out afterwards,
-            // which is exactly why the offsets held when running unbundled but
-            // were lost in the packaged app (a bundled launch restores the saved
-            // window frame after the content view is installed). Observing each
-            // button's frame means every relayout is corrected, whoever caused
-            // it — and since `reposition` recomputes the target from the fixed
-            // stock origin rather than the button's own (possibly already-
-            // nudged) frame, reacting to our own writes can't compound the
-            // offset.
-            observeButtonFrames(in: window)
-            repositionTrafficLights()
-            DispatchQueue.main.async { [weak self] in self?.repositionTrafficLights() }
+            layoutTrafficLights()
+            DispatchQueue.main.async { [weak self] in self?.layoutTrafficLights() }
         }
 
         deinit { NotificationCenter.default.removeObserver(self) }
@@ -284,55 +280,33 @@ struct TitleBarConfigurator: NSViewRepresentable {
             window.styleMask.insert(.fullSizeContentView)
         }
 
-        private func captureStockOrigins(in window: NSWindow) {
-            guard stockOrigins.isEmpty else { return }
-            for type in buttonTypes {
-                guard let button = window.standardWindowButton(type) else { continue }
-                stockOrigins[type] = button.frame.origin
-            }
-        }
-
         @objc private func didExitFullScreen() {
             guard let window else { return }
             configure(window)
-            DispatchQueue.main.async { [weak self] in self?.repositionTrafficLights() }
+            DispatchQueue.main.async { [weak self] in self?.layoutTrafficLights() }
         }
 
-        private func observeButtonFrames(in window: NSWindow) {
-            for type in buttonTypes {
-                guard let button = window.standardWindowButton(type) else { continue }
-                button.postsFrameChangedNotifications = true
-                NotificationCenter.default.addObserver(
-                    self, selector: #selector(buttonFrameChanged(_:)),
-                    name: NSView.frameDidChangeNotification, object: button
-                )
+        private func titlebarView(in window: NSWindow) -> NSView? {
+            window.standardWindowButton(.closeButton)?.superview
+        }
+
+        @objc private func layoutTrafficLights() {
+            // In native fullscreen the system owns the title bar — leave it be.
+            guard let window, !window.styleMask.contains(.fullScreen),
+                  let titlebar = titlebarView(in: window),
+                  let container = titlebar.superview,
+                  let frameHeight = container.superview?.bounds.height else { return }
+
+            let height = stockTitlebarHeight + dy
+            let containerFrame = NSRect(x: container.frame.minX, y: frameHeight - height,
+                                        width: container.frame.width, height: height)
+            if container.frame != containerFrame {
+                container.frame = containerFrame
             }
-        }
-
-        @objc private func buttonFrameChanged(_ note: Notification) {
-            guard let button = note.object as? NSView,
-                  let type = buttonTypes.first(where: { window?.standardWindowButton($0) === button })
-            else { return }
-            reposition(type, button: button)
-        }
-
-        @objc private func repositionTrafficLights() {
-            guard let window else { return }
-            for type in buttonTypes {
-                guard let button = window.standardWindowButton(type) else { continue }
-                reposition(type, button: button)
+            let titlebarFrame = NSRect(x: dx, y: 0, width: containerFrame.width - dx, height: height)
+            if titlebar.frame != titlebarFrame {
+                titlebar.frame = titlebarFrame
             }
-        }
-
-        private func reposition(_ type: NSWindow.ButtonType, button: NSView) {
-            // In native fullscreen the system owns the buttons — leave them be.
-            guard let window, !window.styleMask.contains(.fullScreen) else { return }
-            guard let stock = stockOrigins[type] else { return }
-            let target = CGPoint(x: stock.x + dx, y: stock.y + dy)
-            // Already sitting where it belongs — nothing to do. This is also
-            // what stops the notification we trigger below from recursing.
-            guard button.frame.origin != target else { return }
-            button.setFrameOrigin(target)
         }
     }
 }
@@ -354,27 +328,7 @@ private struct WindowDragArea: NSViewRepresentable {
     }
 }
 
-/// Circular back control for detail views. Navigation is driven manually via
-/// `NavigationRouter` paths (no `NavigationStack`) because on macOS a
-/// `NavigationStack` routes its back button through the window toolbar, which
-/// can't coexist with the custom top bar.
-struct DetailBackButton: View {
-    var action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: "chevron.left")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 30, height: 30)
-                .background(Circle().fill(Theme.surface))
-        }
-        .buttonStyle(BarPressButtonStyle())
-    }
-}
-
-/// Press feedback (scale + fade) for the top bar's buttons and the
-/// onboarding back button.
+/// Press feedback (scale + fade) for the top bar's buttons.
 struct BarPressButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

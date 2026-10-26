@@ -73,6 +73,18 @@ final class ArtistRemoteCache {
         entries = Dictionary(uniqueKeysWithValues: loaded.map { ($0.canonicalKey, $0) })
     }
 
+    /// Forget every cached entry and save the empty cache. Entries are
+    /// fetched again as they're next needed.
+    func removeAll() {
+        entries = [:]
+        save()
+    }
+
+    /// Size of the saved cache file, in bytes.
+    var fileSize: Int {
+        (try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+    }
+
     func save() {
         do {
             let list = Array(entries.values).sorted { $0.canonicalKey < $1.canonicalKey }

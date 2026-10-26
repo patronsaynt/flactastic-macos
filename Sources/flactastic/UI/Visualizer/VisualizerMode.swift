@@ -1,13 +1,10 @@
 import Foundation
 
-/// The visualizer's modes, in the order the left-edge mode wheel presents
-/// them. `allCases` order is load-bearing — the wheel steps through it — so
-/// keep it aligned with the design handoff's `MODES` array.
+/// The visualizer's modes, in the order the left-edge mode dial presents
+/// them. `allCases` order is load-bearing — the dial steps through it.
 enum VisualizerMode: String, CaseIterable, Codable, Identifiable {
-    case albumArtLarge
-    case albumArtLargeDetails
-    case albumArtSmallDetails
     case albumArtWheel
+    case record
     case lyrics
     case spectrumRadial
     case spectrumHorizontal
@@ -15,17 +12,27 @@ enum VisualizerMode: String, CaseIterable, Codable, Identifiable {
 
     var id: String { rawValue }
 
-    /// The full label shown on the mode wheel.
-    var wheelLabel: String {
+    /// The mode's name, set large on the dial.
+    var dialLabel: String {
         switch self {
-        case .albumArtLarge:        return "Large Art"
-        case .albumArtLargeDetails: return "Large Art + Details"
-        case .albumArtSmallDetails: return "Small Art + Details"
-        case .albumArtWheel:        return "Cover Wheel"
-        case .lyrics:               return "Lyrics"
-        case .spectrumRadial:       return "Radial Spectrum"
-        case .spectrumHorizontal:   return "Horizontal Spectrum"
-        case .spectrogram:          return "Spectrogram"
+        case .albumArtWheel:      return "Cover Wheel"
+        case .record:             return "Record"
+        case .lyrics:             return "Lyrics"
+        case .spectrumRadial:     return "Radial Spectrum"
+        case .spectrumHorizontal: return "Horizontal Spectrum"
+        case .spectrogram:        return "Spectrogram"
+        }
+    }
+
+    /// The short name printed small around the dial's rim.
+    var rimLabel: String {
+        switch self {
+        case .albumArtWheel:      return "WHEEL"
+        case .record:             return "RECORD"
+        case .lyrics:             return "LYRICS"
+        case .spectrumRadial:     return "RADIAL"
+        case .spectrumHorizontal: return "BARS"
+        case .spectrogram:        return "SPECTRO"
         }
     }
 

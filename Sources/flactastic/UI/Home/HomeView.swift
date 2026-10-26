@@ -8,6 +8,7 @@ import SwiftUI
 struct HomeView: View {
     @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self) private var library
+    @Environment(DebugState.self) private var debugState
     @Environment(ListeningStore.self) private var listening
     @Environment(PlayerState.self) private var player
     @Environment(NavigationRouter.self) private var router
@@ -87,7 +88,14 @@ struct HomeView: View {
     /// A brand-new library: loaded, and nothing in it yet. Home becomes a
     /// welcome with ways to add music instead of empty stats.
     private var isLibraryEmpty: Bool {
-        library.hasCompletedInitialLoad && library.tracks.isEmpty
+        debugState.emptyLibraryPreviewActive
+            || (library.hasCompletedInitialLoad && library.tracks.isEmpty)
+    }
+
+    /// The banner's pick, unless Home is showing its empty-library welcome
+    /// (a real empty library has no pick anyway; the debug preview hides it).
+    private var shownPick: HomeHighlight.Pick? {
+        isLibraryEmpty ? nil : highlight.pick
     }
 
     private func recomputeMetrics() {
@@ -233,7 +241,7 @@ struct HomeView: View {
                 .padding(.top, 26)
                 .rise(hasEntered, calm: calmMotion, delay: 0.45)
 
-            if let pick = highlight.pick {
+            if let pick = shownPick {
                 Text("“\(pick.lyric)”")
                     .font(.system(size: 54, weight: .heavy).italic())
                     .tracking(-1.3)
@@ -360,7 +368,7 @@ struct HomeView: View {
     /// after it was pinned) shows; otherwise the pick's own image, which is
     /// the banner, profile picture or album art it was made with.
     private var bannerSource: Data? {
-        guard let pick = highlight.pick else { return nil }
+        guard let pick = shownPick else { return nil }
         // Pins saved before picks carried the artist resolve it from the name.
         let key = pick.artistKey
             ?? library.makeArtistResolver().keys(forCredit: pick.artistDisplay).first

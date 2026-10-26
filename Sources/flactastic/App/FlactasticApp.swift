@@ -79,7 +79,21 @@ struct FlactasticApp: App {
         _lyricsRemoteCache = State(initialValue: lyricsCache)
         _lyricsFetcher = State(initialValue: LyricsFetcher(
             cache: lyricsCache,
-            metadataWriter: writer
+            metadataWriter: writer,
+            resolveCurrentURL: { [lib] track in
+                // Library tracks keep their ID across moves; queued copies get
+                // fresh IDs (`withNewID`), so fall back to matching the song.
+                if let match = lib.tracks.first(where: { $0.id == track.id }) {
+                    return match.url
+                }
+                let key = LyricsCacheKey.make(artist: track.artist ?? track.albumArtist,
+                                              title: track.title, duration: track.duration)
+                return lib.tracks.first(where: {
+                    $0.album == track.album
+                        && LyricsCacheKey.make(artist: $0.artist ?? $0.albumArtist,
+                                               title: $0.title, duration: $0.duration) == key
+                })?.url
+            }
         ))
     }
     @State private var metadataWriter: MetadataWriter
@@ -93,17 +107,19 @@ struct FlactasticApp: App {
     @State private var downloadCoordinator: DownloadCoordinator
     @State private var playlistRebuildCoordinator: PlaylistRebuildCoordinator
     @State private var lucidaController: LucidaWebController
-    /// Backs the Debug tab in Settings (Debug Lucida / Debug Onboarding).
+    /// Backs Settings → General → Enable Debugging and the Debug tab.
     @State private var debugState = DebugState()
+    /// Settings → Debug → "Show onboarding at every launch": decided once at
+    /// launch, and cleared when that run of onboarding is finished.
+    @State private var replayingOnboarding = DebugState.onboardingEveryLaunchAtStartup
 
     @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        @Bindable var debugState = debugState
         WindowGroup {
             GeometryReader { geo in
                 Group {
-                    if settings.hasCompletedOnboarding {
+                    if settings.hasCompletedOnboarding && !replayingOnboarding {
                         ContentView()
                             .environment(library)
                             .environment(player)
@@ -126,13 +142,17 @@ struct FlactasticApp: App {
                             .environment(playlistRebuildCoordinator)
                             .environment(spotifyAuth)
                             .environment(lucidaController)
-                            .environment(\.debugMode, debugState.lucidaDebugEnabled)
                             .environment(\.metadataWriter, metadataWriter)
                             .environment(homeHighlight)
                             .environment(debugState)
                             .transition(.opacity)
                     } else {
-                        OnboardingView()
+                        OnboardingView(onFinish: {
+                            withAnimation(.easeInOut(duration: 0.35)) {
+                                settings.hasCompletedOnboarding = true
+                                replayingOnboarding = false
+                            }
+                        })
                             .environment(library)
                             .environment(settings)
                             .environment(playlistStore)
@@ -155,17 +175,10 @@ struct FlactasticApp: App {
                     .environment(lucidaController)
             }
             .preferredColorScheme(settings.useLightMode ? .light : .dark)
-            // Onboarding gets a small window matching its card (see
-            // OnboardingView/OnboardingDebugPreviewView's 640×720 viewport);
-            // this only affects the window's *initial* size on a fresh
-            // launch with no saved frame — real users only ever see
-            // onboarding on that first run. Once `hasCompletedOnboarding`
-            // flips, the floor jumps to the normal app minimum and the same
-            // window grows to fit — no second window, no jump cut.
-            .frame(
-                minWidth: settings.hasCompletedOnboarding ? 1000 : 640,
-                minHeight: settings.hasCompletedOnboarding ? 650 : 720
-            )
+            // Onboarding and the app share one minimum size: the stage
+            // needs the same room as the app, so finishing onboarding
+            // doesn't resize the window.
+            .frame(minWidth: 1000, minHeight: 650)
             .background(Theme.background)
             .task { await bootstrap() }
             .onAppear {
@@ -178,7 +191,7 @@ struct FlactasticApp: App {
             .onChange(of: settings.useLightMode) { _, useLight in
                 applyAppearance(useLight: useLight)
             }
-            .background(DebugWindowController(enabled: $debugState.lucidaDebugEnabled))
+            .background(DebugWindowController(enabled: debugState.lucidaInspectorActive))
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -240,7 +253,7 @@ struct FlactasticApp: App {
         .windowResizability(.contentSize)
 
         // Auxiliary debug window for the Lucida WebKit bridge. Hidden by
-        // default; toggled from Settings → Debug → "Debug Lucida".
+        // default; toggled from Settings → Debug → "Lucida inspector".
         Window("Lucida Debug", id: "lucida-debug") {
             LucidaDebugView()
                 .environment(lucidaController)
@@ -251,7 +264,7 @@ struct FlactasticApp: App {
         // Standalone onboarding preview for developer testing. Reuses the
         // app's live stores via the environment (same precedent as the
         // Lucida debug window above), so it exercises the exact first-run
-        // flow. Opened from Settings → Debug → "Debug Onboarding".
+        // flow. Opened from Settings → Debug → "Preview onboarding".
         Window("Onboarding Preview", id: "onboarding-debug") {
             OnboardingDebugPreviewView()
                 .environment(library)

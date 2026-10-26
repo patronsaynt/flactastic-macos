@@ -34,22 +34,37 @@ struct HomePalette: Equatable, Sendable {
     }
 
     private func color(_ s: Swatch, dim step: Double = 0) -> Color {
+        let dark = nsColor(s, dim: step, dark: true)
+        let light = nsColor(s, dim: step, dark: false)
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        })
+    }
+
+    /// `count` series colors resolved for one appearance, for drawing code
+    /// that works in `NSColor` / `CGColor` (the visualizer's spectrogram).
+    func nsSeries(_ count: Int, dark: Bool) -> [NSColor] {
+        (0..<count).map { idx in
+            nsColor(swatches[idx % swatches.count], dim: Double(idx / swatches.count), dark: dark)
+        }
+    }
+
+    private func nsColor(_ s: Swatch, dim step: Double, dark: Bool) -> NSColor {
         let fade = pow(0.68, step)
-        let dark = NSColor(
-            hue: s.hue,
-            saturation: min(max(s.saturation, 0.45), 0.85),
-            brightness: max(s.brightness, 0.78) * fade,
-            alpha: 1
-        )
-        let light = NSColor(
+        if dark {
+            return NSColor(
+                hue: s.hue,
+                saturation: min(max(s.saturation, 0.45), 0.85),
+                brightness: max(s.brightness, 0.78) * fade,
+                alpha: 1
+            )
+        }
+        return NSColor(
             hue: s.hue,
             saturation: min(max(s.saturation, 0.55), 0.9),
             brightness: min(max(s.brightness, 0.42), 0.58) * (step == 0 ? 1 : 0.6 + 0.4 * fade),
             alpha: 1
         )
-        return Color(nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
-        })
     }
 
     // MARK: - Extraction

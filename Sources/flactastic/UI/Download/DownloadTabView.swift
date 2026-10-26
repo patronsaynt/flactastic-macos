@@ -1,10 +1,17 @@
 import SwiftUI
 import AppKit
 
-/// Full-page Download tab. The user pastes a streaming-service URL and
-/// presses return; the registry routes it to the appropriate provider
-/// (native Qobuz/Deezer when configured, Lucida otherwise) and we show the
-/// resolved track/album plus any in-flight downloads.
+/// The Download tab, as one page. A single field takes any link — album,
+/// track or Spotify playlist — with the download options beside it; your
+/// Spotify playlists sit below it until something is fetched, which then
+/// opens in their place. The downloads panel slides in on the right once
+/// something is downloading (or a playlist is rebuilding) and goes away
+/// again when it's cleared.
+///
+/// Links resolve through the streamer registry (native providers when
+/// configured, Lucida otherwise); Spotify playlist links, and playlists
+/// picked from your account, go through the playlist rebuild coordinator,
+/// which downloads every track and rebuilds the playlist in the library.
 struct DownloadTabView: View {
     @Environment(\.topBarInset) private var topBarInset
     @Environment(StreamerRegistry.self) private var registry
@@ -14,35 +21,106 @@ struct DownloadTabView: View {
     @Environment(SpotifyAuthController.self) private var spotifyAuth
     @Environment(Settings.self) private var settings
 
-    /// Which sub-screen of the Download tab is showing. The user lands on
-    /// `.chooser` (two panels) and drills into one mode at a time.
-    private enum Mode { case chooser, albumsTracks, playlists }
-    @State private var mode: Mode = .chooser
+    @State private var pasteURL: String = ""
 
-    /// Which chooser panel the pointer is over, driving the lift/glass
-    /// hover treatment on the landing screen. `nil` = nothing hovered.
-    private enum PanelSide { case left, right }
-    @State private var hovered: PanelSide?
+    /// A resolved album / track / artist link.
+    @State private var resolved: RemoteResolveResponse?
+    @State private var isWorking: Bool = false
+    @State private var error: String?
 
-    /// Albums & Tracks screen: whether the collapsible Lucida options panel
-    /// is expanded, and whether the docked downloads drawer is open.
-    @State private var optionsOpen = false
-    @State private var drawerOpen = false
+    /// A resolved Spotify playlist (from a link or from your account).
+    @State private var resolvedPlaylist: RemotePlaylist?
+    @State private var playlistTruncated: Bool = false
+    @State private var isResolvingPlaylist: Bool = false
+    @State private var playlistError: String?
 
-    /// Cover art for the resolved item and the accent sampled from it. When no
-    /// art (or no vibrant color) is available, the screen falls back to the
-    /// hi-res turquoise quality tint, matching the left chooser panel.
+    /// The cover of whatever is open.
     @State private var heroArtwork: NSImage?
-    @State private var heroAccent: Color?
 
-    /// Accent for the Albums & Tracks screen — the selected album's color when
-    /// known, else the default tint. `onAccent` is the readable foreground for
-    /// fills painted in `atAccent`.
-    private var atAccent: Color { heroAccent ?? Theme.qualityLossless }
-    private let onAccent = Color.black
+    /// Drives the VPN reminder. Shown on the first visit per session while
+    /// `settings.showVpnNotice` is on; not re-shown on later visits.
+    @State private var showVpnSheet: Bool = false
+    @State private var hasOfferedVpnSheet: Bool = false
 
-    /// Largest cover art URL for whatever is currently resolved, if any.
-    private var resolvedCoverURL: URL? {
+    /// Download knobs (format, quality, region, metadata, compatibility),
+    /// applied to every track enqueued from this page. Reset to defaults
+    /// whenever a fresh link is fetched.
+    @State private var options: LucidaOptions = .default
+
+    /// The downloads panel hidden down to the small indicator. Resets once
+    /// the queue empties, so the next download shows the panel again.
+    @State private var queueCollapsed = false
+
+    private static let queueWidth: CGFloat = 380
+    private static let motion = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.55)
+
+    var body: some View {
+        HStack(spacing: 0) {
+            mainColumn
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if showsQueue && !queueCollapsed {
+                queuePanel
+                    .frame(width: Self.queueWidth)
+                    .frame(maxHeight: .infinity)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if showsQueue && queueCollapsed {
+                queueIndicator
+                    .padding(.top, topBarInset + 24)
+                    .padding(.trailing, 24)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
+        .animation(Self.motion, value: showsQueue)
+        .animation(Self.motion, value: queueCollapsed)
+        .onChange(of: showsQueue) { _, shows in
+            if !shows { queueCollapsed = false }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Theme.background)
+        .task {
+            lucidaController.warmUp()
+            if !hasOfferedVpnSheet && settings.showVpnNotice {
+                hasOfferedVpnSheet = true
+                showVpnSheet = true
+            }
+        }
+        .task(id: openCoverURL) {
+            heroArtwork = nil
+            guard let url = openCoverURL else { return }
+            if let result = await ArtworkAccent.load(url) {
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeOut(duration: 0.35)) { heroArtwork = result.image }
+            }
+        }
+        .sheet(isPresented: $showVpnSheet) {
+            VpnNoticeSheet(showVpnNoticeAgain: Bindable(settings).showVpnNotice)
+        }
+    }
+
+    // MARK: - State
+
+    private enum PageState { case idle, loading, error, resolved }
+
+    private var pageState: PageState {
+        if isWorking || isResolvingPlaylist { return .loading }
+        if error != nil || playlistError != nil { return .error }
+        if resolved != nil || resolvedPlaylist != nil { return .resolved }
+        return .idle
+    }
+
+    /// The downloads panel shows while anything is in it, or a playlist is
+    /// being rebuilt (or its summary is waiting to be dismissed).
+    private var showsQueue: Bool {
+        if !downloads.jobs.isEmpty { return true }
+        if case .idle = rebuilder.phase { return false }
+        return true
+    }
+
+    private var openCoverURL: URL? {
+        if let p = resolvedPlaylist { return RemoteCoverArt.best(p.coverArt)?.url }
         switch resolved {
         case .album(let a):    return RemoteCoverArt.best(a.coverArt)?.url
         case .track(let t):    return RemoteCoverArt.best(t.coverArt)?.url
@@ -51,493 +129,457 @@ struct DownloadTabView: View {
         }
     }
 
-    @State private var pasteURL: String = ""
-    @State private var resolved: RemoteResolveResponse?
-    @State private var isWorking: Bool = false
-    @State private var error: String?
+    // MARK: - Main column
 
-    // Playlists mode — resolved separately from Spotify's embed endpoint.
-    @State private var playlistURL: String = ""
-    @State private var resolvedPlaylist: RemotePlaylist?
-    @State private var playlistTruncated: Bool = false
-    @State private var isResolvingPlaylist: Bool = false
-    @State private var playlistError: String?
-    /// Drives the VPN advisory sheet. Set once on first appearance per
-    /// session when `settings.showVpnNotice` is true; suppressed afterwards
-    /// so navigating away and back doesn't re-pop the modal.
-    @State private var showVpnSheet: Bool = false
-    @State private var hasOfferedVpnSheet: Bool = false
-    /// Per-paste download knobs (region, format, metadata, compat). Reset to
-    /// defaults each time the user pastes a fresh URL. Applied to every
-    /// track that gets enqueued from the resolved view below.
-    @State private var options: LucidaOptions = .default
-
-    var body: some View {
-        content
-            .padding(.top, topBarInset)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(Theme.background)
-            .task {
-            lucidaController.warmUp()
-            // Surface the VPN advisory on first Downloads-tab entry per
-            // session. After the user closes it, we don't re-pop on
-            // subsequent tab switches.
-            if !hasOfferedVpnSheet && settings.showVpnNotice {
-                hasOfferedVpnSheet = true
-                showVpnSheet = true
-            }
-        }
-        .sheet(isPresented: $showVpnSheet) {
-            VpnNoticeSheet(showVpnNoticeAgain: Bindable(settings).showVpnNotice)
-        }
-    }
-
-    // The chooser is a full-bleed centred landing screen of its own; the
-    // drill-in modes keep the original back-button header + padded layout.
-    @ViewBuilder
-    private var content: some View {
-        switch mode {
-        case .chooser:
-            chooserScreen
-        case .albumsTracks:
-            albumsTracksScreen
-        case .playlists:
-            playlistsScreen
-        }
-    }
-
-    // MARK: - Header
-
-    // MARK: - Chooser
-
-    /// Full-bleed landing screen: a centred header over two large choice
-    /// panels. Hovering a panel lifts it above a glass scrim while the rest
-    /// of the screen blurs and dims behind it. Mirrors the Claude Design
-    /// "Download Page" template.
-    private var chooserScreen: some View {
-        VStack(spacing: 0) {
-            chooserHeader
-                .padding(.top, 52)
-                .padding(.horizontal, 48)
-                .padding(.bottom, Theme.Spacing.sm)
-                .blur(radius: hovered != nil ? 8 : 0)
-                .opacity(hovered != nil ? 0.55 : 1)
-
-            HStack(alignment: .top, spacing: Theme.Spacing.xl) {
-                choicePanel(
-                    side: .left,
-                    icon: "opticaldisc.fill",
-                    eyebrow: "Individual",
-                    title: "Tracks & Albums",
-                    subtitle: "Hand-pick singles or grab a complete album. Each file in full studio fidelity, exactly as it was mastered.",
-                    cta: "Browse library",
-                    accent: Theme.qualityLossless
-                ) {
-                    withAnimation(.easeInOut(duration: 0.15)) { hovered = nil; mode = .albumsTracks }
-                }
-                choicePanel(
-                    side: .right,
-                    icon: "music.note.list",
-                    eyebrow: "Collections",
-                    title: "Playlists",
-                    subtitle: "Download a whole playlist in a single pass. We bundle every track at the highest fidelity it's available in.",
-                    cta: "View playlists",
-                    accent: Theme.qualityCD
-                ) {
-                    withAnimation(.easeInOut(duration: 0.15)) { hovered = nil; mode = .playlists }
-                }
-            }
-            .frame(maxWidth: 1140)
-            .padding(.horizontal, 48)
-            .padding(.top, 28)
-            .padding(.bottom, 60)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.spring(response: 0.45, dampingFraction: 0.82), value: hovered)
-    }
-
-    private var chooserHeader: some View {
-        VStack(spacing: Theme.Spacing.md) {
-            HStack(spacing: 9) {
-                Image(systemName: "smallcircle.filled.circle")
-                    .font(.system(size: 13, weight: .regular))
-                Text("FLACtastic")
-                    .font(.system(size: 11))
-                    .tracking(1.5)
-                    .textCase(.uppercase)
-            }
-            .foregroundStyle(Theme.textTertiary)
-
-            Text("Download")
-                .font(.system(size: 36, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-
-            Text("Choose what you'd like to pull down — every file arrives in its original lossless quality.")
-                .font(.system(size: 15))
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(2)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 520)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    private func choicePanel(
-        side: PanelSide,
-        icon: String,
-        eyebrow: String,
-        title: String,
-        subtitle: String,
-        cta: String,
-        accent: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        let isHovered = hovered == side
-        let dimmed = hovered != nil && !isHovered
-        return Button(action: action) {
+    private var mainColumn: some View {
+        ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .center) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 16)
-                            .fill(Color.gray.opacity(0.10))
-                        Image(systemName: icon)
-                            .font(.system(size: 30, weight: .regular))
+                Text("Download")
+                    .font(.system(size: 72, weight: .heavy))
+                    .tracking(-2.9)
+                    .foregroundStyle(Theme.textPrimary)
+                Text("Paste a link or pick one of your Spotify playlists. Automatically downloads at the highest available quality.")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 12)
+
+                pasteBar
+                    .padding(.top, 30)
+                worksWith
+                    .padding(.top, 14)
+                optionsRow
+                    .padding(.top, 18)
+                    .padding(.top, 16)
+                    .overlay(alignment: .top) { divider.padding(.top, 18) }
+
+                Group {
+                    switch pageState {
+                    case .idle:     spotifySection
+                    case .loading:  loadingState
+                    case .error:    errorState
+                    case .resolved: resolvedContent
                     }
-                    .frame(width: 64, height: 64)
-                    Spacer()
-                    Text(eyebrow)
-                        .font(.system(size: 11))
-                        .tracking(1.5)
-                        .textCase(.uppercase)
+                }
+                .padding(.top, 30)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 48)
+            .padding(.top, topBarInset + 38)
+            .padding(.bottom, 140)
+        }
+        .scrollIndicators(.automatic)
+    }
+
+    private var divider: some View {
+        Rectangle().fill(Theme.divider).frame(height: 1)
+    }
+
+    private var pasteBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "link")
+                .font(.system(size: 16))
+                .foregroundStyle(Theme.textTertiary)
+            TextField("Paste an album, track or playlist link", text: $pasteURL)
+                .textFieldStyle(.plain)
+                .font(.system(size: 17))
+                .disabled(pageState == .loading)
+                .onSubmit(resolve)
+            if pageState == .loading {
+                ProgressView().controlSize(.small)
+            }
+            Button("Fetch", action: resolve)
+                .buttonStyle(SheetPillStyle(isPrimary: true))
+                .disabled(pasteURL.trimmingCharacters(in: .whitespaces).isEmpty || pageState == .loading)
+        }
+        .padding(.leading, 22)
+        .padding(.trailing, 6)
+        .padding(.vertical, 6)
+        .background(Theme.textPrimary.opacity(0.06), in: Capsule())
+        .overlay(Capsule().strokeBorder(Theme.textPrimary.opacity(0.1), lineWidth: 1))
+    }
+
+    private var worksWith: some View {
+        HStack(spacing: 8) {
+            Text("Works with")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textTertiary)
+                .padding(.trailing, 4)
+            ForEach(["Spotify", "Tidal", "Qobuz", "Amazon Music", "SoundCloud"], id: \.self) { service in
+                Text(service)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.horizontal, 10)
+                    .frame(height: 24)
+                    .overlay(Capsule().strokeBorder(Theme.textPrimary.opacity(0.1), lineWidth: 1))
+            }
+        }
+    }
+
+    // MARK: - Download options
+
+    /// Sits with the link field it applies to: format, quality (when the
+    /// format has one), region, and the two tagging options.
+    private var optionsRow: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("Download as")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.trailing, 2)
+
+                optionMenu(options.format.label) {
+                    ForEach(LucidaOptions.Format.allCases) { format in
+                        Button {
+                            options.format = format
+                            options.quality = format.qualities.first?.value
+                        } label: {
+                            if format == options.format {
+                                Label(format.label, systemImage: "checkmark")
+                            } else {
+                                Text(format.label)
+                            }
+                        }
+                    }
+                }
+                .help("Format")
+
+                if !options.format.qualities.isEmpty {
+                    let current = options.quality ?? options.format.qualities.first?.value
+                    optionMenu(options.format.qualities.first(where: { $0.value == current })?.label ?? "Quality") {
+                        ForEach(options.format.qualities) { q in
+                            Button {
+                                options.quality = q.value
+                            } label: {
+                                if q.value == current {
+                                    Label(q.label, systemImage: "checkmark")
+                                } else {
+                                    Text(q.label)
+                                }
+                            }
+                        }
+                    }
+                    .help("Quality")
+                }
+
+                HStack(spacing: 6) {
+                    Text("Region")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                    TextField("auto", text: $options.region)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 48)
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .overlay(Capsule().strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 1))
+                .help("Region: leave as auto, or enter a country code")
+
+                SheetTogglePill(title: "Embed tags & cover", isOn: $options.addMetadata)
+                    .help("Write tags and artwork into each file")
+                SheetTogglePill(title: "Player compatibility", isOn: $options.compatibility)
+                    .help("Smaller cover and ID3v2.3, for older hardware")
+            }
+            Text("Applies to every track you download.")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textTertiary)
+        }
+    }
+
+    private func optionMenu<Items: View>(_ title: String, @ViewBuilder items: () -> Items) -> some View {
+        Menu {
+            items()
+        } label: {
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 32)
+            .overlay(Capsule().strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 1))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    // MARK: - Spotify playlists (idle)
+
+    private var spotifySection: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                sectionTitle("Your Spotify playlists")
+                Spacer()
+                if case .connected(let name) = spotifyAuth.state {
+                    (Text("Connected as ") + Text(name).foregroundColor(Theme.textSecondary).fontWeight(.semibold))
+                        .font(.system(size: 12.5))
                         .foregroundStyle(Theme.textTertiary)
                 }
-
-                Spacer(minLength: Theme.Spacing.xl)
-
-                Text(title)
-                    .font(.system(size: 28, weight: .semibold))
-                    .padding(.bottom, 10)
-                Text(subtitle)
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineSpacing(3)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 320, alignment: .leading)
-                    .padding(.bottom, Theme.Spacing.xl)
-                HStack(spacing: Theme.Spacing.sm) {
-                    Text(cta)
-                    Image(systemName: "arrow.right")
-                }
-                .font(.system(size: 13, weight: .semibold))
-            }
-            .frame(maxWidth: .infinity, minHeight: 380, alignment: .leading)
-            .padding(36)
-            .foregroundStyle(isHovered ? accent : Theme.textPrimary)
-            .background(
-                RoundedRectangle(cornerRadius: 14)
-                    .fill(isHovered ? Theme.surfaceElevated : Theme.surface)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 14)
-                    .strokeBorder(isHovered ? accent : Theme.divider, lineWidth: 1)
-            )
-            .shadow(color: isHovered ? accent.opacity(0.35) : .clear,
-                    radius: isHovered ? 40 : 0, x: 0, y: isHovered ? 22 : 0)
-            .scaleEffect(isHovered ? 1.04 : 1)
-            .offset(y: isHovered ? -14 : 0)
-            .blur(radius: dimmed ? 8 : 0)
-            .opacity(dimmed ? 0.55 : 1)
-            .zIndex(isHovered ? 1 : 0)
-        }
-        .buttonStyle(.plain)
-        .onHover { inside in
-            if inside { hovered = side }
-            else if hovered == side { hovered = nil }
-        }
-    }
-
-    // MARK: - Albums & Tracks mode
-
-    /// The drill-in screen state, derived from the existing resolve pipeline.
-    private enum ATState { case empty, loading, error, resolved }
-    private var atState: ATState {
-        if isWorking { return .loading }
-        if error != nil { return .error }
-        if resolved != nil { return .resolved }
-        return .empty
-    }
-
-    /// Full-bleed Albums & Tracks screen: a refined header, a body that
-    /// swaps between empty / resolving / error / resolved states, and a
-    /// downloads drawer docked at the bottom. Mirrors the Claude Design
-    /// "Tracks & Albums" template; all the underlying resolve/enqueue
-    /// plumbing is unchanged.
-    private var albumsTracksScreen: some View {
-        VStack(spacing: 0) {
-            albumsTracksHeader
-
-            Group {
-                switch atState {
-                case .empty:    atEmptyState
-                case .loading:  atLoadingState
-                case .error:    atErrorState
-                case .resolved: atResolvedScroll
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            if !downloads.jobs.isEmpty { downloadsDrawer }
-        }
-        // Pull cover art for the resolved item and recolor the screen to match.
-        // Keyed on the URL so it reloads when the user resolves something new
-        // and clears when nothing is resolved.
-        .task(id: resolvedCoverURL) {
-            heroArtwork = nil
-            heroAccent = nil
-            guard let url = resolvedCoverURL else { return }
-            if let result = await ArtworkAccent.load(url) {
-                guard !Task.isCancelled else { return }
-                withAnimation(.easeInOut(duration: 0.35)) {
-                    heroArtwork = result.image
-                    heroAccent = result.accent
-                }
-            }
-        }
-    }
-
-    // ── Header ───────────────────────────────────────────────────────────
-
-    private var albumsTracksHeader: some View {
-        HStack(spacing: Theme.Spacing.lg) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) { mode = .chooser }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Theme.surfaceElevated))
-            }
-            .buttonStyle(.plain)
-            .help("Back to Download")
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Albums & Tracks")
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("Paste a link from Spotify, Tidal, Qobuz, Amazon Music, or SoundCloud.")
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textSecondary)
             }
 
-            Spacer()
-
-            // Once something's resolved (or errored), keep a compact paste
-            // bar handy so the user can fetch another link without going back.
-            if resolved != nil || error != nil {
-                pasteBar(large: false).frame(width: 340)
-            }
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 20)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Theme.divider).frame(height: 1)
-        }
-    }
-
-    /// Shared paste field — `large` is the centred empty-state hero input;
-    /// the compact form lives in the header. Both submit through `resolve()`.
-    private func pasteBar(large: Bool) -> some View {
-        HStack(spacing: large ? 12 : 8) {
-            Image(systemName: "link")
-                .font(.system(size: large ? 18 : 15, weight: .regular))
-                .foregroundStyle(Theme.textTertiary)
-            TextField("Paste a track or album URL", text: $pasteURL)
-                .textFieldStyle(.plain)
-                .font(.system(size: large ? 15 : 13))
-                .disabled(isWorking)
-                .onSubmit(resolve)
-            Button(action: resolve) {
-                HStack(spacing: 8) {
-                    Text("Fetch")
-                    if large {
-                        Image(systemName: "arrow.right")
-                            .font(.system(size: 13, weight: .bold))
+            if spotifyAuth.isConnected {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 18)], alignment: .leading, spacing: 22) {
+                    if settings.showSpotifyLikedSongs {
+                        SpotifyPlaylistCard(playlist: SpotifyAuthController.likedSongsSummary) {
+                            openPlaylist(SpotifyAuthController.likedSongsSummary)
+                        }
+                    }
+                    ForEach(spotifyAuth.playlists) { playlist in
+                        SpotifyPlaylistCard(playlist: playlist) { openPlaylist(playlist) }
                     }
                 }
-                .font(.system(size: large ? 14 : 12, weight: .semibold))
-                .foregroundStyle(large ? onAccent : Theme.textPrimary)
-                .padding(.horizontal, large ? 22 : 13)
-                .frame(height: large ? 40 : 28)
-                .background(Capsule().fill(large ? atAccent : Theme.surfaceElevated))
+                .task {
+                    if spotifyAuth.playlists.isEmpty { await spotifyAuth.loadPlaylists() }
+                }
+            } else {
+                connectCard
             }
-            .buttonStyle(.plain)
         }
-        .padding(.leading, large ? 20 : 14)
-        .padding(.trailing, large ? 8 : 6)
-        .frame(height: large ? 56 : 38)
-        .background(
-            RoundedRectangle(cornerRadius: large ? 14 : 19).fill(Theme.surface)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: large ? 14 : 19)
-                .strokeBorder(Theme.divider, lineWidth: 1)
-        )
     }
 
-    // ── Empty / paste-prompt ──────────────────────────────────────────────
-
-    private var atEmptyState: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                Circle().fill(atAccent.opacity(0.16)).frame(width: 96, height: 96).blur(radius: 22)
-                Circle().fill(Theme.surfaceElevated).frame(width: 76, height: 76)
-                Image(systemName: "link")
-                    .font(.system(size: 32, weight: .regular))
-                    .foregroundStyle(atAccent)
-            }
-            .padding(.bottom, 26)
-
-            Text("Paste a link to get started")
-                .font(.system(size: 26, weight: .semibold))
+    private var connectCard: some View {
+        HStack(spacing: 16) {
+            Image(systemName: "music.note.list")
+                .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(Theme.textPrimary)
-            Text("Drop in a track or album URL and we'll resolve every track at its highest available fidelity.")
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 460)
-                .padding(.top, 10)
-                .padding(.bottom, 30)
-
-            pasteBar(large: true).frame(maxWidth: 560)
-
-            HStack(spacing: 8) {
-                Text("Works with")
-                    .font(.system(size: 11)).tracking(1.5).textCase(.uppercase)
+                .frame(width: 44, height: 44)
+                .background(Theme.textPrimary.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Connect your Spotify account")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("List your own playlists here and download any of them in full. Or paste a public playlist link above.")
+                    .font(.system(size: 12.5))
                     .foregroundStyle(Theme.textTertiary)
-                    .padding(.trailing, 4)
-                ForEach(["Spotify", "Tidal", "Qobuz", "Amazon Music", "SoundCloud"], id: \.self) { svc in
-                    Text(svc)
-                        .font(.system(size: 12, weight: .medium))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 12)
+            Button {
+                Task { await spotifyAuth.connect() }
+            } label: {
+                HStack(spacing: 8) {
+                    if spotifyAuth.state == .connecting {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(spotifyAuth.state == .connecting ? "Connecting…" : "Connect")
+                }
+            }
+            .buttonStyle(SheetPillStyle(isPrimary: true))
+            .disabled(spotifyAuth.state == .connecting)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .background(Theme.textPrimary.opacity(0.05), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func sectionTitle(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 20, weight: .heavy))
+            .tracking(-0.4)
+            .foregroundStyle(Theme.textPrimary)
+    }
+
+    // MARK: - Loading / error
+
+    private var loadingState: some View {
+        HStack(spacing: 14) {
+            ProgressView().controlSize(.regular)
+            Text("Fetching…")
+                .font(.system(size: 15))
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .padding(.vertical, 20)
+    }
+
+    private var errorState: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sectionTitle(playlistError != nil ? "Couldn't read that playlist" : "Couldn't fetch that link")
+            Text(playlistError ?? error ?? "Check it's a track, album or playlist link from one of the services above.")
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.textTertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 560, alignment: .leading)
+                .padding(.top, 6)
+            Button(spotifyAuth.isConnected && playlistError != nil ? "Back to your playlists" : "Try another link", action: clearOpen)
+                .buttonStyle(SheetPillStyle())
+                .padding(.top, 18)
+        }
+    }
+
+    // MARK: - Resolved
+
+    @ViewBuilder
+    private var resolvedContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: clearOpen) {
+                Label(spotifyAuth.isConnected ? "Back to your playlists" : "Back", systemImage: "chevron.left")
+            }
+            .buttonStyle(QuietTextButtonStyle())
+            .padding(.leading, -10)
+            .padding(.bottom, 16)
+
+            if let p = resolvedPlaylist {
+                if playlistTruncated {
+                    notice("Showing the first \(SpotifyPlaylistService.trackCap) tracks. Spotify's public preview caps longer playlists — connect your account to get every track.", color: Theme.qualityMid)
+                        .padding(.bottom, 22)
+                }
+                collection(kind: "Playlist", title: p.title, meta: playlistMeta(p), tracks: p.tracks, cta: "Download playlist") {
+                    rebuilder.rebuild(from: p, options: options)
+                }
+            } else {
+                switch resolved {
+                case .album(let a):
+                    collection(kind: "Album", title: a.title, meta: albumMeta(a), tracks: a.tracks, cta: "Download album") {
+                        enqueueWithOptions(a.tracks)
+                    }
+                case .track(let t):
+                    collection(kind: "Track", title: t.title, meta: t.artists.map(\.name).joined(separator: ", "), tracks: [t], cta: "Download track") {
+                        enqueueWithOptions([t])
+                    }
+                case .playlist(let p):
+                    collection(kind: "Playlist", title: p.title, meta: p.creator.map { "by \($0)" } ?? "\(p.tracks.count) tracks", tracks: p.tracks, cta: "Download all") {
+                        enqueueWithOptions(p.tracks)
+                    }
+                case .artist(let artist, _, _):
+                    VStack(alignment: .leading, spacing: 6) {
+                        sectionTitle("Artist: \(artist.name)")
+                        Text("Paste a track or album link to download.")
+                            .font(.system(size: 14))
+                            .foregroundStyle(Theme.textTertiary)
+                    }
+                case .none:
+                    EmptyView()
+                }
+            }
+        }
+    }
+
+    /// Cover, kind, title, details and the download button, then the
+    /// tracklist. One layout for every resolved kind.
+    private func collection(kind: String, title: String, meta: String, tracks: [RemoteTrack], cta: String, onDownload: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .bottom, spacing: 28) {
+                cover
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(kind)
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.textTertiary)
+                    Text(title)
+                        .font(.system(size: 48, weight: .heavy))
+                        .tracking(-1.9)
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 8)
+                    Text(meta)
+                        .font(.system(size: 14))
                         .foregroundStyle(Theme.textSecondary)
-                        .padding(.horizontal, 11).padding(.vertical, 5)
-                        .background(Capsule().fill(Theme.surface))
-                        .overlay(Capsule().strokeBorder(Theme.divider, lineWidth: 1))
+                        .padding(.top, 10)
+                    Button(action: onDownload) {
+                        Label(cta, systemImage: "arrow.down.to.line")
+                    }
+                    .buttonStyle(SheetPillStyle(isPrimary: true))
+                    .padding(.top, 18)
+                }
+                Spacer(minLength: 0)
+            }
+
+            LazyVStack(spacing: 0) {
+                ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                    trackRow(track, number: track.trackNumber ?? index + 1)
                 }
             }
             .padding(.top, 22)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
     }
 
-    // ── Resolving ─────────────────────────────────────────────────────────
-
-    private var atLoadingState: some View {
-        VStack(spacing: Theme.Spacing.lg) {
-            ProgressView().controlSize(.large).tint(atAccent)
-            Text("Fetching…")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
+    private var cover: some View {
+        Group {
+            if let heroArtwork {
+                Image(nsImage: heroArtwork)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .transition(.opacity)
+            } else {
+                LinearGradient(colors: [Color(white: 0.16), Color(white: 0.07)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    .overlay(
+                        Image(systemName: "opticaldisc")
+                            .font(.system(size: 40, weight: .thin))
+                            .foregroundStyle(Color.white.opacity(0.18))
+                    )
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
+        .frame(width: 200, height: 200)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.55), radius: 30, y: 20)
     }
 
-    // ── Error ─────────────────────────────────────────────────────────────
-
-    private var atErrorState: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                Circle().fill(Theme.qualityLow.opacity(0.12)).frame(width: 72, height: 72)
-                Image(systemName: "exclamationmark.circle")
-                    .font(.system(size: 30, weight: .regular))
-                    .foregroundStyle(Theme.qualityLow)
-            }
-            .padding(.bottom, 22)
-
-            Text("Couldn't fetch that link")
-                .font(.system(size: 23, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Text(error ?? "That URL doesn't look valid, or the content is region-locked or private. Check the link and try again.")
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 440)
-                .padding(.top, 10)
-                .padding(.bottom, 28)
-
-            Button {
-                error = nil
-                resolved = nil
-            } label: {
-                HStack(spacing: 9) {
-                    Image(systemName: "arrow.triangle.2.circlepath")
-                    Text("Try another link")
-                }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, 24)
-                .frame(height: 44)
-                .background(Capsule().fill(Theme.surfaceElevated))
-            }
-            .buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
+    /// The latest download of this track in the queue, if any.
+    private func job(for track: RemoteTrack) -> DownloadCoordinator.Job? {
+        downloads.jobs.last { $0.track.id == track.id }
     }
 
-    // ── Resolved ──────────────────────────────────────────────────────────
-
-    private var atResolvedScroll: some View {
-        ScrollView {
-            atResolvedBody
-                .frame(maxWidth: 980)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.horizontal, 28)
-                .padding(.top, 30)
-                .padding(.bottom, 40)
-        }
-    }
-
-    @ViewBuilder
-    private var atResolvedBody: some View {
-        switch resolved {
-        case .album(let a):
-            collectionView(kind: "Album", title: a.title, meta: albumMeta(a),
-                           tracks: a.tracks, downloadAllLabel: "Download album") {
-                enqueueWithOptions(a.tracks)
-            }
-        case .track(let t):
-            collectionView(kind: "Track", title: t.title,
-                           meta: t.artists.map(\.name).joined(separator: ", "),
-                           tracks: [t], downloadAllLabel: "Download track") {
-                enqueueWithOptions([t])
-            }
-        case .playlist(let p):
-            collectionView(kind: "Playlist", title: p.title,
-                           meta: p.creator.map { "by \($0)" } ?? "\(p.tracks.count) tracks",
-                           tracks: p.tracks, downloadAllLabel: "Download all") {
-                enqueueWithOptions(p.tracks)
-            }
-        case .artist(let artist, _, _):
-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                Text("Artist: \(artist.name)")
-                    .font(.system(size: 23, weight: .semibold))
+    private func trackRow(_ track: RemoteTrack, number: Int) -> some View {
+        let job = job(for: track)
+        return HStack(spacing: 12) {
+            Text("\(number)")
+                .font(.system(size: 13))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textTertiary)
+                .frame(width: 28, alignment: .trailing)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(track.title)
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
-                Text("Paste a track or album URL to download.")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                Text(track.artists.map(\.name).joined(separator: ", "))
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        case .none:
-            EmptyView()
+            Spacer(minLength: 12)
+            qualityTag(lossless: track.isLossless)
+            Text(FormatUtils.formatDuration(track.durationSeconds))
+                .font(.system(size: 12.5))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textTertiary)
+                .frame(width: 48, alignment: .trailing)
+            trackAction(track, job: job)
+                .frame(width: 34, height: 34)
         }
+        .padding(.horizontal, 10)
+        .frame(height: 48)
+        .modifier(HoverFill())
+    }
+
+    private func qualityTag(lossless: Bool) -> some View {
+        let color = lossless ? Theme.qualityLossless : Theme.qualityMid
+        return Text(lossless ? "FLAC" : "Lossy")
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 7)
+            .frame(height: 20)
+            .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func notice(_ text: String, color: Color) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Circle().fill(color).frame(width: 6, height: 6).padding(.top, 6)
+            Text(text)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func albumMeta(_ a: RemoteAlbum) -> String {
@@ -550,372 +592,148 @@ struct DownloadTabView: View {
         return parts.joined(separator: " · ")
     }
 
-    /// The album/track/playlist hero + collapsible options + tracklist. One
-    /// renderer for every resolved kind so the layout stays consistent.
-    private func collectionView(
-        kind: String,
-        title: String,
-        meta: String,
-        tracks: [RemoteTrack],
-        downloadAllLabel: String,
-        onDownloadAll: @escaping () -> Void
-    ) -> some View {
-        let allLossless = !tracks.isEmpty && tracks.allSatisfy(\.isLossless)
-        return VStack(alignment: .leading, spacing: 0) {
-            // Hero
-            HStack(alignment: .bottom, spacing: 28) {
-                artworkHero
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 8) {
-                        qualityBadge(lossless: allLossless)
-                        Text(kind)
-                            .font(.system(size: 11)).tracking(1.5).textCase(.uppercase)
-                            .foregroundStyle(Theme.textTertiary)
-                    }
-                    .padding(.bottom, 11)
-
-                    Text(title)
-                        .font(.system(size: 36, weight: .bold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 8)
-                    Text(meta)
-                        .font(.system(size: 15))
-                        .foregroundStyle(Theme.textSecondary)
-                        .padding(.bottom, 22)
-
-                    HStack(spacing: 12) {
-                        Button(action: onDownloadAll) {
-                            HStack(spacing: 9) {
-                                Image(systemName: "arrow.down.to.line")
-                                    .font(.system(size: 15, weight: .semibold))
-                                Text(downloadAllLabel)
-                                    .font(.system(size: 14, weight: .semibold))
-                            }
-                            .foregroundStyle(onAccent)
-                            .padding(.horizontal, 22)
-                            .frame(height: 44)
-                            .background(Capsule().fill(atAccent))
-                        }
-                        .buttonStyle(.plain)
-
-                        optionsToggle
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-
-            if optionsOpen { albumsOptionsPanel.padding(.top, 22) }
-
-            trackList(tracks).padding(.top, 30)
-        }
-    }
-
-    private var artworkHero: some View {
-        ZStack {
-            // Colored glow behind the cover, tinted to the sampled accent.
-            RoundedRectangle(cornerRadius: 14)
-                .fill(atAccent.opacity(0.30))
-                .frame(width: 160, height: 160)
-                .blur(radius: 30)
-                .offset(y: 10)
-
-            Group {
-                if let art = heroArtwork {
-                    Image(nsImage: art)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    // Placeholder until art loads (or when none is available).
-                    LinearGradient(
-                        colors: [Color(white: 0.16), Color(white: 0.07)],
-                        startPoint: .topLeading, endPoint: .bottomTrailing)
-                    .overlay(
-                        RadialGradient(
-                            colors: [Color.white.opacity(0.10), .clear],
-                            center: .topLeading, startRadius: 0, endRadius: 150))
-                    .overlay(
-                        Image(systemName: "opticaldisc")
-                            .font(.system(size: 40, weight: .thin))
-                            .foregroundStyle(Color.white.opacity(0.18)))
-                }
-            }
-            .frame(width: 176, height: 176)
-            .clipShape(RoundedRectangle(cornerRadius: 14))
-            .shadow(color: .black.opacity(0.55), radius: 25, x: 0, y: 18)
-        }
-    }
-
-    private func qualityBadge(lossless: Bool) -> some View {
-        Text(lossless ? "FLAC" : "Lossy")
-            .font(.system(size: 11, weight: .semibold))
-            .padding(.horizontal, 9).padding(.vertical, 4)
-            .background(Capsule().fill(lossless ? atAccent.opacity(0.14) : Color.clear))
-            .foregroundStyle(lossless ? atAccent : Theme.textTertiary)
-    }
-
-    // ── Collapsible options ───────────────────────────────────────────────
-
-    private var optionsToggle: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.18)) { optionsOpen.toggle() }
-        } label: {
-            HStack(spacing: 11) {
-                Image(systemName: "line.3.horizontal.decrease")
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(Theme.textSecondary)
-                Text(optionsSummary)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                Rectangle().fill(Theme.divider).frame(width: 1, height: 16)
-                Image(systemName: optionsOpen ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .padding(.leading, 18).padding(.trailing, 16)
-            .frame(height: 44)
-            .background(Capsule().fill(Theme.surface))
-            .overlay(Capsule().strokeBorder(Theme.divider, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var optionsSummary: String {
+    private func playlistMeta(_ p: RemotePlaylist) -> String {
         var parts: [String] = []
-        parts.append(options.format == .original ? "Original quality" : options.format.label)
-        if options.format.requiresQuality, let q = options.quality,
-           let label = options.format.qualities.first(where: { $0.value == q })?.label {
-            parts.append(label)
-        }
-        parts.append("Region \(options.region.isEmpty ? "auto" : options.region)")
-        return parts.joined(separator: "   ·   ")
+        if let creator = p.creator { parts.append("by \(creator)") }
+        parts.append("\(p.tracks.count) track\(p.tracks.count == 1 ? "" : "s")")
+        let total = p.tracks.compactMap(\.durationSeconds).reduce(0, +)
+        if total > 0 { parts.append("\(Int(total / 60)) min") }
+        return parts.joined(separator: " · ")
     }
 
-    private var albumsOptionsPanel: some View {
+    // MARK: - Downloads panel
+
+    private var queuePanel: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Text("Download options")
-                    .font(.system(size: 11)).tracking(1.5).textCase(.uppercase)
-                    .foregroundStyle(Theme.textTertiary)
-                    .fixedSize()
-                Rectangle().fill(Theme.divider).frame(height: 1)
-                Text("Applies to every track you download")
-                    .font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
-                    .fixedSize()
-            }
-            .padding(.bottom, 18)
-
-            HStack(alignment: .top, spacing: 32) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Format").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    Picker("", selection: $options.format) {
-                        ForEach(LucidaOptions.Format.allCases) { f in
-                            Text(f.label).tag(f)
-                        }
-                    }
-                    .labelsHidden().pickerStyle(.menu).frame(width: 200)
-                    .onChange(of: options.format) { _, newFormat in
-                        options.quality = newFormat.qualities.first?.value
-                    }
-                }
-                if !options.format.qualities.isEmpty {
-                    VStack(alignment: .leading, spacing: 7) {
-                        Text("Quality").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                        Picker("", selection: qualityBinding) {
-                            ForEach(options.format.qualities) { q in
-                                Text(q.label).tag(q.value)
-                            }
-                        }
-                        .labelsHidden().pickerStyle(.menu).frame(width: 170)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Region").font(.system(size: 12)).foregroundStyle(Theme.textSecondary)
-                    TextField("auto or country code", text: $options.region)
-                        .textFieldStyle(.roundedBorder).frame(width: 180)
-                }
-            }
-
-            HStack(spacing: 10) {
-                optionCheck(isOn: $options.addMetadata,
-                            title: "Embed metadata + cover art",
-                            subtitle: "Tags & artwork written into each file")
-                optionCheck(isOn: $options.compatibility,
-                            title: "Player compatibility",
-                            subtitle: "Smaller cover, ID3v2.3 for older hardware")
-            }
-            .padding(.top, 20)
-        }
-        .padding(.horizontal, 24).padding(.vertical, 22)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.divider, lineWidth: 1))
-    }
-
-    private func optionCheck(isOn: Binding<Bool>, title: String, subtitle: String) -> some View {
-        Button { isOn.wrappedValue.toggle() } label: {
-            HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(isOn.wrappedValue ? atAccent : Color.clear)
-                        .frame(width: 19, height: 19)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .strokeBorder(isOn.wrappedValue ? Color.clear : Theme.textTertiary, lineWidth: 1.5)
-                        )
-                    if isOn.wrappedValue {
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(onAccent)
-                    }
-                }
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(title).font(.system(size: 13, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                    Text(subtitle).font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
-                }
-            }
-            .padding(.leading, 12).padding(.trailing, 15).padding(.vertical, 10)
-            .background(RoundedRectangle(cornerRadius: 10).fill(Theme.surfaceElevated))
-        }
-        .buttonStyle(.plain)
-    }
-
-    // ── Track list ────────────────────────────────────────────────────────
-
-    private func trackList(_ tracks: [RemoteTrack]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 14) {
-                Text("#")
-                    .font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
-                    .frame(width: 26)
-                Text("Title")
-                    .font(.system(size: 11)).tracking(1.5).textCase(.uppercase)
-                    .foregroundStyle(Theme.textTertiary)
-                Spacer()
-                Text("Length")
-                    .font(.system(size: 11)).tracking(1.5).textCase(.uppercase)
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.trailing, 64)
-            }
-            .padding(.horizontal, 4).padding(.bottom, 10)
-            .overlay(alignment: .bottom) {
-                Rectangle().fill(Theme.divider).frame(height: 1)
-            }
-
-            ForEach(tracks) { albumTrackRow($0) }
-        }
-    }
-
-    private func albumTrackRow(_ t: RemoteTrack) -> some View {
-        HStack(spacing: 14) {
-            Text(t.trackNumber.map { String(format: "%02d", $0) } ?? "–")
-                .font(.system(size: 13).monospacedDigit())
-                .foregroundStyle(Theme.textTertiary)
-                .frame(width: 26)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(t.title)
-                    .font(.system(size: 14)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Text(t.artists.map(\.name).joined(separator: ", "))
-                    .font(.system(size: 12)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            }
-            Spacer()
-            if t.isLossless {
-                Text("FLAC")
-                    .font(.system(size: 10, weight: .semibold))
-                    .padding(.horizontal, 7).padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(atAccent.opacity(0.14)))
-                    .foregroundStyle(atAccent)
-            } else {
-                Text("Lossy")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            Text(FormatUtils.formatDuration(t.durationSeconds))
-                .font(.system(size: 13).monospacedDigit())
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 44, alignment: .trailing)
-            Button { enqueueWithOptions([t]) } label: {
-                Image(systemName: "arrow.down.to.line")
-                    .font(.system(size: 15, weight: .regular))
-                    .foregroundStyle(Theme.textTertiary)
-                    .frame(width: 30, height: 30)
-            }
-            .buttonStyle(.plain)
-            .help("Download track")
-        }
-        .padding(.horizontal, 4).padding(.vertical, 10)
-    }
-
-    // ── Downloads drawer (docked) ─────────────────────────────────────────
-
-    private var downloadsDrawer: some View {
-        let active = downloads.jobs.filter { $0.status.canCancel }.count
-        let done = downloads.jobs.filter { if case .completed = $0.status { return true }; return false }.count
-        let summary = active > 0 ? "\(active) active · \(done) done" : "\(downloads.jobs.count) complete"
-        return VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                ZStack {
-                    Circle().fill(atAccent.opacity(0.14)).frame(width: 30, height: 30)
-                    Image(systemName: "arrow.down.to.line")
-                        .font(.system(size: 14, weight: .regular))
-                        .foregroundStyle(atAccent)
-                }
-                Text("Downloads")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(summary)
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(Theme.textSecondary)
-                Spacer()
-                if active > 0 {
+            HStack(alignment: .firstTextBaseline) {
+                sectionTitle("Downloads")
+                Spacer(minLength: 8)
+                if downloads.jobs.contains(where: { $0.status.canCancel }) {
                     Button("Cancel all") { downloads.cancelAll() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 12))
+                        .buttonStyle(QuietTextButtonStyle())
+                }
+                if downloads.jobs.contains(where: { !$0.status.canCancel }) {
+                    Button("Clear completed") { downloads.clearCompleted() }
+                        .buttonStyle(QuietTextButtonStyle())
+                }
+                Button { queueCollapsed = true } label: {
+                    Image(systemName: "chevron.right.2")
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(Theme.textTertiary)
+                        .frame(width: 28, height: 28)
+                        .contentShape(Circle())
                 }
-                Button("Clear completed") { downloads.clearCompleted() }
-                    .buttonStyle(.plain)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textTertiary)
-                Image(systemName: drawerOpen ? "chevron.down" : "chevron.up")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.textTertiary)
+                .buttonStyle(.plain)
+                .help("Hide downloads")
             }
-            .padding(.horizontal, 24).padding(.vertical, 14)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.18)) { drawerOpen.toggle() }
-            }
+            .padding(.horizontal, 28)
+            .padding(.top, topBarInset + 38)
+            .padding(.bottom, 10)
 
-            if drawerOpen {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(downloads.jobs) { drawerJobRow($0) }
+            rebuildCard
+                .padding(.horizontal, 28)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(downloads.jobs.reversed()) { job in
+                        jobRow(job)
                     }
-                    .padding(.horizontal, 24).padding(.bottom, 16)
                 }
-                .frame(maxHeight: 280)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 120)
             }
+            .scrollIndicators(.automatic)
         }
         .background(Theme.surface)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
-        .shadow(color: .black.opacity(0.45), radius: 20, x: 0, y: -10)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Theme.divider).frame(width: 1)
+        }
     }
 
-    private func drawerJobRow(_ job: DownloadCoordinator.Job) -> some View {
-        HStack(spacing: 14) {
-            Circle().fill(jobAccentColor(job.status)).frame(width: 8, height: 8)
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 8) {
-                    Text(job.track.title)
-                        .font(.system(size: 13)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                    Text(job.track.artists.map(\.name).joined(separator: ", "))
-                        .font(.system(size: 12)).foregroundStyle(Theme.textTertiary).lineLimit(1)
+    /// The playlist rebuild's progress, then its summary until dismissed.
+    @ViewBuilder
+    private var rebuildCard: some View {
+        switch rebuilder.phase {
+        case .idle:
+            EmptyView()
+        case .fetchingArtwork:
+            rebuildBox(tint: Theme.textPrimary.opacity(0.06)) {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Preparing playlist…")
+                        .font(.system(size: 14, weight: .bold))
+                    Spacer()
+                    Button("Cancel") { rebuilder.cancel() }
+                        .buttonStyle(QuietTextButtonStyle())
                 }
+            }
+        case .running(let current, let total):
+            rebuildBox(tint: Theme.textPrimary.opacity(0.06)) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Rebuilding playlist")
+                            .font(.system(size: 14, weight: .bold))
+                        Spacer()
+                        Button("Cancel") { rebuilder.cancel() }
+                            .buttonStyle(QuietTextButtonStyle())
+                    }
+                    Text("\(current) of \(total) done")
+                        .font(.system(size: 12))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textTertiary)
+                    progressBar(CGFloat(current) / CGFloat(max(total, 1)), color: Theme.textPrimary)
+                }
+            }
+        case .finished(let summary):
+            rebuildBox(tint: Theme.qualityCD.opacity(0.12)) {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(summary.isResume ? "Playlist updated" : "Playlist rebuilt")
+                            .font(.system(size: 14, weight: .bold))
+                        Spacer()
+                        Button("Dismiss") { rebuilder.dismissSummary() }
+                            .buttonStyle(QuietTextButtonStyle())
+                    }
+                    Text(rebuildSummaryLine(summary))
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    private func rebuildBox<Content: View>(tint: Color, @ViewBuilder content: () -> Content) -> some View {
+        content()
+            .foregroundStyle(Theme.textPrimary)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(tint, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .padding(.bottom, 10)
+    }
+
+    private func rebuildSummaryLine(_ summary: PlaylistRebuildCoordinator.Summary) -> String {
+        var parts = ["\(summary.downloaded) downloaded",
+                     "\(summary.reused.count) already in library"]
+        if summary.alreadyInPlaylist > 0 { parts.append("\(summary.alreadyInPlaylist) already in playlist") }
+        parts.append("\(summary.failures.count) failed")
+        return parts.joined(separator: " · ")
+    }
+
+    private func jobRow(_ job: DownloadCoordinator.Job) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(job.track.title)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(job.track.artists.map(\.name).joined(separator: ", "))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
                 if case .failed(let reason) = job.status {
-                    // Full cause in place of the bar — the status column is
-                    // too narrow for multi-source reasons.
+                    // The full cause, selectable, in place of the bar.
                     Text(reason)
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.qualityLow)
@@ -923,44 +741,62 @@ struct DownloadTabView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .textSelection(.enabled)
                         .help(reason)
-                } else {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Theme.divider)
-                            Capsule().fill(jobAccentColor(job.status))
-                                .frame(width: geo.size.width * jobProgress(job.status))
-                        }
-                    }
-                    .frame(height: 4)
+                        .padding(.top, 2)
+                } else if isInFlight(job.status) {
+                    progressBar(jobProgress(job.status), color: Theme.textPrimary)
+                        .padding(.top, 5)
                 }
             }
+            Spacer(minLength: 8)
             Text(jobStatusLabel(job.status))
-                .font(.system(size: 12).monospacedDigit())
-                .foregroundStyle(Theme.textSecondary)
+                .font(.system(size: 11.5, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(statusColor(job.status))
                 .lineLimit(1)
-                .frame(width: 140, alignment: .trailing)
+                .fixedSize()
             Group {
                 if job.status.canCancel {
                     Button { downloads.cancel(job.id) } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 13, weight: .semibold))
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(Theme.textTertiary)
                             .frame(width: 26, height: 26)
+                            .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                     .help("Cancel download")
-                } else if case .completed = job.status {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Theme.qualityCD)
-                        .frame(width: 26, height: 26)
                 } else {
                     Color.clear.frame(width: 26, height: 26)
                 }
             }
         }
-        .padding(.vertical, 11)
-        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
+        .padding(.vertical, 10)
+        .overlay(alignment: .bottom) { divider }
+    }
+
+    private func progressBar(_ fraction: CGFloat, color: Color) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.textPrimary.opacity(0.1))
+                Capsule().fill(color).frame(width: geo.size.width * max(0, min(1, fraction)))
+            }
+        }
+        .frame(height: 3)
+    }
+
+    private func isInFlight(_ status: DownloadCoordinator.JobStatus) -> Bool {
+        switch status {
+        case .downloading, .tagging, .finishing: return true
+        default: return false
+        }
+    }
+
+    /// Failed and cancelled downloads can be started again from the track row.
+    private func isRetryable(_ status: DownloadCoordinator.JobStatus) -> Bool {
+        switch status {
+        case .failed, .cancelled: return true
+        default: return false
+        }
     }
 
     private func jobProgress(_ status: DownloadCoordinator.JobStatus) -> CGFloat {
@@ -973,490 +809,12 @@ struct DownloadTabView: View {
         }
     }
 
-    private func jobAccentColor(_ status: DownloadCoordinator.JobStatus) -> Color {
+    private func statusColor(_ status: DownloadCoordinator.JobStatus) -> Color {
         switch status {
-        case .downloading, .tagging, .finishing: return atAccent
-        case .completed: return Theme.qualityCD
-        case .failed:    return Theme.qualityLow
-        default:         return Theme.textTertiary
+        case .completed, .skipped: return Theme.qualityCD
+        case .failed:              return Theme.qualityLow
+        default:                   return Theme.textTertiary
         }
-    }
-
-    // MARK: - Playlists mode
-
-    /// Playlists screen state. Mirrors the Claude Design "Playlists" template:
-    /// connect your account to browse your own playlists, or paste a public
-    /// link. The resolved view reuses the Albums & Tracks download layout.
-    private enum PLState { case notConnected, grid, resolving, error, resolved }
-    private var plState: PLState {
-        if isResolvingPlaylist { return .resolving }
-        if playlistError != nil { return .error }
-        if resolvedPlaylist != nil { return .resolved }
-        if spotifyAuth.isConnected { return .grid }
-        return .notConnected
-    }
-
-    /// Best cover URL for the resolved playlist — drives the artwork + accent.
-    private var plCoverURL: URL? {
-        guard let p = resolvedPlaylist else { return nil }
-        return RemoteCoverArt.best(p.coverArt)?.url
-    }
-
-    private var playlistsScreen: some View {
-        VStack(spacing: 0) {
-            playlistsHeader
-
-            if showRebuildBar { rebuildTopBar }
-
-            Group {
-                switch plState {
-                case .notConnected: plNotConnectedState
-                case .grid:         plGridState
-                case .resolving:    atLoadingState
-                case .error:        plErrorState
-                case .resolved:     plResolvedScroll
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            if !downloads.jobs.isEmpty { downloadsDrawer }
-        }
-        // Recolor to the resolved playlist's cover, same as Albums & Tracks.
-        .task(id: plCoverURL) {
-            heroArtwork = nil
-            heroAccent = nil
-            guard let url = plCoverURL else { return }
-            if let result = await ArtworkAccent.load(url) {
-                guard !Task.isCancelled else { return }
-                withAnimation(.easeInOut(duration: 0.35)) {
-                    heroArtwork = result.image
-                    heroAccent = result.accent
-                }
-            }
-        }
-    }
-
-    // ── Header ───────────────────────────────────────────────────────────
-
-    private var playlistsHeader: some View {
-        HStack(spacing: Theme.Spacing.lg) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    if resolvedPlaylist != nil {
-                        resolvedPlaylist = nil
-                    } else {
-                        mode = .chooser
-                    }
-                }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(Theme.surfaceElevated))
-            }
-            .buttonStyle(.plain)
-            .help("Back")
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Playlists")
-                    .font(.system(size: 21, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(playlistsHeaderSub)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-
-            Spacer()
-
-            if case .connected(let name) = spotifyAuth.state {
-                HStack(spacing: 8) {
-                    Circle().fill(Theme.qualityCD).frame(width: 7, height: 7)
-                    Text("Spotify connected · ")
-                        .foregroundStyle(Theme.textSecondary)
-                    + Text(name).foregroundStyle(Theme.textPrimary).fontWeight(.medium)
-                }
-                .font(.system(size: 12))
-                .padding(.horizontal, 13).padding(.vertical, 7)
-                .background(Capsule().fill(Theme.surface))
-                .overlay(Capsule().strokeBorder(Theme.divider, lineWidth: 1))
-            }
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 20)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(Theme.divider).frame(height: 1)
-        }
-    }
-
-    private var playlistsHeaderSub: String {
-        switch plState {
-        case .resolved:
-            return "Downloading a full playlist — every track at its highest available fidelity."
-        case .grid, .resolving:
-            return "Your Spotify library — pick a playlist to download in full."
-        case .notConnected, .error:
-            return "Connect your account, or paste a public Spotify playlist link."
-        }
-    }
-
-    // ── Not connected ──────────────────────────────────────────────────────
-
-    private var plNotConnectedState: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                Circle().fill(Theme.qualityCD.opacity(0.14)).frame(width: 96, height: 96).blur(radius: 22)
-                Circle().fill(Theme.surfaceElevated).frame(width: 76, height: 76)
-                Image(systemName: "music.note.list")
-                    .font(.system(size: 32, weight: .regular))
-                    .foregroundStyle(Theme.qualityCD)
-            }
-            .padding(.bottom, 26)
-
-            Text("Connect your Spotify account")
-                .font(.system(size: 26, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Text("Log in to list your own playlists here and download any of them in full lossless quality.")
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 470)
-                .padding(.top, 10)
-                .padding(.bottom, 28)
-
-            Button {
-                Task { await spotifyAuth.connect() }
-            } label: {
-                HStack(spacing: 9) {
-                    if spotifyAuth.state == .connecting {
-                        ProgressView().controlSize(.small).tint(Color(white: 0.05))
-                    } else {
-                        Image(systemName: "person.crop.circle.badge.checkmark")
-                            .font(.system(size: 16, weight: .semibold))
-                    }
-                    Text(spotifyAuth.state == .connecting ? "Connecting…" : "Connect Spotify")
-                        .font(.system(size: 14, weight: .semibold))
-                }
-                .foregroundStyle(Color(white: 0.05))
-                .padding(.horizontal, 26).frame(height: 46)
-                .background(Capsule().fill(Theme.qualityCD))
-            }
-            .buttonStyle(.plain)
-            .disabled(spotifyAuth.state == .connecting)
-
-            HStack(spacing: 14) {
-                Rectangle().fill(Theme.divider).frame(height: 1)
-                Text("or paste a public link")
-                    .font(.system(size: 11)).tracking(1.5).textCase(.uppercase)
-                    .foregroundStyle(Theme.textTertiary).fixedSize()
-                Rectangle().fill(Theme.divider).frame(height: 1)
-            }
-            .frame(width: 420)
-            .padding(.top, 30).padding(.bottom, 18)
-
-            plPasteBar.frame(maxWidth: 480)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
-    }
-
-    /// Public-link paste field for the not-connected fallback. Resolves via the
-    /// no-auth embed path (`resolvePlaylist`), capped at 100 tracks.
-    private var plPasteBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "link")
-                .font(.system(size: 16, weight: .regular))
-                .foregroundStyle(Theme.textTertiary)
-            TextField("open.spotify.com/playlist/…", text: $playlistURL)
-                .textFieldStyle(.plain)
-                .font(.system(size: 14))
-                .disabled(isResolvingPlaylist)
-                .onSubmit(resolvePlaylist)
-            Button(action: resolvePlaylist) {
-                Text("Fetch")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.horizontal, 18).frame(height: 36)
-                    .background(Capsule().fill(Theme.surfaceElevated))
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.leading, 18).padding(.trailing, 7)
-        .frame(height: 48)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.surface))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.divider, lineWidth: 1))
-    }
-
-    // ── Library grid ─────────────────────────────────────────────────────
-
-    private var plGridState: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline, spacing: 10) {
-                    Text("Your playlists")
-                        .font(.system(size: 11)).tracking(1.5).textCase(.uppercase)
-                        .foregroundStyle(Theme.textTertiary)
-                    Text("\(spotifyAuth.playlists.count) from Spotify")
-                        .font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
-                }
-                .padding(.bottom, 20)
-
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 184), spacing: 20)],
-                    spacing: 20
-                ) {
-                    if settings.showSpotifyLikedSongs {
-                        playlistCard(SpotifyAuthController.likedSongsSummary)
-                    }
-                    ForEach(spotifyAuth.playlists) { playlistCard($0) }
-                }
-            }
-            .frame(maxWidth: 1100)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.horizontal, 28).padding(.top, 28).padding(.bottom, 56)
-        }
-        .task {
-            if spotifyAuth.playlists.isEmpty { await spotifyAuth.loadPlaylists() }
-        }
-    }
-
-    private func playlistCard(_ p: SpotifyAuthController.PlaylistSummary) -> some View {
-        SpotifyPlaylistCard(playlist: p) { openPlaylist(p) }
-    }
-
-    // ── Error ────────────────────────────────────────────────────────────
-
-    private var plErrorState: some View {
-        VStack(spacing: 0) {
-            ZStack {
-                Circle().fill(Theme.qualityLow.opacity(0.12)).frame(width: 72, height: 72)
-                Image(systemName: "exclamationmark.circle")
-                    .font(.system(size: 30, weight: .regular))
-                    .foregroundStyle(Theme.qualityLow)
-            }
-            .padding(.bottom, 22)
-
-            Text("Couldn't read that playlist")
-                .font(.system(size: 23, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            Text(playlistError ?? "It may be private, or the link isn't a Spotify playlist.")
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: 440)
-                .padding(.top, 10)
-                .padding(.bottom, 28)
-
-            Button {
-                playlistError = nil
-                resolvedPlaylist = nil
-            } label: {
-                HStack(spacing: 9) {
-                    Image(systemName: "chevron.left")
-                    Text(spotifyAuth.isConnected ? "Back to playlists" : "Back")
-                }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-                .padding(.horizontal, 24).frame(height: 44)
-                .background(Capsule().fill(Theme.surfaceElevated))
-            }
-            .buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(40)
-    }
-
-    // ── Resolved playlist ──────────────────────────────────────────────────
-
-    private var plResolvedScroll: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if spotifyAuth.isConnected {
-                    Button { resolvedPlaylist = nil } label: {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
-                            Text("All playlists").font(.system(size: 12, weight: .medium))
-                        }
-                        .foregroundStyle(Theme.textTertiary)
-                        .padding(.horizontal, 12).padding(.vertical, 6)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.bottom, 14)
-                }
-
-                if playlistTruncated { plTruncatedWarning.padding(.bottom, 22) }
-
-                if let p = resolvedPlaylist {
-                    collectionView(
-                        kind: "Playlist", title: p.title, meta: playlistMeta(p),
-                        tracks: p.tracks, downloadAllLabel: "Download playlist"
-                    ) {
-                        rebuilder.rebuild(from: p, options: options)
-                    }
-                }
-            }
-            .frame(maxWidth: 980)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.horizontal, 28)
-            .padding(.top, 18)
-            .padding(.bottom, 40)
-        }
-    }
-
-    private var plTruncatedWarning: some View {
-        HStack(alignment: .top, spacing: 11) {
-            Image(systemName: "exclamationmark.triangle")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.qualityMid)
-            Text("Showing the first \(SpotifyPlaylistService.trackCap) tracks. Spotify's public preview caps longer playlists — connect your account to fetch every track.")
-                .font(.system(size: 12.5))
-                .foregroundStyle(Theme.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 16).padding(.vertical, 13)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RoundedRectangle(cornerRadius: 12).fill(Theme.qualityMid.opacity(0.10)))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(Theme.qualityMid.opacity(0.30), lineWidth: 1))
-    }
-
-    private func playlistMeta(_ p: RemotePlaylist) -> String {
-        var parts: [String] = []
-        if let creator = p.creator { parts.append("by \(creator)") }
-        parts.append("\(p.tracks.count) track\(p.tracks.count == 1 ? "" : "s")")
-        let total = p.tracks.compactMap(\.durationSeconds).reduce(0, +)
-        if total > 0 { parts.append("\(Int(total / 60)) min") }
-        return parts.joined(separator: " · ")
-    }
-
-    private func openPlaylist(_ p: SpotifyAuthController.PlaylistSummary) {
-        playlistError = nil
-        resolvedPlaylist = nil
-        playlistTruncated = false
-        isResolvingPlaylist = true
-        options = .default
-        Task {
-            do {
-                let token = try await spotifyAuth.validAccessToken()
-                let result = p.id == SpotifyAuthController.likedSongsID
-                    ? try await rebuilder.resolveLikedSongs(userToken: token)
-                    : try await rebuilder.resolve(p.externalURL, userToken: token)
-                resolvedPlaylist = result.playlist
-                playlistTruncated = result.wasTruncated
-            } catch {
-                playlistError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
-            }
-            isResolvingPlaylist = false
-        }
-    }
-
-    // MARK: - Sections
-
-    /// `Binding<String>` over `options.quality`. Reads with a fallback to
-    /// the format's first preset so the Picker always has a valid selection
-    /// even before the user touches it (`options.quality` is `nil` for the
-    /// default-Original case).
-    private var qualityBinding: Binding<String> {
-        Binding(
-            get: {
-                options.quality ?? options.format.qualities.first?.value ?? ""
-            },
-            set: { options.quality = $0 }
-        )
-    }
-
-    /// Whether the pinned rebuild bar should show (any non-idle phase).
-    private var showRebuildBar: Bool {
-        if case .idle = rebuilder.phase { return false }
-        return true
-    }
-
-    /// Compact rebuild progress/summary, pinned below the header (mirrors the
-    /// docked Downloads drawer at the bottom). Per-track detail lives in that
-    /// drawer; this bar is just the high-level status.
-    @ViewBuilder
-    private var rebuildTopBar: some View {
-        Group {
-            switch rebuilder.phase {
-            case .idle:
-                EmptyView()
-
-            case .fetchingArtwork:
-                HStack(spacing: Theme.Spacing.md) {
-                    ProgressView().controlSize(.small)
-                    Text("Preparing playlist…")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary)
-                    Spacer()
-                    rebuildCancelButton
-                }
-
-            case .running(let current, let total):
-                VStack(spacing: 8) {
-                    HStack(spacing: Theme.Spacing.md) {
-                        Text("Rebuilding playlist")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                        Spacer()
-                        Text("\(current) of \(total) done")
-                            .font(.system(size: 12).monospacedDigit())
-                            .foregroundStyle(Theme.textSecondary)
-                        rebuildCancelButton
-                    }
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Theme.divider)
-                            Capsule().fill(atAccent)
-                                .frame(width: geo.size.width * CGFloat(current) / CGFloat(max(total, 1)))
-                        }
-                    }
-                    .frame(height: 4)
-                }
-
-            case .finished(let summary):
-                HStack(spacing: Theme.Spacing.md) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 15))
-                        .foregroundStyle(Theme.qualityCD)
-                    Text(summary.isResume ? "Playlist updated" : "Playlist rebuilt")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    Text(rebuildSummaryLine(summary))
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
-                    Spacer()
-                    Button("Dismiss") { rebuilder.dismissSummary() }
-                        .buttonStyle(.plain)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            }
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface)
-        .overlay(alignment: .bottom) { Rectangle().fill(Theme.divider).frame(height: 1) }
-        .shadow(color: .black.opacity(0.35), radius: 12, x: 0, y: 6)
-    }
-
-    private var rebuildCancelButton: some View {
-        Button("Cancel") { rebuilder.cancel() }
-            .buttonStyle(.plain)
-            .font(.system(size: 12))
-            .foregroundStyle(Theme.textSecondary)
-    }
-
-    private func rebuildSummaryLine(_ summary: PlaylistRebuildCoordinator.Summary) -> String {
-        var parts = ["\(summary.downloaded) downloaded",
-                     "\(summary.reused.count) already in library"]
-        if summary.alreadyInPlaylist > 0 { parts.append("\(summary.alreadyInPlaylist) already in playlist") }
-        parts.append("\(summary.failures.count) failed")
-        return "· " + parts.joined(separator: " · ")
     }
 
     private func jobStatusLabel(_ status: DownloadCoordinator.JobStatus) -> String {
@@ -1464,8 +822,7 @@ struct DownloadTabView: View {
         case .queued: return "Queued"
         case .downloading(let r, let t):
             if let t, t > 0 {
-                let pct = Int((Double(r) / Double(t)) * 100)
-                return "Downloading… \(pct)%"
+                return "Downloading… \(Int((Double(r) / Double(t)) * 100))%"
             }
             return "Downloading… \(r / 1024) KB"
         case .tagging:    return "Tagging…"
@@ -1477,30 +834,127 @@ struct DownloadTabView: View {
         }
     }
 
+    /// The track row's button slot, a fixed size so the row never shifts:
+    /// the download arrow, then a progress ring while the track is on its
+    /// way, then a check. A failed or cancelled track gets its arrow back.
+    @ViewBuilder
+    private func trackAction(_ track: RemoteTrack, job: DownloadCoordinator.Job?) -> some View {
+        if let job, isInFlight(job.status) || isQueued(job.status) {
+            ProgressRing(fraction: ringFraction(job.status))
+                .frame(width: 16, height: 16)
+                .help(jobStatusLabel(job.status))
+        } else if let job, !isRetryable(job.status) {
+            Image(systemName: "checkmark")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Theme.qualityCD)
+                .help(jobStatusLabel(job.status))
+        } else {
+            Button { enqueueWithOptions([track]) } label: {
+                Image(systemName: "arrow.down.to.line")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(job == nil ? Theme.textTertiary : Theme.qualityLow)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .help(job == nil ? "Download track" : "\(jobStatusLabel(job!.status)) — download again")
+        }
+    }
+
+    /// Nil (a spinning ring) while queued or before the size is known.
+    private func ringFraction(_ status: DownloadCoordinator.JobStatus) -> CGFloat? {
+        switch status {
+        case .queued: return nil
+        case .downloading(_, let total): return (total ?? 0) > 0 ? jobProgress(status) : nil
+        default: return jobProgress(status)
+        }
+    }
+
+    private func isQueued(_ status: DownloadCoordinator.JobStatus) -> Bool {
+        if case .queued = status { return true }
+        return false
+    }
+
+    // MARK: - Collapsed indicator
+
+    /// The downloads panel hidden: a small glass pill with overall progress
+    /// and what's left. Click it to bring the panel back.
+    private var queueIndicator: some View {
+        let jobs = downloads.jobs
+        let active = jobs.filter { $0.status.canCancel }.count
+        let finished = jobs.count - active
+        var fraction: CGFloat? = jobs.isEmpty ? nil : CGFloat(finished) / CGFloat(jobs.count)
+        var label = active > 0 ? "\(active) downloading" : "\(finished) done"
+        switch rebuilder.phase {
+        case .running(let current, let total):
+            fraction = CGFloat(current) / CGFloat(max(total, 1))
+            label = "Rebuilding \(current)/\(total)"
+        case .fetchingArtwork:
+            fraction = nil
+            label = "Preparing playlist"
+        case .finished:
+            label = active > 0 ? label : "Playlist rebuilt"
+        case .idle:
+            break
+        }
+        let busy = active > 0 || { if case .running = rebuilder.phase { return true }; if case .fetchingArtwork = rebuilder.phase { return true }; return false }()
+        return Button { queueCollapsed = false } label: {
+            HStack(spacing: 10) {
+                if busy {
+                    ProgressRing(fraction: fraction)
+                        .frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Theme.qualityCD)
+                }
+                Text(label)
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.textPrimary)
+                Image(systemName: "chevron.left.2")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 36)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.textPrimary.opacity(0.1), lineWidth: 1))
+            .shadow(color: .black.opacity(0.3), radius: 14, y: 6)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("Show downloads")
+    }
+
     // MARK: - Actions
+
+    /// Back to the idle page (your playlists), clearing whatever was open.
+    private func clearOpen() {
+        resolved = nil
+        error = nil
+        resolvedPlaylist = nil
+        playlistTruncated = false
+        playlistError = nil
+    }
 
     private func resolve() {
         let trimmed = pasteURL.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
+        clearOpen()
         guard let url = URL(string: trimmed) else {
             error = "That URL doesn't look valid."
             return
         }
-        // Spotify playlists are handled by the dedicated Playlists screen, not
-        // Lucida (whose metadata endpoint fails on playlists). Redirect rather
-        // than letting it error out.
+        // Spotify playlists go through the rebuild coordinator's resolver,
+        // not Lucida (whose metadata endpoint fails on playlists).
         if SpotifyPlaylistService.playlistID(from: url) != nil {
-            playlistURL = trimmed
-            pasteURL = ""
-            withAnimation(.easeInOut(duration: 0.15)) { mode = .playlists }
-            resolvePlaylist()
+            resolvePlaylist(url)
             return
         }
-        resolved = nil
-        error = nil
         isWorking = true
-        // Fresh paste — reset the options panel so the previous track's
-        // choices don't silently leak into a new resolution.
+        // A fresh link starts from the default options, so the last one's
+        // choices don't silently carry over.
         options = .default
         Task {
             do {
@@ -1512,22 +966,34 @@ struct DownloadTabView: View {
         }
     }
 
-    private func resolvePlaylist() {
-        let trimmed = playlistURL.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        guard let url = URL(string: trimmed) else {
-            playlistError = "That URL doesn't look valid."
-            return
-        }
-        resolvedPlaylist = nil
-        playlistTruncated = false
-        playlistError = nil
+    /// A public Spotify playlist link, through the no-auth embed path (capped
+    /// at `SpotifyPlaylistService.trackCap` tracks).
+    private func resolvePlaylist(_ url: URL) {
         isResolvingPlaylist = true
-        // Fresh paste — reset the options panel to the highest-quality default.
         options = .default
         Task {
             do {
                 let result = try await rebuilder.resolve(url)
+                resolvedPlaylist = result.playlist
+                playlistTruncated = result.wasTruncated
+            } catch {
+                playlistError = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
+            isResolvingPlaylist = false
+        }
+    }
+
+    /// One of your own playlists (or Liked Songs), with your account's token.
+    private func openPlaylist(_ p: SpotifyAuthController.PlaylistSummary) {
+        clearOpen()
+        isResolvingPlaylist = true
+        options = .default
+        Task {
+            do {
+                let token = try await spotifyAuth.validAccessToken()
+                let result = p.id == SpotifyAuthController.likedSongsID
+                    ? try await rebuilder.resolveLikedSongs(userToken: token)
+                    : try await rebuilder.resolve(p.externalURL, userToken: token)
                 resolvedPlaylist = result.playlist
                 playlistTruncated = result.wasTruncated
             } catch {
@@ -1548,74 +1014,92 @@ struct DownloadTabView: View {
     }
 }
 
-// MARK: - VPN advisory sheet
+/// A small ring: the arc fills with `fraction`, or spins when it's nil
+/// (queued, or no size known yet).
+private struct ProgressRing: View {
+    let fraction: CGFloat?
 
-/// Compact floating advisory shown on first entry into the Downloads tab
-/// each session. Styled as a standalone card — no FLSheet chrome — to match
-/// the mockup: large shield + bold headline, centred body copy, checkbox.
-private struct VpnNoticeSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    /// Inverse of "Don't show again" — bound to `Settings.showVpnNotice`.
-    @Binding var showVpnNoticeAgain: Bool
+    @State private var spinning = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // ── Icon + headline ──────────────────────────────────────────
-            HStack(alignment: .center, spacing: Theme.Spacing.md) {
-                Image(systemName: "shield.lefthalf.filled")
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text("Protect your connection!")
-                    .font(.system(.title2, weight: .bold))
-                    .foregroundStyle(Theme.textPrimary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, Theme.Spacing.xl)
-
-            // ── Body ─────────────────────────────────────────────────────
-            Text("Always use a VPN when downloading files, and only download files you already own or have a license to.")
-                .font(Theme.Font.body)
-                .foregroundStyle(Theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity)
-
-            Text("Happy listening!")
-                .font(Theme.Font.body)
-                .foregroundStyle(Theme.textTertiary)
-                .padding(.top, Theme.Spacing.lg)
-
-            // ── Checkbox ─────────────────────────────────────────────────
-            Toggle(isOn: Binding(
-                get: { !showVpnNoticeAgain },
-                set: { newVal in
-                    showVpnNoticeAgain = !newVal
-                    if newVal { dismiss() }
-                }
-            )) {
-                Text("Don't show this again")
-                    .font(Theme.Font.caption)
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            .toggleStyle(.checkbox)
-            .padding(.top, Theme.Spacing.xl)
-
-            // ── Got it ───────────────────────────────────────────────────
-            Button("Got it") { dismiss() }
-                .buttonStyle(PillButtonStyle(isPrimary: true))
-                .keyboardShortcut(.defaultAction)
-                .padding(.top, Theme.Spacing.lg)
+        ZStack {
+            Circle().stroke(Theme.textPrimary.opacity(0.15), lineWidth: 2)
+            Circle()
+                .trim(from: 0, to: fraction.map { max(0.04, min(1, $0)) } ?? 0.28)
+                .stroke(Theme.textPrimary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .rotationEffect(.degrees(fraction == nil && spinning ? 360 : 0))
+                .animation(fraction == nil ? .linear(duration: 0.9).repeatForever(autoreverses: false) : .easeOut(duration: 0.25), value: spinning)
+                .animation(.easeOut(duration: 0.25), value: fraction)
         }
-        .padding(Theme.Spacing.xxl)
-        .frame(width: 400)
-        .background(Theme.surface)
-        .clipShape(RoundedRectangle(cornerRadius: 18))
-        .shadow(color: .black.opacity(0.35), radius: 24, x: 0, y: 8)
+        .onAppear { spinning = true }
+        .accessibilityLabel(fraction.map { "\(Int($0 * 100)) percent" } ?? "Waiting")
     }
 }
 
-/// A Spotify playlist tile in the Downloads grid. Own view so it can carry
-/// the same hover rise + cover glow as library cards.
+/// A faint fill behind a row while the pointer is over it.
+private struct HoverFill: ViewModifier {
+    @State private var isHovering = false
+
+    func body(content: Content) -> some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Theme.textPrimary.opacity(isHovering ? 0.05 : 0))
+            )
+            .onHover { isHovering = $0 }
+    }
+}
+
+// MARK: - VPN reminder
+
+/// Shown on the first Download visit per session until "Don't show this
+/// again" is ticked.
+private struct VpnNoticeSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    /// Inverse of "Don't show this again" — bound to `Settings.showVpnNotice`.
+    @Binding var showVpnNoticeAgain: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Protect your connection")
+                .font(.system(size: 26, weight: .heavy))
+                .tracking(-0.8)
+                .foregroundStyle(Theme.textPrimary)
+            Text("Always use a VPN when downloading, and only download music you already own or have a license to. Happy listening.")
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 10)
+            HStack {
+                Toggle(isOn: Binding(
+                    get: { !showVpnNoticeAgain },
+                    set: { showVpnNoticeAgain = !$0 }
+                )) {
+                    Text("Don't show this again")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .toggleStyle(.checkbox)
+                Spacer()
+                Button("Got it") { dismiss() }
+                    .buttonStyle(SheetPillStyle(isPrimary: true))
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.top, 26)
+        }
+        .padding(.horizontal, 32)
+        .padding(.top, 32)
+        .padding(.bottom, 24)
+        .frame(width: 460, alignment: .leading)
+        .background(Theme.surface)
+    }
+}
+
+// MARK: - Spotify playlist tile
+
+/// A Spotify playlist in the grid: square cover that lifts on hover, name
+/// and count beneath.
 private struct SpotifyPlaylistCard: View {
     let playlist: SpotifyAuthController.PlaylistSummary
     let onOpen: () -> Void
@@ -1624,7 +1108,7 @@ private struct SpotifyPlaylistCard: View {
 
     var body: some View {
         Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
                 ZStack {
                     if let url = playlist.coverArtURL {
                         AsyncImage(url: url) { image in
@@ -1646,38 +1130,31 @@ private struct SpotifyPlaylistCard: View {
                     }
                 }
                 // Square slot first, cover overlaid and clipped to it, so
-                // non-square Spotify mosaics/photos are cropped instead of
-                // widening the card off-grid.
+                // non-square Spotify mosaics are cropped rather than widening
+                // the tile off-grid.
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .modifier(SquareSlot())
-                .clipShape(RoundedRectangle(cornerRadius: 9))
-                .shadow(color: .black.opacity(0.4), radius: 11, x: 0, y: 8)
-                .coverHoverHighlight(isHovering: isHovering, cornerRadius: 9)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .shadow(color: .black.opacity(isHovering ? 0.45 : 0.3), radius: isHovering ? 16 : 10, y: isHovering ? 12 : 8)
+                .offset(y: isHovering ? -3 : 0)
+                .padding(.bottom, 8)
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(playlist.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        // Always reserve two lines so 1- and 2-line titles
-                        // produce identical card heights across the grid.
-                        .lineLimit(2, reservesSpace: true)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    Text(playlist.trackCount < 0 ? "your saved tracks" : "\(playlist.owner ?? "you") · \(playlist.trackCount) tracks")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.horizontal, 2).padding(.bottom, 2)
+                Text(playlist.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                Text(playlist.trackCount < 0 ? "Your saved tracks" : "\(playlist.trackCount) tracks")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
             }
-            .padding(12)
-            .background(RoundedRectangle(cornerRadius: 14).fill(Theme.surface))
-            .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(Theme.divider, lineWidth: 1))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .cardHoverLift(isHovering: isHovering)
-        .onHover { isHovering = $0 }
+        .onHover { hovering in
+            withAnimation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.3)) { isHovering = hovering }
+        }
+        .help(playlist.owner.map { "\(playlist.name) · by \($0)" } ?? playlist.name)
     }
 }
 

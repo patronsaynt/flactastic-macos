@@ -13,6 +13,7 @@ let cardHoverHeadroom: CGFloat = 8
 struct CollectionView: View {
     @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self) private var library
+    @Environment(DebugState.self) private var debugState
     @Environment(PlayerState.self) private var player
     @Environment(NavigationRouter.self) private var router
     @Environment(PlaylistStore.self) private var playlistStore
@@ -129,6 +130,15 @@ struct CollectionView: View {
 
             // Crossfade between sections and views rather than hard-cutting.
             Group {
+                if debugState.emptyLibraryPreviewActive {
+                    // Settings → Debug → "Preview an empty library".
+                    Text("No \(contentMode.rawValue.lowercased()) in your library")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Theme.textTertiary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .padding(.horizontal, collectionGutter)
+                        .padding(.top, 24)
+                } else {
                 switch contentMode {
                 case .albums:
                     albumsContent
@@ -143,6 +153,7 @@ struct CollectionView: View {
                     )
                     .padding(.horizontal, collectionGutter)
                     .padding(.top, cardHoverHeadroom)
+                }
                 }
             }
             .transition(.opacity)

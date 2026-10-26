@@ -93,26 +93,50 @@ actor LrcLibClient {
         .cannotConnectToHost,
     ]
 
-    /// Issue the request, retrying transient transport errors with a short
-    /// exponential backoff. Caps at `maxAttempts` so a genuinely unreachable
-    /// host still fails fast rather than stalling the fetcher's semaphore.
+    /// HTTP statuses that mean "busy, try again" rather than anything about
+    /// the track. lrclib sits behind Cloudflare and answers 503 (sometimes
+    /// 502/504) when overloaded and 429 when rate limiting, usually with a
+    /// `Retry-After` header. A missing track is a 404, never one of these.
+    private static let retryableStatuses: Set<Int> = [429, 502, 503, 504]
+
+    /// Longest `Retry-After` we'll honor inline. The fetcher holds a
+    /// semaphore slot while we wait, so anything longer is left to its
+    /// error cooldown instead.
+    private static let maxRetryAfter: TimeInterval = 5
+
+    /// Issue the request, retrying transient transport errors and busy-server
+    /// statuses with a short exponential backoff. Caps at `maxAttempts` so a
+    /// genuinely unreachable host still fails fast rather than stalling the
+    /// fetcher's semaphore.
     private func sendWithRetry(
         _ request: URLRequest,
         maxAttempts: Int = 3
     ) async throws -> (Data, URLResponse) {
         var attempt = 1
         while true {
+            let delay: TimeInterval
             do {
-                return try await session.data(for: request)
+                let (data, response) = try await session.data(for: request)
+                guard attempt < maxAttempts,
+                      let http = response as? HTTPURLResponse,
+                      Self.retryableStatuses.contains(http.statusCode) else {
+                    return (data, response)
+                }
+                let retryAfter = http.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
+                if let retryAfter, retryAfter > Self.maxRetryAfter { return (data, response) }
+                delay = retryAfter ?? Self.backoff(attempt: attempt, base: 1)
             } catch let error as URLError
                 where Self.retryableCodes.contains(error.code) && attempt < maxAttempts {
-                // 250ms, then 500ms. Jittered so a batch of tracks that all
-                // failed together doesn't retry in lockstep.
-                let backoff = 0.25 * pow(2.0, Double(attempt - 1))
-                let jitter = Double.random(in: 0...0.1)
-                try await Task.sleep(nanoseconds: UInt64((backoff + jitter) * 1_000_000_000))
-                attempt += 1
+                delay = Self.backoff(attempt: attempt, base: 0.25)
             }
+            try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            attempt += 1
         }
+    }
+
+    /// `base`, then `2 × base`. Jittered so a batch of tracks that all failed
+    /// together doesn't retry in lockstep.
+    private static func backoff(attempt: Int, base: TimeInterval) -> TimeInterval {
+        base * pow(2.0, Double(attempt - 1)) + Double.random(in: 0...0.1)
     }
 }

@@ -349,7 +349,7 @@ struct GlassIconButtonStyle: ButtonStyle {
 
 /// The playing track's fidelity, tiny, beside its title: "24/96" in the
 /// tier's color, or the tier name when the file carries no rate.
-private struct PlayerQualityBadge: View {
+struct PlayerQualityBadge: View {
     let track: Track
 
     var body: some View {

@@ -29,13 +29,19 @@ final class LyricsFetcher {
     /// Keys whose last failure was transport-level, so `hasRecentError` can
     /// apply `transportErrorTTL` instead of the full `errorTTL`.
     private var transportErrorKeys: Set<String> = []
+    /// Where `track`'s file lives now. A fetch captures the track's URL when
+    /// it starts; if the Organizer moves or renames the file before the
+    /// response arrives, embedding must follow the file to its new path.
+    private let resolveCurrentURL: (@MainActor (Track) -> URL?)?
 
     init(cache: LyricsRemoteCache,
          client: LrcLibClient = .shared,
-         metadataWriter: MetadataWriter? = nil) {
+         metadataWriter: MetadataWriter? = nil,
+         resolveCurrentURL: (@MainActor (Track) -> URL?)? = nil) {
         self.cache = cache
         self.client = client
         self.metadataWriter = metadataWriter
+        self.resolveCurrentURL = resolveCurrentURL
     }
 
     /// True when a recent fetch attempt for this key failed transiently
@@ -161,10 +167,17 @@ final class LyricsFetcher {
                                    ? response.syncedLyrics
                                    : response.plainLyrics)
                     if let payload, !payload.isEmpty {
+                        var target = track
+                        if !FileManager.default.fileExists(atPath: track.url.path) {
+                            // Moved since the fetch started (e.g. an Organizer
+                            // run mid-playback) — write to where it is now.
+                            let moved = await MainActor.run { self?.resolveCurrentURL?(track) }
+                            if let moved { target = track.withURL(moved) }
+                        }
                         do {
-                            try await writer.writeLyrics(to: track, lyrics: payload)
+                            try await writer.writeLyrics(to: target, lyrics: payload)
                         } catch {
-                            print("[LyricsFetcher] Failed to embed lyrics in \(track.url.lastPathComponent): \(error)")
+                            print("[LyricsFetcher] Failed to embed lyrics in \(target.url.lastPathComponent): \(error)")
                         }
                     }
                 }

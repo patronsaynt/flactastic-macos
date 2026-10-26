@@ -19,6 +19,7 @@ struct PlaylistsTabView: View {
     @Environment(PlayerState.self) private var player
     @Environment(ListeningStore.self) private var listening
     @Environment(NavigationRouter.self) private var router
+    @Environment(DebugState.self) private var debugState
 
     @State private var searchText = ""
     @AppStorage("flactastic.playlistSort") private var sortOption: PlaylistSortOption = .recentlyPlayed
@@ -65,7 +66,8 @@ struct PlaylistsTabView: View {
     }
 
     private var visiblePlaylists: [Playlist] {
-        let all = playlistStore.playlists
+        // Settings → Debug → "Preview an empty library".
+        let all = debugState.emptyLibraryPreviewActive ? [] : playlistStore.playlists
         let sorted: [Playlist]
         switch sortOption {
         case .recentlyPlayed:
@@ -198,10 +200,26 @@ struct PlaylistsTabView: View {
                             .flContextMenu { playlistContextMenu(playlist) }
                         }
                     }
-                    .padding(.bottom, 100)
+                    .padding(.bottom, 16)
                 }
                 .scrollIndicators(.automatic)
+                // Rows fade out as they reach the mini player instead of
+                // being cut off at its edge.
+                .mask {
+                    VStack(spacing: 0) {
+                        Color.black
+                        LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                            .frame(height: player.currentTrack == nil ? 0 : 56)
+                    }
+                }
             }
+
+            // The player, docked at the foot of the list in place of the
+            // floating bar, which this page hides so it never covers the
+            // stage's tracklist.
+            MiniPlayerView()
+                .padding(.top, 8)
+                .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.45), value: player.currentTrack == nil)
         }
     }
 

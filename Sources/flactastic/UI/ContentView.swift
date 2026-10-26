@@ -11,6 +11,7 @@ struct ContentView: View {
     @Environment(ArtistStore.self) private var artistStore
     @Environment(ArtistImageFetcher.self) private var artistImageFetcher
     @Environment(Settings.self) private var settings
+    @Environment(DebugState.self) private var debugState
 
     /// Mirrors the hosting window's fullscreen state. The custom top bar is
     /// the app's own view, not an `NSToolbar`, so hiding it for a fullscreen
@@ -38,6 +39,9 @@ struct ContentView: View {
         mainContent(router: router)
             .ignoresSafeArea(.container, edges: .top)
             .environment(\.topBarInset, inset)
+            // Each tab's one-time tips, over the page but under the top bar
+            // so the tabs stay reachable.
+            .overlay { TabTutorialOverlay() }
             .overlay(alignment: .top) {
                 if !hidesTopBar(router: router) {
                     TopBarView(selectedTab: $router.selectedTab)
@@ -57,6 +61,11 @@ struct ContentView: View {
                 }
             }
             .animation(QueuePanelView.motion, value: player.isQueueVisible)
+            .overlay(alignment: .bottomLeading) {
+                if debugState.performanceOverlayActive {
+                    PerformanceOverlay().padding(16)
+                }
+            }
         .background(WindowFullScreenObserver(isFullScreen: $isFullScreen))
         // Extend into the title-bar region so the top bar shares the row with
         // the traffic lights (the NSWindow is configured for a full-size,
@@ -132,6 +141,8 @@ struct ContentView: View {
 
     private func showsPlayerBar(router: NavigationRouter) -> Bool {
         router.selectedTab != .visualizer && router.selectedTab != .download && !router.hidesPlayerBar
+            // The Playlists page docks its own mini player under its list.
+            && !(router.selectedTab == .playlists && router.playlistsPath.isEmpty)
     }
 
     /// Fullscreen is the only thing that takes the top bar away, and only for

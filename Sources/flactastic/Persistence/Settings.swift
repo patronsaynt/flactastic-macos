@@ -47,6 +47,13 @@ final class Settings {
         didSet { UserDefaults.standard.set(hasCompletedOnboarding, forKey: "flactastic.hasCompletedOnboarding") }
     }
 
+    /// Tabs whose one-time tutorial card has been dismissed (`AppTab` raw
+    /// values). A tab in here never shows its tutorial again, unless
+    /// Settings → Debug → "Show tutorials on every visit" is on.
+    var seenTutorials: Set<String> {
+        didSet { UserDefaults.standard.set(Array(seenTutorials).sorted(), forKey: "flactastic.seenTutorials") }
+    }
+
     /// When false (the default), the Artists grid leaves out artists whose
     /// only entries are appearances on other artists' releases.
     var showAllArtists: Bool {
@@ -155,19 +162,21 @@ final class Settings {
         let storedDir = UserDefaults.standard.string(forKey: "flactastic.fadeAnimationDirection")
         fadeAnimationDirection = storedDir.flatMap(FadeAnimationDirection.init(rawValue:)) ?? .up
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "flactastic.hasCompletedOnboarding")
+        seenTutorials = Set(UserDefaults.standard.stringArray(forKey: "flactastic.seenTutorials") ?? [])
         showAllArtists = UserDefaults.standard.bool(forKey: "flactastic.showAllArtists")
         customGenres = UserDefaults.standard.stringArray(forKey: "flactastic.customGenres") ?? []
         let storedAutoFetch = UserDefaults.standard.object(forKey: "flactastic.autoFetchArtistImages")
         autoFetchArtistImages = (storedAutoFetch as? Bool) ?? true
         let storedDRP = UserDefaults.standard.object(forKey: "flactastic.discordRichPresenceEnabled")
         discordRichPresenceEnabled = (storedDRP as? Bool) ?? true
-        // A stored "bigPicture" no longer parses now that the mode is gone,
-        // so this fallback doubles as the migration for existing users. Write
-        // the resolved value straight back — `didSet` doesn't fire during
-        // init, so without this the dead value would be re-read every launch.
+        // A stored mode that has since been removed ("bigPicture", the Large
+        // Art and Art + Details modes) no longer parses, so this fallback
+        // doubles as the migration for existing users. Write the resolved
+        // value straight back — `didSet` doesn't fire during init, so without
+        // this the dead value would be re-read every launch.
         let storedVis = UserDefaults.standard.string(forKey: "flactastic.visualizerMode")
         let resolvedVis = storedVis.flatMap(VisualizerMode.init(rawValue:))
-        let effectiveVis = resolvedVis ?? .albumArtLargeDetails
+        let effectiveVis = resolvedVis ?? .albumArtWheel
         visualizerMode = effectiveVis
         if storedVis != nil, resolvedVis == nil {
             UserDefaults.standard.set(effectiveVis.rawValue, forKey: "flactastic.visualizerMode")

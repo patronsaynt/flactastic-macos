@@ -1,43 +1,54 @@
 import SwiftUI
 import AppKit
 
-/// Lyrics visualizer mode. The artist's profile image fills the canvas, blurred
-/// and desaturated to a near-abstract ground, tinted toward the dominant colour
-/// of the current album art and finished with film grain. Karaoke-scrolling
-/// lyrics sit above the track details in the bottom-left.
+/// Lyrics visualizer mode. A slow field of the playing cover's own colors on
+/// near-black; the lyrics on the left with the sung line forward, the track
+/// on the right. Always dark, whatever the app theme: it's a stage.
 struct LyricsVisualizerView: View {
-    @Environment(PlayerState.self)        private var player
-    @Environment(Settings.self)           private var settings
-    @Environment(LibraryStore.self)       private var library
-    @Environment(ArtistStore.self)        private var artistStore
-    @Environment(ArtistRemoteCache.self)  private var artistRemoteCache
-    @Environment(ArtistImageFetcher.self) private var artistImageFetcher
-    @Environment(LyricsRemoteCache.self)  private var cache
-    @Environment(LyricsFetcher.self)      private var fetcher
+    @Environment(PlayerState.self)       private var player
+    @Environment(Settings.self)          private var settings
+    @Environment(LyricsRemoteCache.self) private var cache
+    @Environment(LyricsFetcher.self)     private var fetcher
+    @Environment(\.topBarInset)          private var topBarInset
 
-    /// Two-layer cross-fade state, mirroring the pattern the Big Picture mode
-    /// used: the previous frame stays underneath while the new one fades in.
-    /// Backdrop image and colour tint fade together on the same clock.
-    @State private var currentImage: NSImage?
-    @State private var previousImage: NSImage?
-    @State private var currentOpacity: Double = 1
-    @State private var displayedKey: String = ""
-    /// First pass sets the backdrop outright; later ones cross-fade.
-    @State private var hasDrawnBackdrop: Bool = false
+    @State private var palette: [Color] = LyricsField.fallback
 
     var body: some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
-            lyricsArea
-            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
-                footer
-                progressBar
+        GeometryReader { geo in
+            let side = min(280, max(180, geo.size.width * 0.22))
+            HStack(alignment: .center, spacing: 64) {
+                lyricsArea
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    ArtworkView(data: player.currentTrack?.artwork, size: side,
+                                id: player.currentTrack.map { "track:\($0.id)" })
+                    VisualizerTrackDetails(track: player.currentTrack,
+                                           titleSize: 28, artistSize: 16, albumSize: 13, onDark: true)
+                        .padding(.top, 22)
+                    PlaybackProgressBar(
+                        track: .white.opacity(0.22),
+                        fill: .white,
+                        labelStyle: AnyShapeStyle(Color.white.opacity(0.7))
+                    )
+                    .padding(.top, 18)
+                    if showsUnsyncedNote {
+                        UnsyncedLyricsNote()
+                            .padding(.top, 28)
+                            .transition(.opacity)
+                    }
+                }
+                .frame(width: side)
             }
+            .padding(.leading, 96)
+            .padding(.trailing, 96)
+            .padding(.top, topBarInset)
+            .frame(width: geo.size.width, height: geo.size.height)
         }
-        .padding(Theme.Spacing.xxl)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-        .background { backdrop }
+        .background { LyricsField(colors: palette) }
+        .environment(\.colorScheme, .dark)
         .task(id: player.currentTrack?.id) {
-            ensureArtistImage()
+            await loadPalette()
             guard player.currentTrack?.isMixCompilation != true else { return }
             let enabled = settings.lyricsLookupEnabled
             let save = settings.saveLyricsToFiles
@@ -52,100 +63,6 @@ struct LyricsVisualizerView: View {
                 saveToFile: save
             )
         }
-        .task(id: backdropIdentityKey) {
-            await syncBackdrop(animated: hasDrawnBackdrop)
-            hasDrawnBackdrop = true
-        }
-    }
-
-    // MARK: - Backdrop
-
-    private var backdrop: some View {
-        ZStack {
-            Theme.background
-
-            // Both layers are already blurred, desaturated and darkened by
-            // `VisualizerBackdropCache` — nothing here filters per frame.
-            ZStack {
-                if let previousImage {
-                    Image(nsImage: previousImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                }
-                if let currentImage {
-                    Image(nsImage: currentImage)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .opacity(currentOpacity)
-                }
-            }
-
-            LinearGradient(
-                colors: [.black.opacity(0.30), .black.opacity(0.80)],
-                startPoint: .top, endPoint: .bottom
-            )
-
-            VisualizerFilmGrain()
-        }
-        .clipped()
-    }
-
-    /// Recompute the backdrop when the identity key changes. The expensive
-    /// blur/desaturate pass runs off the main thread; with `animated: true` we
-    /// then run a 0.6s ease-in-out cross-fade, and on first appearance we set
-    /// the layers directly.
-    private func syncBackdrop(animated: Bool) async {
-        let key = backdropIdentityKey
-        guard key != displayedKey || currentImage == nil else { return }
-        // The dominant colour is part of what gets baked, so it belongs in the
-        // cache key alongside the photo.
-        let tint = VisualizerBackdropCache.Tint(
-            ArtistDetailView.dominantColor(from: player.currentTrack?.artwork)
-        )
-
-        var newImage: NSImage?
-        if let data = backdropImageData, !data.isEmpty {
-            let imageKey = ArtworkImageCache.contentID(for: data) + "#" + (tint?.key ?? "none")
-            // Fast path: a warm cache means no await, so returning to Lyrics
-            // for a track we have already rendered costs nothing.
-            if let hit = VisualizerBackdropCache.shared.cached(key: imageKey) {
-                newImage = hit
-            } else {
-                newImage = await VisualizerBackdropCache.shared
-                    .renderAsync(data: data, tint: tint, key: imageKey).image
-                // The track may have moved on while we were rendering.
-                guard key == backdropIdentityKey else { return }
-            }
-        }
-
-        if !animated || currentImage == nil {
-            currentImage = newImage
-            previousImage = nil
-            currentOpacity = 1
-            displayedKey = key
-            return
-        }
-
-        previousImage = currentImage
-        currentImage = newImage
-        currentOpacity = 0
-        displayedKey = key
-        withAnimation(.easeInOut(duration: 0.6)) {
-            currentOpacity = 1
-        }
-    }
-
-    /// Stable identity for the current backdrop. Prefers the artist key so
-    /// consecutive tracks by the same artist don't re-fade the photo — but the
-    /// colour tint is album-derived, so the track id still participates.
-    private var backdropIdentityKey: String {
-        let trackKey = player.currentTrack.map { "track:\($0.id.uuidString)" } ?? "empty"
-        if let key = primaryArtistKey,
-           artistStore.override(forKey: key)?.profileImage != nil
-            || artistRemoteCache.entry(forKey: key)?.profileImage != nil {
-            return "artist:\(key)|\(trackKey)"
-        }
-        return trackKey
     }
 
     // MARK: - Lyrics
@@ -155,7 +72,7 @@ struct LyricsVisualizerView: View {
         if player.currentTrack?.isMixCompilation == true {
             unavailable("Lyrics aren't available for mix compilations")
         } else if !settings.lyricsLookupEnabled {
-            unavailable("Lyrics lookup disabled in Settings")
+            unavailable("Lyrics lookup is turned off in Settings")
         } else if let track = player.currentTrack {
             let key = LyricsCacheKey.make(
                 artist: track.artist ?? track.albumArtist,
@@ -164,14 +81,23 @@ struct LyricsVisualizerView: View {
             )
             if let entry = cache.entry(forKey: key) {
                 if entry.notFound {
-                    unavailable("Unable to find lyrics for this song")
+                    unavailable("Couldn't find lyrics for this song")
                 } else if let lyrics = fetcher.parsedLyrics(from: entry, duration: track.duration ?? 0) {
-                    TimedLyricsScroller(lyrics: lyrics)
+                    if lyrics.isSynced {
+                        TimedLyricsScroller(lyrics: lyrics)
+                    } else {
+                        // No timestamps in the source — scrolling these on a
+                        // guessed schedule drifts against the vocals, so show
+                        // them as a plain sheet instead.
+                        UnsyncedLyricsSheet(lyrics: lyrics)
+                            // New song → start again from its first line.
+                            .id(track.id)
+                    }
                 } else {
-                    unavailable("Unable to find lyrics for this song")
+                    unavailable("Couldn't find lyrics for this song")
                 }
             } else if fetcher.hasRecentError(forKey: key) {
-                unavailable("Unable to find lyrics for this song")
+                unavailable("Couldn't find lyrics for this song")
             } else {
                 ProgressView()
                     .controlSize(.small)
@@ -182,86 +108,38 @@ struct LyricsVisualizerView: View {
         }
     }
 
+    /// Whether the lyrics on screen are the plain, untimed kind, which the
+    /// note under the track details explains.
+    private var showsUnsyncedNote: Bool {
+        guard let track = player.currentTrack,
+              track.isMixCompilation != true,
+              settings.lyricsLookupEnabled else { return false }
+        let key = LyricsCacheKey.make(
+            artist: track.artist ?? track.albumArtist,
+            title: track.title,
+            duration: track.duration
+        )
+        guard let entry = cache.entry(forKey: key), !entry.notFound,
+              let lyrics = fetcher.parsedLyrics(from: entry, duration: track.duration ?? 0) else { return false }
+        return !lyrics.isSynced
+    }
+
     private func unavailable(_ message: String) -> some View {
         Text(message)
-            .font(.system(size: 17, weight: .semibold))
+            .font(.system(size: 22, weight: .bold))
             .foregroundStyle(Color.white.opacity(0.7))
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
-    // MARK: - Footer
+    // MARK: - Palette
 
-    private var footer: some View {
-        let track = player.currentTrack
-        let artist = ArtistResolver.displayString(track?.artist) ?? "Unknown Artist"
-        return HStack(spacing: Theme.Spacing.lg) {
-            ArtworkView(data: track?.artwork, size: 96)
-
-            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                MarqueeText(
-                    text: track?.title ?? "—",
-                    font: .system(size: 28),
-                    weight: .bold,
-                    foregroundStyle: AnyShapeStyle(Color.white)
-                )
-                MarqueeText(
-                    text: artist,
-                    font: .system(size: 16),
-                    weight: .regular,
-                    foregroundStyle: AnyShapeStyle(Color.white.opacity(0.85))
-                )
-                // Chrome here stays white regardless of app theme — it sits on
-                // a darkened photo, not on the app's canvas.
-                TechSpecLabel(track: track,
-                              style: AnyShapeStyle(Color.white.opacity(0.5)))
-            }
-            .frame(maxWidth: 720)
-            .shadow(color: .black.opacity(0.55), radius: 5, y: 2)
-
-            Spacer(minLength: 0)
-        }
-    }
-
-    private var progressBar: some View {
-        PlaybackProgressBar(
-            showsLabels: true,
-            track: .white.opacity(0.25),
-            fill: .white,
-            glow: false,
-            labelStyle: AnyShapeStyle(Color.white.opacity(0.85))
-        )
-        .shadow(color: .black.opacity(0.45), radius: 4, y: 1)
-    }
-
-    // MARK: - Artist image lookup
-
-    private var primaryArtistKey: String? {
-        guard let credit = player.currentTrack?.artist ?? player.currentTrack?.albumArtist else {
-            return nil
-        }
-        return library.makeArtistResolver().keys(forCredit: credit).first
-    }
-
-    private var backdropImageData: Data? {
-        guard let key = primaryArtistKey else {
-            return player.currentTrack?.artwork
-        }
-        if let override = artistStore.override(forKey: key)?.profileImage { return override }
-        if let remote = artistRemoteCache.entry(forKey: key)?.profileImage { return remote }
-        // Fall back to album art so the screen never looks empty while the
-        // artist image is fetching.
-        return player.currentTrack?.artwork
-    }
-
-    private func ensureArtistImage() {
-        guard settings.autoFetchArtistImages,
-              let key = primaryArtistKey,
-              let credit = player.currentTrack?.artist ?? player.currentTrack?.albumArtist
-        else { return }
-        let resolver = library.makeArtistResolver()
-        let display = resolver.displayName(forKey: key).isEmpty ? credit : resolver.displayName(forKey: key)
-        artistImageFetcher.ensureImage(forKey: key, displayName: display)
+    private func loadPalette() async {
+        let data = player.currentTrack?.artwork
+        let sampled = await CoverPalette.load(for: data)
+        guard !Task.isCancelled else { return }
+        let colors = sampled.map { $0.nsSeries(3, dark: true).map { Color(nsColor: $0) } } ?? LyricsField.fallback
+        withAnimation(.easeInOut(duration: 1.2)) { palette = colors }
     }
 
     // MARK: - Prefetch window
@@ -279,10 +157,70 @@ struct LyricsVisualizerView: View {
     }
 }
 
+/// Three soft pools of the cover's colors drifting over near-black. Each pool
+/// is a radial gradient (soft by nature, so nothing is blurred) moved by a
+/// long repeating animation that Core Animation runs on its own: the view
+/// body is never re-evaluated to drive it.
+private struct LyricsField: View {
+    let colors: [Color]
+
+    static let fallback: [Color] = [Color(white: 0.32), Color(white: 0.22), Color(white: 0.27)]
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var drifting = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let size = max(geo.size.width, geo.size.height) * 0.8
+            ZStack {
+                Color(white: 0.024)
+                pool(colors[0], size: size)
+                    .offset(x: -geo.size.width * 0.32 + (drifting ? 220 : 0),
+                            y: -geo.size.height * 0.36 + (drifting ? 120 : 0))
+                    .scaleEffect(drifting ? 1.15 : 1)
+                    .animation(drift(26), value: drifting)
+                pool(colors[1 % colors.count], size: size)
+                    .offset(x: geo.size.width * 0.38 + (drifting ? -180 : 0),
+                            y: geo.size.height * 0.1 + (drifting ? -140 : 0))
+                    .scaleEffect(drifting ? 0.9 : 1)
+                    .animation(drift(31), value: drifting)
+                pool(colors[2 % colors.count], size: size)
+                    .offset(x: -geo.size.width * 0.05 + (drifting ? 160 : 0),
+                            y: geo.size.height * 0.62 + (drifting ? -90 : 0))
+                    .scaleEffect(drifting ? 1.2 : 1)
+                    .animation(drift(23), value: drifting)
+                RadialGradient(
+                    colors: [.clear, .black.opacity(0.55)],
+                    center: UnitPoint(x: 0.3, y: 0.5),
+                    startRadius: size * 0.3, endRadius: size
+                )
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
+        }
+        // No `drawingGroup` here: flattening would re-rasterize the whole
+        // field every frame of the drift, where unflattened the pools just
+        // move as layers.
+        .clipped()
+        .onAppear { if !reduceMotion { drifting = true } }
+        .allowsHitTesting(false)
+    }
+
+    private func pool(_ color: Color, size: CGFloat) -> some View {
+        Circle()
+            .fill(RadialGradient(colors: [color.opacity(0.62), color.opacity(0)],
+                                 center: .center, startRadius: 0, endRadius: size / 2))
+            .frame(width: size, height: size)
+    }
+
+    private func drift(_ seconds: Double) -> Animation {
+        .easeInOut(duration: seconds).repeatForever(autoreverses: true)
+    }
+}
+
 /// Drives `LyricsScrollerView` from the playback clock.
 ///
 /// Split out so `LyricsVisualizerView` never reads `currentTime` in its own
-/// body — otherwise the 20 Hz clock would re-evaluate the backdrop, artwork
+/// body — otherwise the 20 Hz clock would re-evaluate the field, artwork
 /// and marquees along with the lyrics. See the note on `PlaybackProgressBar`.
 private struct TimedLyricsScroller: View {
     @Environment(PlayerState.self) private var player
@@ -294,10 +232,85 @@ private struct TimedLyricsScroller: View {
         TimelineView(.animation(minimumInterval: 0.1, paused: !player.isPlaying)) { _ in
             LyricsScrollerView(
                 lyrics: lyrics,
-                currentTime: player.currentTime,
+                // Line changes should land when the words are heard, not when
+                // they're rendered — on Bluetooth that's ~0.2 s later.
+                currentTime: max(0, player.currentTime - player.engine.outputLatency),
                 alignment: .leading,
-                activeStyle: AnyShapeStyle(Color.white)
+                activeStyle: AnyShapeStyle(Color.white),
+                maxWidthFraction: 1
             )
+        }
+    }
+}
+
+/// Lyrics with no timing data. Same carousel as synced lyrics, but the
+/// active line is stepped through with ↑/↓ instead of following the clock —
+/// any automatic schedule would be a guess and drift against the vocals.
+/// The explanation sits with the track details (`UnsyncedLyricsNote`), so
+/// the lyrics column holds only lyrics.
+struct UnsyncedLyricsSheet: View {
+    let lyrics: Lyrics
+
+    @State private var index = 0
+    @FocusState private var focused: Bool
+
+    /// Blank lines are stanza breaks in plain text; as a carousel stop they'd
+    /// just be an empty active line, so drop them.
+    private var lines: Lyrics {
+        Lyrics(lines: lyrics.lines.filter { !$0.text.trimmingCharacters(in: .whitespaces).isEmpty },
+               isSynced: false)
+    }
+
+    var body: some View {
+        let lines = self.lines
+        VStack(alignment: .leading, spacing: 0) {
+            LyricsScrollerView(
+                lyrics: lines,
+                currentTime: 0,
+                activeIndex: index,
+                alignment: .leading,
+                activeStyle: AnyShapeStyle(Color.white),
+                maxWidthFraction: 1
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .contentShape(Rectangle())
+        // Key presses arrive through focus, after keyboard shortcuts — so the
+        // visualizer mode dial's own ↑/↓ still win while it's open.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focused)
+        .onAppear { focused = true }
+        .onTapGesture { focused = true }
+        .onKeyPress(.upArrow) { step(-1, count: lines.lines.count) }
+        .onKeyPress(.downArrow) { step(1, count: lines.lines.count) }
+    }
+
+    private func step(_ delta: Int, count: Int) -> KeyPress.Result {
+        guard count > 0 else { return .ignored }
+        index = min(max(index + delta, 0), count - 1)
+        return .handled
+    }
+}
+
+/// Under the track details when its lyrics have no timing: what that means,
+/// how to fix it, and how to move through the lines meanwhile.
+private struct UnsyncedLyricsNote: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label("Not time-synced", systemImage: "text.alignleft")
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.75))
+            Text("Use \u{2191} and \u{2193} to move between lines. To sync them, right-click the track and choose \u{201C}Edit\u{2026}\u{201D}.")
+                .font(.system(size: 12))
+                .foregroundStyle(Color.white.opacity(0.5))
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.top, 16)
+        .overlay(alignment: .top) {
+            Rectangle().fill(Color.white.opacity(0.12)).frame(height: 1)
         }
     }
 }

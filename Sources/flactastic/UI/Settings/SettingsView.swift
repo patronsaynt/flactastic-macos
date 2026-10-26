@@ -9,6 +9,7 @@ struct SettingsView: View {
     @Environment(PlaylistStore.self) private var playlistStore
     @Environment(ListeningStore.self) private var listening
     @Environment(PlayerState.self) private var player
+    @Environment(DebugState.self) private var debugState
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedTab: SettingsTab = .general
@@ -24,7 +25,7 @@ struct SettingsView: View {
                 Rectangle()
                     .fill(Theme.divider)
                     .frame(width: 1, height: 14)
-                SettingsTabBar(selectedTab: $selectedTab)
+                SettingsTabBar(tabs: visibleTabs, selectedTab: $selectedTab)
                     .padding(.leading, -8)
                 Spacer(minLength: Theme.Spacing.md)
                 SheetCloseButton { dismiss() }
@@ -69,6 +70,14 @@ struct SettingsView: View {
         }
         .frame(width: 800, height: 680)
         .background(Theme.surface)
+        .onChange(of: debugState.debuggingEnabled) { _, enabled in
+            if !enabled && selectedTab == .debug { selectedTab = .general }
+        }
+    }
+
+    /// Debug joins the rail only while Enable Debugging is on.
+    private var visibleTabs: [SettingsTab] {
+        SettingsTab.allCases.filter { $0 != .debug || debugState.debuggingEnabled }
     }
 
     // ── Folder picker ──────────────────────────────────────────────────────
@@ -108,15 +117,18 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
 // MARK: - Tab bar
 
 private struct SettingsTabBar: View {
+    let tabs: [SettingsTab]
     @Binding var selectedTab: SettingsTab
     @Namespace private var tabAnimation
 
     var body: some View {
         HStack(spacing: 0) {
-            ForEach(SettingsTab.allCases) { tab in
+            ForEach(tabs) { tab in
                 tabButton(tab)
+                    .transition(.opacity.combined(with: .offset(x: -8)))
             }
         }
+        .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.4), value: tabs)
     }
 
     private func tabButton(_ tab: SettingsTab) -> some View {
@@ -187,7 +199,7 @@ private struct ToggleRow: View {
 private struct GeneralSettingsPane: View {
     @Environment(LibraryStore.self) private var library
     @Environment(Settings.self) private var settings
-    @Environment(\.debugMode) private var debugMode
+    @Environment(DebugState.self) private var debugState
     let openFolder: () -> Void
 
     var body: some View {
@@ -252,15 +264,16 @@ private struct GeneralSettingsPane: View {
                     .padding(.vertical, Theme.Spacing.md)
             }
 
-            // Debug (hidden behind debugMode flag) ─────────────────────────
-            if debugMode {
-                SettingsGroup(title: "Debug") {
-                    ToggleRow(
-                        label: "Show VPN Advisory",
-                        subtitle: "Show a reminder to use a VPN when opening the Downloads tab.",
-                        isOn: $settings.showVpnNotice
+            // Developer ────────────────────────────────────────────────────
+            SettingsGroup(title: "Developer") {
+                ToggleRow(
+                    label: "Enable Debugging",
+                    subtitle: "Shows the Debug tab, with switches for testing FLACtastic.",
+                    isOn: Binding(
+                        get: { debugState.debuggingEnabled },
+                        set: { debugState.debuggingEnabled = $0 }
                     )
-                }
+                )
             }
         }
     }
@@ -702,38 +715,137 @@ private struct VisualizerSettingsPane: View {
 
 // MARK: - Debug pane
 
+/// Switches for testing the app. Only shown while Settings → General →
+/// Enable Debugging is on, and every switch here is ignored while it's off.
 private struct DebugSettingsPane: View {
     @Environment(DebugState.self) private var debugState
+    @Environment(Settings.self) private var settings
+    @Environment(LyricsRemoteCache.self) private var lyricsCache
+    @Environment(ArtistRemoteCache.self) private var artistCache
     @Environment(\.openWindow) private var openWindow
+
+    @State private var artworkBytes: Int?
+    @State private var cleared: Set<String> = []
 
     var body: some View {
         @Bindable var debugState = debugState
+        @Bindable var settings = settings
 
         VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
-            SettingsGroup(title: "Developer Tools") {
+            SettingsGroup(title: "First run") {
                 ToggleRow(
-                    label: "Debug Lucida",
-                    subtitle: "Open the Lucida WebKit bridge inspector — live phase, web view, and navigation/bridge log.",
-                    isOn: $debugState.lucidaDebugEnabled
+                    label: "Show onboarding at every launch",
+                    subtitle: "Runs the setup flow each time FLACtastic opens, against your real settings and library.",
+                    isOn: $debugState.showsOnboardingEveryLaunch
                 )
                 GroupDivider()
-                HStack(alignment: .top, spacing: Theme.Spacing.lg) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Debug Onboarding")
-                            .font(Theme.Font.body)
-                            .foregroundStyle(Theme.textPrimary)
-                        Text("Replay the first-run onboarding sequence in its own window, against the app's live settings and library.")
-                            .font(Theme.Font.caption)
-                            .foregroundStyle(Theme.textTertiary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                    Button("Preview") { openWindow(id: "onboarding-debug") }
-                        .buttonStyle(PillButtonStyle())
+                ToggleRow(
+                    label: "Show tutorials on every visit",
+                    subtitle: "Each tab shows its tips every time you open it.",
+                    isOn: $debugState.showsTutorialsEveryVisit
+                )
+                GroupDivider()
+                actionRow(
+                    "Preview onboarding",
+                    detail: "Opens the setup flow in its own window, right now.",
+                    button: "Preview"
+                ) { openWindow(id: "onboarding-debug") }
+            }
+
+            SettingsGroup(title: "Library") {
+                ToggleRow(
+                    label: "Preview an empty library",
+                    subtitle: "Home, Collection and Playlists appear as a new user sees them. Your library isn't touched.",
+                    isOn: $debugState.previewsEmptyLibrary
+                )
+            }
+
+            SettingsGroup(title: "Performance") {
+                ToggleRow(
+                    label: "Performance overlay",
+                    subtitle: "Frame rate, frame time and memory in the corner of the window.",
+                    isOn: $debugState.showsPerformanceOverlay
+                )
+            }
+
+            SettingsGroup(title: "Downloads") {
+                ToggleRow(
+                    label: "Lucida inspector",
+                    subtitle: "Opens the Lucida bridge inspector: live phase, web view and logs.",
+                    isOn: $debugState.lucidaInspector
+                )
+                GroupDivider()
+                ToggleRow(
+                    label: "Show VPN advisory",
+                    subtitle: "Shows the VPN reminder when opening Download.",
+                    isOn: $settings.showVpnNotice
+                )
+            }
+
+            SettingsGroup(title: "Caches") {
+                actionRow(
+                    "Artwork",
+                    detail: cleared.contains("artwork")
+                        ? "Cleared. Thumbnails rebuild from your files as you browse."
+                        : "Downsampled covers and blurred backdrops" + (artworkBytes.map { " · " + Self.size($0) } ?? ""),
+                    button: cleared.contains("artwork") ? "Cleared" : "Clear"
+                ) {
+                    ArtworkImageCache.shared.removeAll()
+                    BlurredArtworkCache.shared.removeAll()
+                    cleared.insert("artwork")
                 }
-                .padding(.horizontal, Theme.Spacing.lg)
-                .padding(.vertical, Theme.Spacing.md)
+                GroupDivider()
+                actionRow(
+                    "Lyrics",
+                    detail: cleared.contains("lyrics")
+                        ? "Cleared. Lyrics are fetched again as songs play. Lyrics saved into your files stay."
+                        : "Fetched lyrics for \(lyricsCache.entries.count) songs · \(Self.size(lyricsCache.fileSize))",
+                    button: cleared.contains("lyrics") ? "Cleared" : "Clear"
+                ) {
+                    lyricsCache.removeAll()
+                    cleared.insert("lyrics")
+                }
+                GroupDivider()
+                actionRow(
+                    "Artist images",
+                    detail: cleared.contains("artists")
+                        ? "Cleared. Pictures and banners you set yourself stay."
+                        : "Fetched pictures for \(artistCache.entries.count) artists · \(Self.size(artistCache.fileSize))",
+                    button: cleared.contains("artists") ? "Cleared" : "Clear"
+                ) {
+                    artistCache.removeAll()
+                    cleared.insert("artists")
+                }
             }
         }
+        .task {
+            artworkBytes = await Task.detached(priority: .utility) {
+                ArtworkImageCache.shared.diskUsage()
+            }.value
+        }
+    }
+
+    private func actionRow(_ label: String, detail: String, button: String, action: @escaping () -> Void) -> some View {
+        HStack(alignment: .center, spacing: Theme.Spacing.lg) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(detail)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button(button, action: action)
+                .buttonStyle(SheetPillStyle())
+                .disabled(button == "Cleared")
+        }
+        .padding(.horizontal, Theme.Spacing.lg)
+        .padding(.vertical, Theme.Spacing.md)
+    }
+
+    private static func size(_ bytes: Int) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
     }
 }

@@ -1,146 +1,116 @@
 import SwiftUI
 import AppKit
 
-/// Shared chrome for the visualizer modes: the theme-adaptive palette, the
-/// tech-spec caption, the glowing progress bar and the film-grain overlay.
-///
-/// The Claude Design handoff is dark-only — it hardcodes `#ffffff` marks on a
-/// `#000000` canvas. FLACtastic has a light theme, so every one of those
-/// hardcoded values is re-expressed here as an adaptive pair. The design's
-/// *alpha ramps* are preserved verbatim; only the base hue flips.
+/// Shared chrome for the visualizer modes: the mark color, the track details
+/// block, the quality chip, the progress bar and the cover's palette.
 enum VisualizerPalette {
-
-    /// The colour every generated mark is drawn in — spectrum bars,
-    /// spectrogram stipple, wheel sparkles. White on dark, black on light.
-    static let mark = Color(nsColor: adaptive(dark: .white, light: .black))
+    /// The color every generated mark is drawn in — spectrum bars and rings.
+    /// White on dark, black on light.
+    static let mark = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .white : .black
+    })
 
     /// Faint guide geometry (the radial spectrum's two rings).
-    static var guideRing: Color { mark.opacity(0.10) }
-
-    /// Full-canvas dim behind the mode wheel. The design darkens with
-    /// `brightness(0.55)`; in light mode we lighten instead so the wheel's
-    /// dark text keeps its contrast.
-    static let scrim = Color(nsColor: adaptive(
-        dark:  NSColor(white: 0, alpha: 0.45),
-        light: NSColor(white: 1, alpha: 0.55)
-    ))
-
-    /// The wheel panel's leading wash — opaque at the edge, clear at 100%.
-    static var panelWash: [Color] {
-        let base = Color(nsColor: adaptive(dark: .black, light: .white))
-        return [base.opacity(0.92), base.opacity(0.78), base.opacity(0)]
-    }
-
-    /// Hairline down the panel's leading edge.
-    static var panelEdge: Color { mark.opacity(0.22) }
-
-    /// Unselected wheel rows.
-    static var wheelUnselected: Color { mark.opacity(0.42) }
-
-    /// The dip in the selected row's shimmer sweep.
-    static var shimmerDip: Color { mark.opacity(0.45) }
-
-    private static func adaptive(dark: NSColor, light: NSColor) -> NSColor {
-        NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
-        }
-    }
+    static var guideRing: Color { mark.opacity(0.12) }
 }
 
-// MARK: - Tech spec caption
+// MARK: - Track details
 
-/// `FLAC · 24-BIT / 96 kHz` — the uppercase fidelity caption the handoff puts
-/// under the track details in every details-bearing mode. Renders nothing when
-/// the track carries no format or rate metadata at all.
-struct TechSpecLabel: View {
+/// Title, artist and album, sized per mode. Long titles scroll rather than
+/// wrap or truncate.
+struct VisualizerTrackDetails: View {
     let track: Track?
-    /// Lyrics draws its chrome white-on-photo rather than in theme colours.
-    var style: AnyShapeStyle = AnyShapeStyle(Theme.textTertiary)
+    var titleSize: CGFloat
+    var artistSize: CGFloat
+    var albumSize: CGFloat
+    var alignment: HorizontalAlignment = .leading
+    /// Lyrics sets its chrome in white over its own dark field.
+    var onDark = false
 
     var body: some View {
-        if let spec = FormatUtils.techSpec(for: track) {
-            Text(spec)
-                .font(.system(size: 10, weight: .semibold))
-                .kerning(1.5)
-                .foregroundStyle(style)
-                .lineLimit(1)
-        }
-    }
-}
-
-// MARK: - Progress
-
-/// The handoff's 3pt progress bar: a divider-toned track with an accent fill
-/// that carries a soft bloom (`0 0 10px rgba(255,255,255,0.45)`).
-struct GlowProgressBar: View {
-    let fraction: Double
-    var track: Color = Theme.divider
-    var fill: Color = Theme.accent
-    var glow: Bool = true
-
-    var body: some View {
-        GeometryReader { g in
-            ZStack(alignment: .leading) {
-                Capsule().fill(track).frame(height: 3)
-                Capsule()
-                    .fill(fill)
-                    .frame(width: g.size.width * CGFloat(max(0, min(1, fraction))),
-                           height: 3)
-                    .shadow(color: glow ? fill.opacity(0.45) : .clear, radius: 5)
+        let artist = ArtistResolver.displayString(track?.artist ?? track?.albumArtist) ?? "Unknown Artist"
+        VStack(alignment: alignment, spacing: 0) {
+            MarqueeText(
+                text: track?.title ?? "—",
+                font: .system(size: titleSize),
+                weight: .heavy,
+                foregroundStyle: AnyShapeStyle(onDark ? Color.white : Theme.textPrimary),
+                alignment: alignment
+            )
+            MarqueeText(
+                text: artist,
+                font: .system(size: artistSize, weight: .semibold),
+                foregroundStyle: AnyShapeStyle(onDark ? Color.white.opacity(0.85) : Theme.textSecondary),
+                alignment: alignment
+            )
+            .padding(.top, titleSize * 0.2)
+            if let line = albumLine {
+                MarqueeText(
+                    text: line,
+                    font: .system(size: albumSize),
+                    foregroundStyle: AnyShapeStyle(onDark ? Color.white.opacity(0.6) : Theme.textTertiary),
+                    alignment: alignment
+                )
+                .padding(.top, 4)
             }
-            .frame(maxHeight: .infinity, alignment: .center)
         }
-        .frame(height: 3)
+    }
+
+    private var albumLine: String? {
+        let album = track?.album?.trimmingCharacters(in: .whitespaces)
+        let parts = [album.flatMap { $0.isEmpty ? nil : $0 }, track?.year.map(String.init)].compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 }
 
-// MARK: - Film grain
+// MARK: - Quality chip
 
-/// Tiling monochrome noise, generated once and reused. Matches the handoff's
-/// inline `feTurbulence` overlay on the Lyrics backdrop.
-///
-/// Deliberately composited normally rather than with `.blendMode(.overlay)`:
-/// a blend mode forces the whole window into an offscreen pass on every
-/// frame, and at this opacity the two are near-indistinguishable over a dark
-/// ground. The noise is centred on mid-grey so a plain composite darkens and
-/// lightens in roughly equal measure instead of just washing the image out.
-struct VisualizerFilmGrain: View {
-    var opacity: Double = 0.10
+/// `FLAC · 24-BIT / 96 kHz` in the track's quality-tier color. Renders
+/// nothing when the track carries no format or rate metadata at all.
+struct VisualizerSpecChip: View {
+    let track: Track?
+    /// The short `24/96` form, for the spectrogram's corner.
+    var compact = false
 
     var body: some View {
-        Image(nsImage: Self.tile)
-            .resizable(resizingMode: .tile)
-            .opacity(opacity)
-            .allowsHitTesting(false)
+        if let track, let text = compact
+            ? FormatUtils.formatSampleRate(track.sampleRate, bitDepth: track.bitDepth)
+            : FormatUtils.techSpec(for: track) {
+            let color = AudioQuality.of(track).color
+            Text(text)
+                .font(.system(size: 11.5, weight: .bold))
+                .foregroundStyle(color)
+                .lineLimit(1)
+                .fixedSize()
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 6))
+        }
+    }
+}
+
+// MARK: - Cover palette
+
+/// Up to three colors from the playing cover, for the modes that take their
+/// color from the music (Lyrics' field, the spectrogram, the radial glow).
+/// Sampled off the main thread and kept for the session.
+@MainActor
+enum CoverPalette {
+    private static let cache = NSCache<NSString, Box>()
+    private final class Box { let palette: HomePalette?; init(_ p: HomePalette?) { palette = p } }
+
+    static func cached(for data: Data?) -> HomePalette?? {
+        guard let data, !data.isEmpty else { return .some(nil) }
+        return cache.object(forKey: ArtworkImageCache.contentID(for: data) as NSString).map { $0.palette }
     }
 
-    /// 128×128 of white noise. Rendered on first access and cached for the
-    /// lifetime of the process — regenerating per frame would be absurd.
-    private static let tile: NSImage = makeTile(side: 128)
-
-    private static func makeTile(side: Int) -> NSImage {
-        let bytesPerRow = side * 4
-        var pixels = [UInt8](repeating: 0, count: bytesPerRow * side)
-        var generator = SystemRandomNumberGenerator()
-        for i in stride(from: 0, to: pixels.count, by: 4) {
-            // Narrow band around mid-grey — full-range noise reads as static
-            // rather than grain once it is composited normally.
-            let v = UInt8.random(in: 96...160, using: &generator)
-            pixels[i] = v; pixels[i + 1] = v; pixels[i + 2] = v
-            pixels[i + 3] = 255
-        }
-        let image = NSImage(size: NSSize(width: side, height: side))
-        pixels.withUnsafeMutableBytes { raw in
-            guard let ctx = CGContext(
-                data: raw.baseAddress,
-                width: side, height: side,
-                bitsPerComponent: 8, bytesPerRow: bytesPerRow,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            ), let cg = ctx.makeImage() else { return }
-            image.addRepresentation(NSBitmapImageRep(cgImage: cg))
-        }
-        return image
+    static func load(for data: Data?) async -> HomePalette? {
+        if let hit = cached(for: data) { return hit }
+        guard let data else { return nil }
+        let key = ArtworkImageCache.contentID(for: data) as NSString
+        let palette = await Task.detached(priority: .utility) { HomePalette.extract(from: data) }.value
+        cache.setObject(Box(palette), forKey: key)
+        return palette
     }
 }
 
@@ -150,40 +120,40 @@ struct VisualizerFilmGrain: View {
 /// and `@Observable` invalidates every view that *reads* it. When a mode's
 /// body reads it directly — even just to size a progress bar — the entire mode
 /// re-evaluates and AppKit re-lays-out the hosting view 20 times a second,
-/// artwork, marquees and all. That baseline cost is what makes a mode
-/// cross-fade stutter, because the transition is competing with it.
+/// artwork, marquees and all.
 ///
 /// These two views exist to own that dependency. They read the clock
 /// themselves, so the surrounding mode body never touches `currentTime` and
 /// only this small subtree is invalidated per tick.
 
-/// The 3pt progress bar, optionally flanked by monospaced elapsed / total.
+/// A 4pt progress bar between elapsed and remaining time.
 struct PlaybackProgressBar: View {
     @Environment(PlayerState.self) private var player
 
-    var showsLabels: Bool = false
-    var track: Color = Theme.divider
-    var fill: Color = Theme.accent
-    var glow: Bool = true
+    var track: Color = Theme.textPrimary.opacity(0.16)
+    var fill: Color = Theme.textPrimary
     var labelStyle: AnyShapeStyle = AnyShapeStyle(Theme.textTertiary)
 
     var body: some View {
         let total = player.duration ?? 0
-        let fraction = total > 0 ? player.currentTime / total : 0
-        HStack(spacing: Theme.Spacing.md) {
-            if showsLabels {
-                label(FormatUtils.formatDuration(player.currentTime))
+        let elapsed = min(player.currentTime, total > 0 ? total : player.currentTime)
+        let fraction = total > 0 ? elapsed / total : 0
+        HStack(spacing: 12) {
+            label(FormatUtils.formatDuration(elapsed))
+            GeometryReader { g in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(track)
+                    Capsule().fill(fill).frame(width: g.size.width * CGFloat(max(0, min(1, fraction))))
+                }
             }
-            GlowProgressBar(fraction: fraction, track: track, fill: fill, glow: glow)
-            if showsLabels {
-                label(FormatUtils.formatDuration(total > 0 ? total : nil))
-            }
+            .frame(height: 4)
+            label("-" + FormatUtils.formatDuration(max(0, total - elapsed)))
         }
     }
 
     private func label(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 13, design: .monospaced))
+            .font(.system(size: 12))
             .monospacedDigit()
             .foregroundStyle(labelStyle)
     }
@@ -194,18 +164,20 @@ struct PlaybackTimeReadout: View {
     @Environment(PlayerState.self) private var player
 
     var showsTotal: Bool = true
-    var size: CGFloat = 13
-    var style: AnyShapeStyle = AnyShapeStyle(Theme.textTertiary)
+    var size: CGFloat = 15
 
     var body: some View {
         let total = player.duration ?? 0
-        let elapsed = FormatUtils.formatDuration(player.currentTime)
-        Text(showsTotal
-             ? "\(elapsed) / \(FormatUtils.formatDuration(total > 0 ? total : nil))"
-             : elapsed)
-            .font(.system(size: size, design: .monospaced))
-            .monospacedDigit()
-            .foregroundStyle(style)
-            .fixedSize()
+        HStack(spacing: 4) {
+            Text(FormatUtils.formatDuration(player.currentTime))
+                .foregroundStyle(Theme.textSecondary)
+            if showsTotal {
+                Text("/ " + FormatUtils.formatDuration(total > 0 ? total : nil))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .font(.system(size: size))
+        .monospacedDigit()
+        .fixedSize()
     }
 }

@@ -402,6 +402,14 @@ final class PlayerEngine {
         }
     }
 
+    /// How far `currentTime` runs ahead of what's audible. `currentTime`
+    /// tracks the player node's render position; the listener hears it one
+    /// output latency later. Zero for remote playback, whose position is
+    /// reported by the device itself.
+    var outputLatency: TimeInterval {
+        remote == nil ? graph.outputLatency : 0
+    }
+
     func seek(to seconds: TimeInterval) {
         guard !_queue.isEmpty else { return }
         if let remote {
@@ -554,6 +562,10 @@ final class PlayerEngine {
         let myGeneration = generation.withLock { $0 }
         let generation = self.generation
         let scheduleEnd = self.liveScheduleEnd  // captured by reference (struct wraps OS pointer)
+        // A pass started for upcoming tracks (append/insert while the decoder is
+        // idle) begins at a track that isn't playing yet — its length must not
+        // replace the playing track's duration, or the seek bar jumps.
+        let startsAtCurrentTrack = index == _currentIndex
 
         isDecoding = true
 
@@ -592,7 +604,7 @@ final class PlayerEngine {
 
                     // Update duration for the current track.
                     let fileDuration = Double(file.length) / sourceFormat.sampleRate
-                    if isFirstTrack {
+                    if isFirstTrack && startsAtCurrentTrack {
                         await MainActor.run { [weak self] in
                             self?.duration = fileDuration
                         }

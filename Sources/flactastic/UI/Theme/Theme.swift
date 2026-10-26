@@ -102,7 +102,6 @@ enum Theme {
         static let bodyMedium = SwiftUI.Font.system(.body, weight: .medium)
         static let caption = SwiftUI.Font.system(.caption)
         static let captionMono = SwiftUI.Font.system(.caption)
-        static let title = SwiftUI.Font.system(.title2, weight: .semibold)
         static let headline = SwiftUI.Font.system(.headline)
     }
 }

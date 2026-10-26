@@ -22,24 +22,22 @@ final class SpectrumAnalyzer {
 
     nonisolated private static let fftSize: Int = 1024
     nonisolated private static let log2N: vDSP_Length = vDSP_Length(log2(Double(fftSize)))
-    nonisolated private static let historyDepth: Int = 256
+    /// Silent frames (at `displayHz`) before the display tick goes quiet:
+    /// long enough for the spectrogram to scroll its last sound off screen.
+    nonisolated private static let idleFrameLimit: Int = 512
     nonisolated private static let displayHz: Double = 60
 
     /// Smoothed, log-binned magnitudes in [0, 1]. Always `binCount` long.
     private(set) var magnitudes: [Float] = Array(repeating: 0, count: SpectrumAnalyzer.binCount)
 
-    /// Newest-last rolling history of magnitude frames.
-    private(set) var spectrogramHistory: [[Float]] = []
-
     private weak var engine: PlayerEngine?
     private var isAttached = false
     private var displayTimer: Timer?
-    private var spectrogramAccumulator: Int = 0
 
-    /// Consecutive near-silent frames appended to the spectrogram. Once the
-    /// bars have decayed AND the whole visible history has scrolled to
-    /// silence, the display tick stops writing observable state — so a paused
-    /// visualizer costs no Canvas redraws. Any non-silent buffer resumes it.
+    /// Consecutive near-silent display frames. Once the bars have decayed and
+    /// the spectrogram has had time to scroll to silence, the display tick
+    /// stops writing observable state — so a paused visualizer costs no
+    /// redraws. Any non-silent buffer resumes it.
     private var idleFrameStreak: Int = 0
     nonisolated private static let idleEpsilon: Float = 0.001
 
@@ -81,9 +79,7 @@ final class SpectrumAnalyzer {
         displayTimer = nil
         target.withLock { $0 = Array(repeating: 0, count: Self.binCount) }
         magnitudes = Array(repeating: 0, count: Self.binCount)
-        spectrogramHistory.removeAll(keepingCapacity: false)
         idleFrameStreak = 0
-        spectrogramAccumulator = 0
     }
 
     private func startDisplayTimer() {
@@ -106,7 +102,7 @@ final class SpectrumAnalyzer {
         // are both blank): skip all observable writes so SwiftUI stops
         // redrawing. The checks are a few hundred float compares — trivial
         // next to a 60 fps Canvas redraw.
-        if idleFrameStreak >= Self.historyDepth,
+        if idleFrameStreak >= Self.idleFrameLimit,
            latest.allSatisfy({ $0 < Self.idleEpsilon }),
            magnitudes.allSatisfy({ $0 < Self.idleEpsilon }) {
             return
@@ -130,19 +126,10 @@ final class SpectrumAnalyzer {
         }
         magnitudes = smoothed
 
-        // Spectrogram scrolls at 30 Hz to keep the history readable.
-        spectrogramAccumulator += 1
-        if spectrogramAccumulator >= 2 {
-            spectrogramAccumulator = 0
-            spectrogramHistory.append(smoothed)
-            if smoothed.allSatisfy({ $0 < Self.idleEpsilon }) {
-                idleFrameStreak += 1
-            } else {
-                idleFrameStreak = 0
-            }
-            if spectrogramHistory.count > Self.historyDepth {
-                spectrogramHistory.removeFirst(spectrogramHistory.count - Self.historyDepth)
-            }
+        if smoothed.allSatisfy({ $0 < Self.idleEpsilon }) {
+            idleFrameStreak += 1
+        } else {
+            idleFrameStreak = 0
         }
     }
 

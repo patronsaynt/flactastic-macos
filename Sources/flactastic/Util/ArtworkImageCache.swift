@@ -53,6 +53,26 @@ final class ArtworkImageCache: @unchecked Sendable {
         try? fileManager.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
     }
 
+    /// Drop every cached thumbnail, in memory and on disk. Thumbnails are
+    /// rebuilt from the files' own artwork as they're next shown.
+    func removeAll() {
+        cache.removeAllObjects()
+        let directory = diskDirectory
+        diskWriteQueue.async {
+            let fm = FileManager.default
+            try? fm.removeItem(at: directory)
+            try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+    }
+
+    /// Bytes of thumbnails on disk. Walks the directory, so call it off the
+    /// main thread.
+    func diskUsage() -> Int {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: diskDirectory, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        return files.reduce(0) { $0 + ((try? $1.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) }
+    }
+
     /// Returns a cached or freshly-decoded thumbnail for `data`, downsampled
     /// to fit `pointSize` at `scale`. `id` must be stable and unique per
     /// artwork source (e.g. `"album:<Album.id>"`, `"track:<Track.id>"`) —

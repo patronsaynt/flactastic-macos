@@ -18,11 +18,11 @@ struct VisualizerView: View {
                 .id(settings.visualizerMode)
                 .transition(.opacity)
                 // Every mode is purely decorative — nothing in the canvas is
-                // clickable. It has to opt out of hit testing because
-                // `.clipped()` bounds drawing but NOT interaction: the Lyrics
-                // backdrop is scaled 1.25× and blurred 60pt, so its hit area
-                // reaches well past the canvas. If a mode ever grows a control, it should
-                // re-enable hit testing on just that control.
+                // clickable. It opts out of hit testing because `.clipped()`
+                // bounds drawing but NOT interaction: the Record mode's disc
+                // reaches well past the canvas. If a mode ever grows a
+                // control, it should re-enable hit testing on just that
+                // control.
                 .allowsHitTesting(false)
 
             // Hidden affordance: pressing Q toggles the queue panel while
@@ -33,7 +33,7 @@ struct VisualizerView: View {
                 .frame(width: 0, height: 0)
                 .accessibilityHidden(true)
 
-            VisualizerModeWheel(mode: $settings.visualizerMode)
+            VisualizerModeDial(mode: $settings.visualizerMode)
         }
         .clipped()
         .animation(.easeInOut(duration: 0.3), value: settings.visualizerMode)
@@ -51,10 +51,10 @@ struct VisualizerView: View {
     @ViewBuilder
     private func content(for mode: VisualizerMode) -> some View {
         switch mode {
-        case .albumArtLarge, .albumArtLargeDetails,
-             .albumArtSmallDetails,
-             .albumArtWheel:
-            AlbumArtVisualizerView(mode: mode)
+        case .albumArtWheel:
+            CoverWheelVisualizerView()
+        case .record:
+            RecordVisualizerView()
         case .lyrics:
             LyricsVisualizerView()
         case .spectrumRadial, .spectrumHorizontal, .spectrogram:

@@ -1,10 +1,19 @@
 import SwiftUI
 import AppKit
 
+/// The three spectrum modes. Only the spectrum views themselves read the
+/// analyzer's 60 Hz `magnitudes`, inside their own bodies, so each frame
+/// redraws the bars and nothing else: the artwork, titles and layout around
+/// them are left alone.
 struct SpectrumVisualizerView: View {
     @Environment(PlayerState.self) private var player
+    @Environment(\.topBarInset) private var topBarInset
     let mode: VisualizerMode
     let analyzer: SpectrumAnalyzer
+
+    /// The playing cover's colors: the radial ring's glow and the
+    /// spectrogram's low-to-high gradient. nil for a gray or missing cover.
+    @State private var palette: HomePalette?
 
     var body: some View {
         Group {
@@ -16,142 +25,119 @@ struct SpectrumVisualizerView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: player.currentTrack?.id) {
+            let sampled = await CoverPalette.load(for: player.currentTrack?.artwork)
+            guard !Task.isCancelled else { return }
+            palette = sampled
+        }
     }
 
-    // MARK: - Radial: details on the left, radial spectrum on the right.
+    // MARK: - Radial: the ring above, the track centered below it.
 
+    /// The ring and the track below it travel as one group, centered in the
+    /// space between the top bar and the progress bar along the bottom, so
+    /// the composition sits in the middle of the page rather than hanging
+    /// from the top bar.
     private var radialLayout: some View {
         GeometryReader { geo in
-            HStack(spacing: 0) {
-                radialDetails(maxWidth: geo.size.width * 0.45)
-                    .frame(width: geo.size.width * 0.5)
+            let progressBand: CGFloat = 96
+            let room = geo.size.height - topBarInset - progressBand
+            let ring = min(400, room * 0.56, geo.size.width * 0.6)
+            ZStack(alignment: .bottom) {
+                VStack(spacing: 28) {
+                    RadialSpectrum(analyzer: analyzer, glow: palette?.series(1).first)
+                        .frame(width: ring, height: ring)
 
-                RadialSpectrum(magnitudes: analyzer.magnitudes)
-                    .padding(Theme.Spacing.xl)
-                    .frame(width: geo.size.width * 0.5,
-                           height: geo.size.height)
+                    HStack(alignment: .center, spacing: 26) {
+                        ArtworkView(data: player.currentTrack?.artwork, size: 112,
+                                    id: player.currentTrack.map { "track:\($0.id)" })
+                        VStack(alignment: .leading, spacing: 12) {
+                            VisualizerTrackDetails(track: player.currentTrack,
+                                                   titleSize: 36, artistSize: 17, albumSize: 14)
+                            VisualizerSpecChip(track: player.currentTrack)
+                        }
+                        .frame(width: min(420, geo.size.width * 0.4), alignment: .leading)
+                    }
+                }
+                .frame(width: geo.size.width, height: room)
+                .frame(maxHeight: .infinity, alignment: .bottom)
+                .padding(.bottom, progressBand)
+
+                PlaybackProgressBar()
+                    .frame(width: min(520, geo.size.width * 0.6))
+                    .padding(.bottom, 44)
             }
             .frame(width: geo.size.width, height: geo.size.height)
         }
     }
 
-    private func radialDetails(maxWidth: CGFloat) -> some View {
-        let track = player.currentTrack
-        let artist = ArtistResolver.displayString(track?.artist) ?? "Unknown Artist"
-        let album = track?.album?.trimmingCharacters(in: .whitespaces)
-        return HStack(alignment: .center, spacing: Theme.Spacing.xl) {
-            ArtworkView(data: track?.artwork, size: 140)
-
-            VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                MarqueeText(
-                    text: track?.title ?? "—",
-                    font: .system(size: 30),
-                    weight: .bold,
-                    foregroundStyle: AnyShapeStyle(Theme.textPrimary)
-                )
-                MarqueeText(
-                    text: artist,
-                    font: .system(size: 17, weight: .semibold),
-                    foregroundStyle: AnyShapeStyle(Theme.textSecondary)
-                )
-                if let album, !album.isEmpty {
-                    MarqueeText(
-                        text: album,
-                        font: .system(size: 13),
-                        foregroundStyle: AnyShapeStyle(Theme.textTertiary)
-                    )
-                }
-                TechSpecLabel(track: track)
-                    .padding(.top, Theme.Spacing.sm)
-            }
-        }
-        .frame(maxWidth: maxWidth, alignment: .leading)
-        .padding(.horizontal, Theme.Spacing.xxl)
-    }
-
     // MARK: - Horizontal: spectrum above, details below.
 
     private var horizontalLayout: some View {
-        VStack(spacing: Theme.Spacing.xl) {
-            HorizontalSpectrum(magnitudes: analyzer.magnitudes)
-                .frame(height: 200)
+        VStack(spacing: 50) {
+            HorizontalSpectrum(analyzer: analyzer)
+                .frame(height: 300)
 
-            horizontalDetails
-        }
-        .frame(maxWidth: 720)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-    }
-
-    private var horizontalDetails: some View {
-        let track = player.currentTrack
-        let artist = ArtistResolver.displayString(track?.artist) ?? "Unknown Artist"
-        let album = track?.album?.trimmingCharacters(in: .whitespaces)
-        return HStack(alignment: .center, spacing: Theme.Spacing.lg) {
-            ArtworkView(data: track?.artwork, size: 96)
-
-            VStack(alignment: .leading, spacing: 2) {
-                MarqueeText(
-                    text: track?.title ?? "—",
-                    font: .system(size: 22),
-                    weight: .semibold,
-                    foregroundStyle: AnyShapeStyle(Theme.textPrimary)
-                )
-                MarqueeText(
-                    text: artist,
-                    font: .system(size: 13, weight: .medium),
-                    foregroundStyle: AnyShapeStyle(Theme.textSecondary)
-                )
-                if let album, !album.isEmpty {
-                    MarqueeText(
-                        text: album,
-                        font: .system(size: 11),
-                        foregroundStyle: AnyShapeStyle(Theme.textTertiary)
-                    )
+            HStack(alignment: .center, spacing: 22) {
+                ArtworkView(data: player.currentTrack?.artwork, size: 108,
+                            id: player.currentTrack.map { "track:\($0.id)" })
+                VStack(alignment: .leading, spacing: 12) {
+                    VisualizerTrackDetails(track: player.currentTrack,
+                                           titleSize: 32, artistSize: 16, albumSize: 13)
+                    VisualizerSpecChip(track: player.currentTrack)
                 }
-                TechSpecLabel(track: track)
-                    .padding(.top, Theme.Spacing.sm)
+                Spacer(minLength: 0)
+                PlaybackTimeReadout()
             }
-
-            Spacer(minLength: 0)
-
-            PlaybackTimeReadout()
         }
+        .frame(maxWidth: 880)
+        .padding(.horizontal, Theme.Spacing.xxl)
+        .padding(.top, topBarInset)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     // MARK: - Spectrogram: full-canvas stipple with corner chrome.
 
     private var spectrogramLayout: some View {
         let track = player.currentTrack
-        let artist = ArtistResolver.displayString(track?.artist) ?? "Unknown Artist"
         return ZStack {
-            SpectrogramStipple(magnitudes: analyzer.magnitudes)
+            // Runs the full height of the window, under the top bar, and
+            // fades out toward the top edge.
+            SpectrogramStipple(analyzer: analyzer, palette: palette)
+                .mask(
+                    LinearGradient(
+                        stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.16)],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                )
 
             LinearGradient(
-                colors: [Theme.background.opacity(0),
-                         Theme.background.opacity(0.72),
-                         Theme.background.opacity(0.9)],
+                colors: [Theme.background.opacity(0), Theme.background.opacity(0.9)],
                 startPoint: .top, endPoint: .bottom
             )
-            .frame(height: 120)
+            .frame(height: 180)
             .frame(maxHeight: .infinity, alignment: .bottom)
             .allowsHitTesting(false)
 
-            HStack(spacing: 14) {
-                Text("\(track?.title ?? "—") — \(artist)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .kerning(1.5)
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
-                Rectangle()
-                    .fill(Theme.divider)
-                    .frame(width: 28, height: 1)
-                PlaybackTimeReadout(showsTotal: false, size: 11)
+            HStack(alignment: .center, spacing: 18) {
+                ArtworkView(data: track?.artwork, size: 72, id: track.map { "track:\($0.id)" })
+                VisualizerTrackDetails(track: track, titleSize: 26, artistSize: 15, albumSize: 12)
+                    .frame(maxWidth: 520, alignment: .leading)
+                Spacer(minLength: 24)
+                if let palette {
+                    HStack(spacing: 4) {
+                        ForEach(Array(palette.series(3).enumerated()), id: \.offset) { _, color in
+                            Circle().fill(color).frame(width: 10, height: 10)
+                        }
+                    }
+                    .help("Colors from the album cover")
+                }
+                VisualizerSpecChip(track: track, compact: true)
+                PlaybackTimeReadout(showsTotal: false)
             }
-            .padding(.leading, Theme.Spacing.xxl)
-            .padding(.bottom, 28)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-            .allowsHitTesting(false)
-
+            .padding(.horizontal, 48)
+            .padding(.bottom, 40)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         }
     }
 }
@@ -159,20 +145,32 @@ struct SpectrumVisualizerView: View {
 // MARK: - Radial
 
 private struct RadialSpectrum: View {
-    let magnitudes: [Float]
+    let analyzer: SpectrumAnalyzer
+    /// The cover's main color, glowing inside the ring with the bass.
+    var glow: Color?
 
     var body: some View {
+        let magnitudes = analyzer.magnitudes
         GeometryReader { geo in
             let minSide = min(geo.size.width, geo.size.height)
             let center = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
             // Keep total radius (inner + maxBar) ≤ minSide / 2 so the bars
             // never spill past the visualizer canvas at any aspect ratio.
-            let inner = minSide * 0.24
-            let maxBar = minSide * 0.13
+            let inner = minSide * 0.29
+            let maxBar = minSide * 0.18
 
             Canvas { ctx, _ in
                 let count = magnitudes.count
                 guard count > 0 else { return }
+
+                if let glow {
+                    let bass = Double(magnitudes.prefix(3).max() ?? 0)
+                    let disk = CGRect(x: center.x - inner, y: center.y - inner, width: inner * 2, height: inner * 2)
+                    ctx.fill(Path(ellipseIn: disk), with: .radialGradient(
+                        Gradient(colors: [glow.opacity(0.16 + bass * 0.3), glow.opacity(0)]),
+                        center: center, startRadius: 0, endRadius: inner
+                    ))
+                }
 
                 for radius in [inner - 10, inner + maxBar + 14] {
                     ctx.stroke(
@@ -200,7 +198,7 @@ private struct RadialSpectrum: View {
                     ctx.stroke(
                         path,
                         with: .color(VisualizerPalette.mark.opacity(0.35 + Double(mag) * 0.6)),
-                        style: StrokeStyle(lineWidth: 2, lineCap: .round)
+                        style: StrokeStyle(lineWidth: 3, lineCap: .round)
                     )
                 }
             }
@@ -211,7 +209,7 @@ private struct RadialSpectrum: View {
 // MARK: - Horizontal
 
 private struct HorizontalSpectrum: View {
-    let magnitudes: [Float]
+    let analyzer: SpectrumAnalyzer
 
     /// Height reserved below the baseline for the reflection stubs. The
     /// prototype draws these starting at the canvas' own bottom edge, where
@@ -220,6 +218,7 @@ private struct HorizontalSpectrum: View {
     private static let reflectionHeight: CGFloat = 28
 
     var body: some View {
+        let magnitudes = analyzer.magnitudes
         GeometryReader { geo in
             let barCount = max(magnitudes.count, 1)
             let barSpacing: CGFloat = 4
@@ -271,12 +270,14 @@ private struct HorizontalSpectrum: View {
 /// window — which is exactly the sort of steady cost that reads as stutter.
 /// The ring buffer produces the identical image for none of it.
 private struct SpectrogramStipple: NSViewRepresentable {
-    let magnitudes: [Float]
+    let analyzer: SpectrumAnalyzer
+    let palette: HomePalette?
 
     func makeNSView(context: Context) -> StippleView { StippleView() }
 
     func updateNSView(_ view: StippleView, context: Context) {
-        view.append(magnitudes)
+        view.palette = palette
+        view.append(analyzer.magnitudes)
     }
 
     final class StippleView: NSView {
@@ -293,6 +294,34 @@ private struct SpectrogramStipple: NSViewRepresentable {
         /// didn't cause — the chrome overlaid on this view redraws on every
         /// playback-time tick, which would otherwise double the scroll rate.
         private var lastMagnitudes: [Float] = []
+
+        /// The cover's colors, low frequencies to high. Columns already
+        /// drawn keep the colors they were drawn in.
+        var palette: HomePalette? {
+            didSet { if palette != oldValue { rampIsDark = nil } }
+        }
+        /// Per-row RGB, resolved for the current appearance.
+        private var ramp: [(r: CGFloat, g: CGFloat, b: CGFloat)] = []
+        private var rampIsDark: Bool?
+
+        /// Blend the palette's three colors across `rows` bands, bottom to
+        /// top; the mark color when there's no palette.
+        private func makeRamp(rows: Int, isDark: Bool) {
+            let stops: [NSColor] = palette?.nsSeries(3, dark: isDark) ?? [isDark ? .white : .black]
+            let rgb = stops.map { color -> (CGFloat, CGFloat, CGFloat) in
+                let c = color.usingColorSpace(.deviceRGB) ?? color
+                return (c.redComponent, c.greenComponent, c.blueComponent)
+            }
+            ramp = (0..<rows).map { i in
+                guard rgb.count > 1 else { return (rgb[0].0, rgb[0].1, rgb[0].2) }
+                let f = CGFloat(i) / CGFloat(max(rows - 1, 1)) * CGFloat(rgb.count - 1)
+                let lo = min(Int(f), rgb.count - 2)
+                let t = f - CGFloat(lo)
+                let a = rgb[lo], b = rgb[lo + 1]
+                return (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t, a.2 + (b.2 - a.2) * t)
+            }
+            rampIsDark = isDark
+        }
 
         /// Stipple one fresh column at the write head, then advance it.
         func append(_ mags: [Float]) {
@@ -322,17 +351,18 @@ private struct SpectrogramStipple: NSViewRepresentable {
 
             let rows = mags.count
             let rowHeight = h / CGFloat(rows)
-            let base: NSColor = isDark ? .white : .black
+            if rampIsDark != isDark || ramp.count != rows { makeRamp(rows: rows, isDark: isDark) }
 
             for i in 0..<rows {
                 let mag = CGFloat(mags[i])
                 guard mag >= 0.05 else { continue }
-                // Bin 0 is the lowest frequency and sits at the bottom. The
-                // 0.94 squeeze plus a 14pt inset keeps the extremes clear of
-                // the chrome overlaid on top.
-                let bandTop = CGFloat(i + 1) * rowHeight * 0.94 + 14
-                let radius = max(0.6, mag * 1.6)
-                ctx.setFillColor(base.withAlphaComponent(0.12 + mag * 0.6).cgColor)
+                // Bin 0 is the lowest frequency and sits at the bottom; the
+                // top bins run up to the window's top edge, where the view's
+                // mask fades them out.
+                let bandTop = CGFloat(i + 1) * rowHeight * 0.97 + 14
+                let radius = max(0.6, mag * 1.8)
+                let c = ramp[i]
+                ctx.setFillColor(red: c.r, green: c.g, blue: c.b, alpha: 0.2 + mag * 0.7)
                 for _ in 0..<(1 + Int((mag * 4).rounded())) {
                     var dotX = head + CGFloat.random(in: 0..<Self.step)
                     if dotX >= w { dotX -= w }

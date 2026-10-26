@@ -106,12 +106,12 @@ private struct LogListView: View {
 
 // MARK: - Open/close on toggle
 
-/// Invisible bridge between the View → "Enable Debugging" toggle and the
+/// Invisible bridge between Settings → Debug → "Lucida inspector" and the
 /// `Window(id: "lucida-debug")` scene. Calling `openWindow` / `dismissWindow`
 /// has to happen from a SwiftUI view, so we park this zero-sized view in
-/// the main window and react to the `@AppStorage` flag.
+/// the main window and react to the switch.
 struct DebugWindowController: View {
-    @Binding var enabled: Bool
+    let enabled: Bool
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
 

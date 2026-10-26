@@ -533,49 +533,6 @@ struct ArtistDetailView: View {
     static func lightTint(for swatch: HomePalette.Swatch) -> Color {
         Color(nsColor: NSColor(hue: swatch.hue, saturation: 0.1, brightness: 0.955, alpha: 1))
     }
-
-    /// Cheaply samples the artwork at 8×8 and averages the pixels for a
-    /// banner gradient base. Returns nil for missing or invalid data.
-    static func dominantColor(from data: Data?) -> Color? {
-        guard let data, let nsImage = NSImage(data: data),
-              let tiff = nsImage.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
-
-        let target: Int = 8
-        let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: target, pixelsHigh: target,
-            bitsPerSample: 8, samplesPerPixel: 4,
-            hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bytesPerRow: 0, bitsPerPixel: 32
-        )
-        guard let rep else { return nil }
-
-        NSGraphicsContext.saveGraphicsState()
-        if let ctx = NSGraphicsContext(bitmapImageRep: rep) {
-            NSGraphicsContext.current = ctx
-            bitmap.draw(in: NSRect(x: 0, y: 0, width: target, height: target))
-        }
-        NSGraphicsContext.restoreGraphicsState()
-
-        var rTotal = 0, gTotal = 0, bTotal = 0, count = 0
-        for x in 0..<target {
-            for y in 0..<target {
-                guard let color = rep.colorAt(x: x, y: y) else { continue }
-                rTotal += Int(color.redComponent * 255)
-                gTotal += Int(color.greenComponent * 255)
-                bTotal += Int(color.blueComponent * 255)
-                count += 1
-            }
-        }
-        guard count > 0 else { return nil }
-        return Color(
-            red: Double(rTotal / count) / 255.0,
-            green: Double(gTotal / count) / 255.0,
-            blue: Double(bTotal / count) / 255.0
-        )
-    }
 }
 
 private extension View {

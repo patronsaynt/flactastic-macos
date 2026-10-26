@@ -31,9 +31,11 @@ struct Lyrics: Sendable, Equatable {
     /// Parse an LRC-format string. Supports multi-timestamp lines
     /// (e.g. `[00:01.00][00:05.00]Lyric`), `[mm:ss]` and `[mm:ss.xx]`,
     /// and skips metadata tags like `[ar:Artist]`, `[ti:Title]`,
-    /// `[al:Album]`, `[length:03:21]`, `[offset:+200]`.
+    /// `[al:Album]`, `[length:03:21]`. An `[offset:±ms]` tag is applied:
+    /// positive values make lyrics appear sooner, per the LRC convention.
     static func parseLRC(_ raw: String) -> Lyrics {
         var out: [LyricsLine] = []
+        var offset: TimeInterval = 0
         for rawLine in raw.split(whereSeparator: { $0 == "\n" || $0 == "\r" }) {
             let line = String(rawLine)
             var rest = line[...]
@@ -47,6 +49,8 @@ struct Lyrics: Sendable, Equatable {
                 let inside = rest[rest.index(after: open)..<close]
                 if let ts = parseTimestamp(String(inside)) {
                     timestamps.append(ts)
+                } else if let ms = parseOffsetTag(String(inside)) {
+                    offset = ms / 1000
                 }
                 // Also drops metadata tags ([ar:...], [ti:...], etc.) — they
                 // don't parse as timestamps so they're silently discarded.
@@ -58,6 +62,9 @@ struct Lyrics: Sendable, Equatable {
             for ts in timestamps {
                 out.append(LyricsLine(timestamp: ts, text: text))
             }
+        }
+        if offset != 0 {
+            out = out.map { LyricsLine(timestamp: $0.timestamp.map { max(0, $0 - offset) }, text: $0.text) }
         }
         out.sort { ($0.timestamp ?? 0) < ($1.timestamp ?? 0) }
         return Lyrics(lines: out, isSynced: !out.isEmpty)
@@ -94,17 +101,28 @@ struct Lyrics: Sendable, Equatable {
 
     // MARK: - Helpers
 
-    /// Parse `mm:ss[.xx]`. Returns nil for non-numeric content (which is how
-    /// metadata tags get filtered out).
+    /// Parse `mm:ss[.xx]`. Also accepts the `mm:ss:xx` and `mm:ss,xx`
+    /// variants some editors write. Returns nil for non-numeric content
+    /// (which is how metadata tags get filtered out).
     private static func parseTimestamp(_ s: String) -> TimeInterval? {
         let parts = s.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count == 2,
-              let m = Int(parts[0]) else { return nil }
-        let secField = parts[1]
-        // Accept "ss", "ss.xx", "ss.xxx".
-        if let sec = Double(secField) {
-            return TimeInterval(m) * 60 + sec
+        guard parts.count == 2 || parts.count == 3,
+              let m = Int(parts[0]), m >= 0 else { return nil }
+        // Accept "ss", "ss.xx", "ss.xxx", "ss,xx".
+        var secField = parts[1].replacingOccurrences(of: ",", with: ".")
+        if parts.count == 3 {
+            guard !secField.contains("."), parts[2].allSatisfy(\.isNumber), !parts[2].isEmpty else { return nil }
+            secField += "." + parts[2]
         }
-        return nil
+        guard let sec = Double(secField), sec >= 0 else { return nil }
+        return TimeInterval(m) * 60 + sec
+    }
+
+    /// `offset:+200` → 200 (milliseconds). Nil for any other tag.
+    private static func parseOffsetTag(_ s: String) -> TimeInterval? {
+        let parts = s.split(separator: ":", maxSplits: 1)
+        guard parts.count == 2,
+              parts[0].trimmingCharacters(in: .whitespaces).lowercased() == "offset" else { return nil }
+        return TimeInterval(parts[1].trimmingCharacters(in: .whitespaces))
     }
 }

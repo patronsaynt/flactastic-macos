@@ -62,6 +62,10 @@ final class BlurredArtworkCache: @unchecked Sendable {
         cache.object(forKey: id as NSString)
     }
 
+    func removeAll() {
+        cache.removeAllObjects()
+    }
+
     /// The defaults suit a backdrop blurred past any detail, where a tiny
     /// source is plenty; pass a larger `maxPixel` and gentler `radius` for
     /// an image that should still read as a picture.
