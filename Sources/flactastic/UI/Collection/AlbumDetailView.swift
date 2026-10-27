@@ -66,6 +66,10 @@ struct AlbumDetailView: View {
                         .padding(.horizontal, collectionGutter - 16)
                         .padding(.top, 8)
                         .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.8))
+                    releaseNotes(album)
+                        .padding(.horizontal, collectionGutter)
+                        .padding(.top, 28)
+                        .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.85))
                     moreByArtist(album)
                         .padding(.horizontal, collectionGutter)
                         .padding(.top, 56)
@@ -279,9 +283,16 @@ struct AlbumDetailView: View {
     // MARK: - Track list
 
     private func trackList(_ album: Album) -> some View {
+        // A multi-disc album gets a "Disc N" header before each disc's first
+        // track; numbers then run per disc, as tagged.
+        let isMultiDisc = !album.discs.isEmpty
         // Lazy so a 100-track box set doesn't build every row up front.
-        LazyVStack(spacing: 2) {
+        return LazyVStack(spacing: 2) {
             ForEach(Array(album.tracks.enumerated()), id: \.element.id) { index, track in
+                if isMultiDisc, index == 0 || album.tracks[index - 1].discNumber ?? 1 != track.discNumber ?? 1 {
+                    DiscHeader(number: track.discNumber ?? 1)
+                        .padding(.top, index == 0 ? 0 : 22)
+                }
                 AlbumTrackRow(
                     track: track,
                     number: track.trackNumber ?? index + 1,
@@ -297,6 +308,28 @@ struct AlbumDetailView: View {
                         remove: { removalRequest = LibraryRemovalRequest(title: track.title, tracks: [track]) }
                     )
                 }
+            }
+        }
+    }
+
+    // MARK: - Release notes
+
+    /// The release year and the label's ℗ line under the tracklist, as on
+    /// Spotify. Only shown once a label is set; the year alone is already in
+    /// the hero.
+    @ViewBuilder
+    private func releaseNotes(_ album: Album) -> some View {
+        if let label = album.label {
+            VStack(alignment: .leading, spacing: 4) {
+                if let year = album.year {
+                    Text(String(year))
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Text(["℗", album.year.map(String.init), label].compactMap { $0 }.joined(separator: " "))
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .textSelection(.enabled)
             }
         }
     }
@@ -395,6 +428,28 @@ struct AlbumDetailView: View {
         player.startFreshQueue(album.tracks, startAt: startIndex, source: album.name)
         player.engine.play()
         listening.recordAlbumPlay(album)
+    }
+}
+
+// MARK: - Disc header
+
+/// "Disc 2" with a disc glyph, sitting in the number column's place.
+private struct DiscHeader: View {
+    let number: Int
+
+    var body: some View {
+        HStack(spacing: 18) {
+            Image(systemName: "opticaldisc")
+                .font(.system(size: 14, weight: .medium))
+                .frame(width: 28)
+            Text("Disc \(number)")
+                .font(.system(size: 14, weight: .semibold))
+            Spacer()
+        }
+        .foregroundStyle(Theme.textSecondary)
+        .padding(.horizontal, 16)
+        .frame(height: 40)
+        .accessibilityAddTraits(.isHeader)
     }
 }
 

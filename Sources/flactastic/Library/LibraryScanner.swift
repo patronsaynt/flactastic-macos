@@ -122,6 +122,14 @@ actor LibraryScanner {
             updated.isCompilation = taglib_helper_get_compilation(file) != 0
             updated.isMixCompilation = taglib_helper_get_mix_compilation(file) != 0
 
+            updated.label = Self.property(file, "LABEL")
+            let disc = DiscTag.parse(
+                number: Self.property(file, "DISCNUMBER"),
+                total: Self.property(file, "DISCTOTAL") ?? Self.property(file, "TOTALDISCS")
+            )
+            updated.discNumber = disc.number
+            updated.discTotal = disc.total
+
             var picSize: UInt32 = 0
             if let picBytes = taglib_helper_read_picture(file, &picSize), picSize > 0 {
                 updated.artwork = Data(bytes: picBytes, count: Int(picSize))
@@ -163,4 +171,11 @@ actor LibraryScanner {
         return updated
     }
 
+    /// One text property by name, trimmed; nil when unset or blank.
+    private static func property(_ file: UnsafeMutablePointer<TagLib_File>, _ key: String) -> String? {
+        guard let ptr = key.withCString({ taglib_helper_get_property(file, $0) }) else { return nil }
+        defer { free(ptr) }
+        let value = String(cString: ptr).trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
 }

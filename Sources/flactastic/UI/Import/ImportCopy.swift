@@ -9,23 +9,7 @@ extension Track {
     /// been copied into the library, so the library sees a new entry rather
     /// than a move of the out-of-library original.
     func relocated(to newURL: URL) -> Track {
-        Track(
-            id: UUID(),
-            url: newURL,
-            title: title,
-            artist: artist,
-            albumArtist: albumArtist,
-            album: album,
-            trackNumber: trackNumber,
-            duration: duration,
-            artwork: artwork,
-            fileFormat: AudioFileFormat.classify(newURL, keeping: fileFormat),
-            sampleRate: sampleRate,
-            bitDepth: bitDepth,
-            genre: genre,
-            year: year,
-            dateAdded: Date()
-        )
+        rebuilt(id: UUID(), url: newURL, fileFormat: AudioFileFormat.classify(newURL, keeping: fileFormat), dateAdded: Date())
     }
 }
 

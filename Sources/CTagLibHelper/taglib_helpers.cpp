@@ -130,6 +130,26 @@ void taglib_helper_set_cuesheet(void *file, const char *value) {
                         (value && value[0] != '\0') ? value : "");
 }
 
+char *taglib_helper_get_property(void *file, const char *key) {
+    if (!file || !key) return NULL;
+    char **values = taglib_property_get((TagLib_File *)file, key);
+    if (!values) return NULL;
+    char *result = NULL;
+    if (values[0] && values[0][0] != '\0') {
+        size_t n = strlen(values[0]);
+        result = (char *)malloc(n + 1);
+        if (result) memcpy(result, values[0], n + 1);
+    }
+    taglib_property_free(values);
+    return result;
+}
+
+void taglib_helper_set_property(void *file, const char *key, const char *value) {
+    if (!file || !key) return;
+    taglib_property_set((TagLib_File *)file, key,
+                        (value && value[0] != '\0') ? value : "");
+}
+
 unsigned char *taglib_helper_read_picture(void *file, unsigned int *out_size) {
     if (!file || !out_size) return NULL;
     *out_size = 0;

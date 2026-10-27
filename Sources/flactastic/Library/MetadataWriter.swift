@@ -64,6 +64,20 @@ actor MetadataWriter {
         case set(Bool)
     }
 
+    /// Sentinel for the LABEL tag. `.unchanged` skips the write; `.set(nil)`
+    /// or `.set("")` clears it.
+    enum LabelChange: Sendable {
+        case unchanged
+        case set(String?)
+    }
+
+    /// Sentinel for the disc tags. `.unchanged` skips the write;
+    /// `.set(number: nil, total: nil)` clears them.
+    enum DiscChange: Sendable {
+        case unchanged
+        case set(number: Int?, total: Int?)
+    }
+
     /// Write text tags and optionally artwork to the file at `track.url`.
     ///
     /// - Returns: An updated `Track` value reflecting the written fields.
@@ -81,7 +95,9 @@ actor MetadataWriter {
         artworkChange: ArtworkChange = .unchanged,
         albumArtistChange: AlbumArtistChange = .unchanged,
         compilationChange: CompilationChange = .unchanged,
-        mixCompilationChange: MixCompilationChange = .unchanged
+        mixCompilationChange: MixCompilationChange = .unchanged,
+        labelChange: LabelChange = .unchanged,
+        discChange: DiscChange = .unchanged
     ) throws -> Track {
         let url = track.url
 
@@ -153,6 +169,25 @@ actor MetadataWriter {
             }
         }
 
+        // --- Record label ---
+        if case .set(let value) = labelChange {
+            setProperty(file, "LABEL", value)
+        }
+
+        // --- Disc number and total ---
+        // FLAC's Vorbis comments keep the total in its own DISCTOTAL field;
+        // ID3v2 (TPOS) and MP4 (disk) store both as "1/2" in one.
+        if case .set(let number, let total) = discChange {
+            let n = number.map(String.init)
+            if track.fileFormat == .flac {
+                setProperty(file, "DISCNUMBER", n)
+                setProperty(file, "DISCTOTAL", n == nil ? nil : total.map(String.init))
+                setProperty(file, "TOTALDISCS", nil)
+            } else {
+                setProperty(file, "DISCNUMBER", n.map { n in total.map { "\(n)/\($0)" } ?? n })
+            }
+        }
+
         // --- Artwork ---
         switch artworkChange {
         case .unchanged:
@@ -209,6 +244,13 @@ actor MetadataWriter {
         case .set(let on):
             updated.isMixCompilation = on
             if on { updated.isCompilation = false }
+        }
+        if case .set(let value) = labelChange {
+            updated.label = (value?.isEmpty ?? true) ? nil : value
+        }
+        if case .set(let number, let total) = discChange {
+            updated.discNumber = number
+            updated.discTotal = number == nil ? nil : total
         }
         switch artworkChange {
         case .unchanged:   break
@@ -327,6 +369,11 @@ actor MetadataWriter {
     }
 
     // MARK: - Helpers
+
+    /// Writes one text property by name; nil or "" clears it.
+    private func setProperty(_ file: UnsafeMutablePointer<TagLib_File>, _ key: String, _ value: String?) {
+        key.withCString { k in (value ?? "").withCString { taglib_helper_set_property(file, k, $0) } }
+    }
 
     private func mimeType(for data: Data) -> String {
         let header = data.prefix(4)

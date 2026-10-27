@@ -132,7 +132,11 @@ final class LibraryStore {
             }
 
             for group in subgroups {
-                let sorted = group.sorted { ($0.trackNumber ?? Int.max) < ($1.trackNumber ?? Int.max) }
+                let sorted = group.sorted {
+                    let discA = $0.discNumber ?? 1, discB = $1.discNumber ?? 1
+                    if discA != discB { return discA < discB }
+                    return ($0.trackNumber ?? Int.max) < ($1.trackNumber ?? Int.max)
+                }
                 let aa = sorted.first(where: { $0.albumArtist != nil })?.albumArtist
                 // Compare lead credits, not raw tags: one track reading
                 // "Deadmau5 ; Rob Swire" against nine reading "Deadmau5" is a
@@ -152,6 +156,7 @@ final class LibraryStore {
                     albumArtist: aa,
                     year: sorted.first?.year,
                     genre: sorted.first?.genre,
+                    label: sorted.first(where: { $0.label != nil })?.label,
                     secondaryGenres: sorted.first?.secondaryGenres ?? [],
                     artwork: artworkCache[key] ?? Self.dominantArtwork(in: sorted),
                     tracks: sorted
@@ -516,24 +521,7 @@ final class LibraryStore {
             let rel = String(track.url.path.dropFirst(rootPath.count).drop(while: { $0 == "/" }))
             let stableID = trackIDStore.assign(fileURL: track.url, relativePath: rel)
             guard stableID != track.id else { return track }
-            return Track(
-                id: stableID,
-                url: track.url,
-                title: track.title,
-                artist: track.artist,
-                albumArtist: track.albumArtist,
-                album: track.album,
-                trackNumber: track.trackNumber,
-                duration: track.duration,
-                artwork: track.artwork,
-                fileFormat: track.fileFormat,
-                sampleRate: track.sampleRate,
-                bitDepth: track.bitDepth,
-                genre: track.genre,
-                year: track.year,
-                isCompilation: track.isCompilation,
-                dateAdded: track.dateAdded
-            )
+            return track.rebuilt(id: stableID)
         }
     }
 

@@ -36,6 +36,14 @@ struct Track: Sendable, Identifiable, Hashable {
     /// library folder. Prefers the APFS "added to directory" timestamp when
     /// available, otherwise falls back to file creation / modification.
     var dateAdded: Date?
+    /// The record label (LABEL tag: Xiph LABEL / ID3v2 TPUB / MP4 LABEL).
+    /// Shown at the foot of the album page; edited per album.
+    var label: String?
+    /// Which disc of a multi-disc release this track is on (DISCNUMBER), and
+    /// how many discs the release has (DISCTOTAL, or the "/2" of "1/2").
+    /// Nil when untagged, which reads as a single-disc album.
+    var discNumber: Int?
+    var discTotal: Int?
 
     init(
         id: UUID = UUID(),
@@ -55,7 +63,10 @@ struct Track: Sendable, Identifiable, Hashable {
         year: Int? = nil,
         isCompilation: Bool = false,
         isMixCompilation: Bool = false,
-        dateAdded: Date? = nil
+        dateAdded: Date? = nil,
+        label: String? = nil,
+        discNumber: Int? = nil,
+        discTotal: Int? = nil
     ) {
         self.id = id
         self.url = url
@@ -75,6 +86,9 @@ struct Track: Sendable, Identifiable, Hashable {
         self.isCompilation = isCompilation
         self.isMixCompilation = isMixCompilation
         self.dateAdded = dateAdded
+        self.label = label
+        self.discNumber = discNumber
+        self.discTotal = discTotal
     }
 
     static func makeFromURL(_ url: URL) -> Track? {
@@ -85,68 +99,60 @@ struct Track: Sendable, Identifiable, Hashable {
 }
 
 extension Track {
+    /// A copy with a new identity, location, format, or date added, and every
+    /// other field carried over. The one place a Track is rebuilt field by
+    /// field, so a new field can't be dropped by one copy path and not another.
+    func rebuilt(id: UUID? = nil, url: URL? = nil, fileFormat: AudioFileFormat? = nil, dateAdded: Date?? = nil) -> Track {
+        Track(
+            id: id ?? self.id,
+            url: url ?? self.url,
+            title: title,
+            artist: artist,
+            albumArtist: albumArtist,
+            album: album,
+            trackNumber: trackNumber,
+            duration: duration,
+            artwork: artwork,
+            fileFormat: fileFormat ?? self.fileFormat,
+            sampleRate: sampleRate,
+            bitDepth: bitDepth,
+            genre: genre,
+            secondaryGenres: secondaryGenres,
+            year: year,
+            isCompilation: isCompilation,
+            isMixCompilation: isMixCompilation,
+            dateAdded: dateAdded ?? self.dateAdded,
+            label: label,
+            discNumber: discNumber,
+            discTotal: discTotal
+        )
+    }
+
     /// Returns a copy of this track with a freshly-generated UUID. Used when enqueuing
     /// a track that may already appear in the queue, so the two instances can be tracked
     /// and displayed independently.
     func withNewID() -> Track {
-        Track(
-            id: UUID(),
-            url: url,
-            title: title,
-            artist: artist,
-            albumArtist: albumArtist,
-            album: album,
-            trackNumber: trackNumber,
-            duration: duration,
-            artwork: artwork,
-            fileFormat: fileFormat,
-            sampleRate: sampleRate,
-            bitDepth: bitDepth,
-            genre: genre,
-            secondaryGenres: secondaryGenres,
-            year: year,
-            isCompilation: isCompilation,
-            isMixCompilation: isMixCompilation,
-            dateAdded: dateAdded
-        )
+        rebuilt(id: UUID())
     }
-}
 
-extension Track {
     /// Returns a copy of this track pointing at `newURL`, with every other
     /// field (including its stable ID) carried over. Used after a file move;
     /// the format is re-derived from the new extension when recognizable.
     func withURL(_ newURL: URL) -> Track {
-        Track(
-            id: id,
-            url: newURL,
-            title: title,
-            artist: artist,
-            albumArtist: albumArtist,
-            album: album,
-            trackNumber: trackNumber,
-            duration: duration,
-            artwork: artwork,
-            fileFormat: AudioFileFormat.classify(newURL, keeping: fileFormat),
-            sampleRate: sampleRate,
-            bitDepth: bitDepth,
-            genre: genre,
-            secondaryGenres: secondaryGenres,
-            year: year,
-            isCompilation: isCompilation,
-            isMixCompilation: isMixCompilation,
-            dateAdded: dateAdded
-        )
+        rebuilt(url: newURL, fileFormat: AudioFileFormat.classify(newURL, keeping: fileFormat))
     }
 }
 
 extension Array where Element == Track {
-    /// Sort tracks by (album, trackNumber, title) with stable fallbacks for missing metadata.
+    /// Sort tracks by (album, disc, trackNumber, title) with stable fallbacks for missing metadata.
     func sortedForLibrary() -> [Track] {
         sorted { a, b in
             let albumA = a.album ?? ""
             let albumB = b.album ?? ""
             if albumA != albumB { return albumA.localizedStandardCompare(albumB) == .orderedAscending }
+            let discA = a.discNumber ?? 1
+            let discB = b.discNumber ?? 1
+            if discA != discB { return discA < discB }
             let tnA = a.trackNumber ?? Int.max
             let tnB = b.trackNumber ?? Int.max
             if tnA != tnB { return tnA < tnB }

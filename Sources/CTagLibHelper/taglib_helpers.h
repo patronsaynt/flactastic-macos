@@ -84,6 +84,16 @@ char *taglib_helper_get_cuesheet(void *file);
 /** Write the CUESHEET property verbatim. Pass NULL or "" to clear. */
 void taglib_helper_set_cuesheet(void *file, const char *value);
 
+/** Read any text property by its TagLib property-map name (LABEL,
+ *  DISCNUMBER, DISCTOTAL, …), which TagLib maps to each container's own
+ *  frame (LABEL is Xiph LABEL / ID3v2 TPUB / MP4 ----:LABEL; DISCNUMBER is
+ *  Xiph DISCNUMBER / ID3v2 TPOS / MP4 disk). Returns the first value as a
+ *  malloc'd C string the caller must free(), or NULL if unset. */
+char *taglib_helper_get_property(void *file, const char *key);
+
+/** Write a text property by name. Pass NULL or "" to clear it. */
+void taglib_helper_set_property(void *file, const char *key, const char *value);
+
 /** Read the audio bit depth (bits per sample) for the file at \a path, using
  *  TagLib's C++ AudioProperties. Works for lossless formats whose container
  *  reports no PCM bit depth to AVFoundation (FLAC, ALAC, WAV, AIFF, …).

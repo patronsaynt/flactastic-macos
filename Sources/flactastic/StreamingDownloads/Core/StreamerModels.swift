@@ -24,6 +24,11 @@ struct RemoteAlbumRef: Sendable, Hashable {
     let coverArt: [RemoteCoverArt]
     let releaseYear: Int?
     let trackCount: Int?
+    /// The record label, when the service reports one.
+    var label: String? = nil
+    /// How many discs the release spans, from its full tracklist; nil when
+    /// only this one track is known.
+    var discTotal: Int? = nil
 }
 
 struct RemoteTrack: Sendable, Hashable, Identifiable {
@@ -88,6 +93,33 @@ struct StreamerAccount: Sendable {
     let lossless: Bool
     /// True when hi-res is available (24-bit).
     let hiRes: Bool
+}
+
+/// The label name from whatever a service reports: a label field when there
+/// is one, otherwise the copyright line ("℗ 2026 NLV Records") with its
+/// symbol and year taken off.
+enum ReleaseLabel {
+    static func from(label: String?, copyright: String?) -> String? {
+        if let label = clean(label) { return label }
+        guard var line = clean(copyright) else { return nil }
+        // Leading ℗ / © / (P) / (C) / "Copyright", in any order, then a year.
+        let prefix = #"^(?:\s*(?:℗|©|\(p\)|\(c\)|copyright|phonographic copyright)\s*)+(?:\d{4}(?:\s*[-–]\s*\d{4})?)?\s*"#
+        if let range = line.range(of: prefix, options: [.regularExpression, .caseInsensitive]) {
+            line.removeSubrange(range)
+        } else if let range = line.range(of: #"^\d{4}\s+"#, options: .regularExpression) {
+            line.removeSubrange(range)
+        }
+        // "Sub Pop Records, under exclusive license to …" names the label first.
+        if let cut = line.range(of: #",?\s+under (?:exclusive )?licen[cs]e.*$"#, options: [.regularExpression, .caseInsensitive]) {
+            line.removeSubrange(cut)
+        }
+        return clean(line)
+    }
+
+    private static func clean(_ raw: String?) -> String? {
+        let value = raw?.trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: ".,"))) ?? ""
+        return value.isEmpty ? nil : value
+    }
 }
 
 extension RemoteCoverArt {

@@ -23,6 +23,14 @@ struct TrackMetadataCacheEntry: Codable, Sendable {
     /// written before it existed still decode; `nil` there means an `.m4a`
     /// entry predates refinement and must be re-parsed once.
     var fileFormat: String?
+    var label: String?
+    var discNumber: Int?
+    var discTotal: Int?
+    /// Which fields the entry covers. Entries from before a field existed
+    /// decode with an older (or no) schema and are re-parsed once, rather than
+    /// hydrating that field as nil forever.
+    var schema: Int?
+    static let currentSchema = 2
     var fileSize: Int64
     var mtime: Date
 
@@ -42,6 +50,10 @@ struct TrackMetadataCacheEntry: Codable, Sendable {
         isMixCompilation = track.isMixCompilation
         hasArtwork = track.artwork != nil
         fileFormat = track.fileFormat.rawValue
+        label = track.label
+        discNumber = track.discNumber
+        discTotal = track.discTotal
+        schema = Self.currentSchema
         self.fileSize = fileSize
         self.mtime = mtime
     }
@@ -49,6 +61,7 @@ struct TrackMetadataCacheEntry: Codable, Sendable {
     /// True when the file on disk still matches the state this entry was
     /// built from. The mtime tolerance absorbs Codable's Date round-trip.
     func isValid(forFileAt path: String) -> Bool {
+        guard schema == Self.currentSchema else { return false }
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let size = (attrs[.size] as? NSNumber)?.int64Value,
               let modified = attrs[.modificationDate] as? Date else { return false }
@@ -82,6 +95,9 @@ struct TrackMetadataCacheEntry: Codable, Sendable {
         track.year = year
         track.isCompilation = isCompilation
         track.isMixCompilation = isMixCompilation
+        track.label = label
+        track.discNumber = discNumber
+        track.discTotal = discTotal
     }
 }
 

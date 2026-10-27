@@ -7,6 +7,8 @@ struct Album: Identifiable, Hashable {
     let albumArtist: String?
     let year: Int?
     let genre: String?
+    /// The record label, from the first track that carries one.
+    var label: String? = nil
     let secondaryGenres: [String]
     let artwork: Data?
     let tracks: [Track]
@@ -30,4 +32,15 @@ struct Album: Identifiable, Hashable {
     /// A single or EP rather than an album: fewer than three tracks. Artist
     /// pages list these apart, and the Albums view can leave them out.
     var isSingle: Bool { tracks.count < 3 }
+
+    /// The tracks split by disc, in disc order, for albums whose tracks span
+    /// more than one disc number. Empty for a single-disc album, which reads
+    /// as one plain list. Untagged tracks count as disc 1.
+    var discs: [(number: Int, tracks: [Track])] {
+        let numbers = Set(tracks.map { $0.discNumber ?? 1 })
+        guard numbers.count > 1 else { return [] }
+        return Dictionary(grouping: tracks) { $0.discNumber ?? 1 }
+            .sorted { $0.key < $1.key }
+            .map { (number: $0.key, tracks: $0.value) }
+    }
 }

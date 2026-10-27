@@ -316,7 +316,11 @@ final class DownloadCoordinator {
                     trackNumber: track.trackNumber,
                     artworkChange: artworkData.map { .updated($0) } ?? .unchanged,
                     albumArtistChange: .set(primaryArtist),
-                    compilationChange: .unchanged
+                    compilationChange: .unchanged,
+                    // Label and disc from the service when it reports them;
+                    // otherwise whatever Lucida embedded stays as it is.
+                    labelChange: track.album?.label.map { .set($0) } ?? .unchanged,
+                    discChange: track.discNumber.map { .set(number: $0, total: track.album?.discTotal) } ?? .unchanged
                 )
             }
 

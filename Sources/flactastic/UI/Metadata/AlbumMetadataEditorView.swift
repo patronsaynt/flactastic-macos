@@ -14,6 +14,9 @@ private struct TrackDropDelegate: DropDelegate {
     let toIndex: Int
     @Binding var tracks: [EditableTrack]
     @Binding var draggingIndex: Int?
+    /// Where the discs split. Positional, so a track dragged across a break
+    /// changes disc.
+    let discBreaks: Set<Int>
 
     func performDrop(info: DropInfo) -> Bool {
         draggingIndex = nil
@@ -32,12 +35,13 @@ private struct TrackDropDelegate: DropDelegate {
                 toOffset: from < toIndex ? toIndex + 1 : toIndex
             )
             // Dragging expresses an explicit intent to resequence the album,
-            // so renumber everyone to match the new order. Track numbers are
-            // otherwise left untouched (see EditableTrack.trackNumber) so
-            // albums with sparse/non-contiguous numbering aren't silently
-            // rewritten just by opening the editor.
+            // so renumber everyone to match the new order, from 1 on each
+            // disc. Track numbers are otherwise left untouched (see
+            // EditableTrack.trackNumber) so albums with sparse/non-contiguous
+            // numbering aren't silently rewritten just by opening the editor.
+            let numbers = DiscLayout.trackNumbers(count: tracks.count, breaks: discBreaks)
             for i in tracks.indices {
-                tracks[i].trackNumber = i + 1
+                tracks[i].trackNumber = numbers[i]
             }
         }
         draggingIndex = toIndex
@@ -62,6 +66,7 @@ struct AlbumMetadataEditorView: View {
     @State private var secondaryGenres: [String]
     @State private var isCompilation:   Bool
     @State private var isMixCompilation: Bool
+    @State private var label:           String
 
     @State private var artworkData:    Data?
     @State private var artworkChanged: Bool = false
@@ -70,6 +75,9 @@ struct AlbumMetadataEditorView: View {
 
     @State private var editableTracks: [EditableTrack]
     @State private var draggingIndex:  Int?   = nil
+    /// Positions where a new disc starts (see DiscLayout).
+    @State private var discBreaks:     Set<Int>
+    @State private var hoveredRow:     Int?   = nil
 
     @State private var isSaving:     Bool    = false
     @State private var savedCount:   Int     = 0
@@ -104,10 +112,14 @@ struct AlbumMetadataEditorView: View {
         _secondaryGenres = State(initialValue: album.secondaryGenres)
         _isCompilation   = State(initialValue: album.isCompilation)
         _isMixCompilation = State(initialValue: album.isMixCompilation)
+        _label           = State(initialValue: album.label ?? "")
         _artworkData   = State(initialValue: album.artwork)
         let sorted = album.tracks.sorted {
-            ($0.trackNumber ?? Int.max) < ($1.trackNumber ?? Int.max)
+            let discA = $0.discNumber ?? 1, discB = $1.discNumber ?? 1
+            if discA != discB { return discA < discB }
+            return ($0.trackNumber ?? Int.max) < ($1.trackNumber ?? Int.max)
         }
+        _discBreaks = State(initialValue: DiscLayout.breaks(forDiscs: sorted.map(\.discNumber)))
         _editableTracks = State(initialValue: sorted.enumerated().map { index, track in
             let chips = ArtistResolver.explicitlySeparated(track.artist ?? "")
                 ?? (track.artist.flatMap { $0.isEmpty ? nil : [$0] } ?? [])
@@ -209,6 +221,7 @@ struct AlbumMetadataEditorView: View {
                 GenreFieldView(text: $genre)
             }
             SecondaryGenresFieldView(genres: $secondaryGenres, primaryGenre: genre)
+            metaField("Record Label", text: $label, width: 300)
 
             HStack(spacing: 8) {
                 SheetTogglePill(title: "Compilation", isOn: $isCompilation)
@@ -280,7 +293,7 @@ struct AlbumMetadataEditorView: View {
                     .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(Theme.textTertiary)
                 Spacer()
-                Text("Drag to reorder")
+                Text("Drag to reorder · hover a track to start a new disc there")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.textTertiary)
             }
@@ -288,6 +301,9 @@ struct AlbumMetadataEditorView: View {
 
             VStack(spacing: 2) {
                 ForEach(editableTracks.indices, id: \.self) { index in
+                    if !discBreaks.isEmpty, index == 0 || discBreaks.contains(index) {
+                        discDivider(at: index)
+                    }
                     HStack(alignment: .center, spacing: 12) {
                         TextField("", text: trackNumberText(index))
                             .textFieldStyle(.plain)
@@ -310,6 +326,23 @@ struct AlbumMetadataEditorView: View {
                         )
                         .frame(maxWidth: .infinity)
 
+                        if index > 0, !discBreaks.contains(index) {
+                            let next = DiscLayout.disc(at: index, breaks: discBreaks) + 1
+                            Button { setDiscBreak(at: index, on: true) } label: {
+                                Image(systemName: "opticaldisc")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .frame(width: 22, height: 30)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Theme.textTertiary)
+                            .opacity(hoveredRow == index ? 1 : 0)
+                            .help("Start Disc \(next) with this track")
+                            .accessibilityLabel("Start Disc \(next) with track \(index + 1)")
+                        } else {
+                            Color.clear.frame(width: 22, height: 30)
+                        }
+
                         Image(systemName: "line.3.horizontal")
                             .font(.system(size: 12, weight: .semibold))
                             .foregroundStyle(draggingIndex == index ? Theme.textPrimary : Theme.textTertiary)
@@ -331,12 +364,16 @@ struct AlbumMetadataEditorView: View {
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(Theme.textPrimary.opacity(draggingIndex == index ? 0.07 : 0))
                     )
+                    .onHover { inside in
+                        if inside { hoveredRow = index } else if hoveredRow == index { hoveredRow = nil }
+                    }
                     .onDrop(
                         of: [UTType.plainText],
                         delegate: TrackDropDelegate(
                             toIndex: index,
                             tracks: $editableTracks,
-                            draggingIndex: $draggingIndex
+                            draggingIndex: $draggingIndex,
+                            discBreaks: discBreaks
                         )
                     )
                 }
@@ -345,6 +382,36 @@ struct AlbumMetadataEditorView: View {
             .disabled(isSaving)
         }
         .padding(.top, 30)
+    }
+
+    /// "Disc 2" across the list, with a button to merge it back into the
+    /// disc before (none on Disc 1).
+    private func discDivider(at index: Int) -> some View {
+        let number = DiscLayout.disc(at: index, breaks: discBreaks)
+        return HStack(spacing: 10) {
+            Image(systemName: "opticaldisc")
+                .font(.system(size: 12, weight: .semibold))
+            Text("Disc \(number)")
+                .font(.system(size: 12.5, weight: .semibold))
+            Rectangle()
+                .fill(Theme.textPrimary.opacity(0.1))
+                .frame(height: 1)
+            if index > 0 {
+                Button { setDiscBreak(at: index, on: false) } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Merge into Disc \(number - 1)")
+                .accessibilityLabel("Merge Disc \(number) into Disc \(number - 1)")
+            }
+        }
+        .foregroundStyle(Theme.textSecondary)
+        .padding(.horizontal, 14)
+        .padding(.top, index == 0 ? 2 : 14)
+        .padding(.bottom, 4)
     }
 
     // MARK: - Footer
@@ -393,6 +460,19 @@ struct AlbumMetadataEditorView: View {
         if cleaned.isEmpty { return nil }
         if cleaned.count == 1 { return cleaned[0] }
         return ArtistResolver.joinExplicit(cleaned)
+    }
+
+    /// Adds or removes the disc break before `index`, then numbers every
+    /// disc from 1: splitting or merging discs is a deliberate resequence.
+    private func setDiscBreak(at index: Int, on: Bool) {
+        withAnimation(.default) {
+            if on { discBreaks.insert(index) } else { discBreaks.remove(index) }
+            discBreaks = DiscLayout.clamped(discBreaks, count: editableTracks.count)
+            let numbers = DiscLayout.trackNumbers(count: editableTracks.count, breaks: discBreaks)
+            for i in editableTracks.indices {
+                editableTracks[i].trackNumber = numbers[i]
+            }
+        }
     }
 
     // MARK: - Actions
@@ -458,12 +538,28 @@ struct AlbumMetadataEditorView: View {
             isMixCompilation == album.isMixCompilation ? .unchanged : .set(isMixCompilation)
         }()
 
+        // Record label: written to every track, only when it changed.
+        let newLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let labelChange: MetadataWriter.LabelChange =
+            newLabel == (album.label ?? "") ? .unchanged : .set(newLabel.isEmpty ? nil : newLabel)
+
+        // Discs: a multi-disc layout writes each track's disc and the total.
+        // Merged back to one disc clears the tags of an album that had
+        // several; a single-disc album's own tags ("1/1" or none) are left alone.
+        let discCount = discBreaks.count + 1
+        let hadDiscTags = !album.discs.isEmpty || album.tracks.contains { ($0.discTotal ?? 1) > 1 }
+        let breaks = discBreaks
+
         let orderedTracks = editableTracks  // snapshot current order + edited fields
 
         Task {
             var collected: [Track] = []
             var firstError: String? = nil
-            for item in orderedTracks {
+            for (position, item) in orderedTracks.enumerated() {
+                let discChange: MetadataWriter.DiscChange =
+                    discCount > 1 ? .set(number: DiscLayout.disc(at: position, breaks: breaks), total: discCount)
+                    : hadDiscTags ? .set(number: nil, total: nil)
+                    : .unchanged
                 let newTitle = item.title.trimmingCharacters(in: .whitespaces)
                 // Per-track artist: prefer the row's chips. If the user
                 // cleared them entirely, inherit from the album-level chips
@@ -483,7 +579,9 @@ struct AlbumMetadataEditorView: View {
                         artworkChange:     artChange,
                         albumArtistChange: aaChange,
                         compilationChange: compilationChange,
-                        mixCompilationChange: mixCompilationChange
+                        mixCompilationChange: mixCompilationChange,
+                        labelChange:       labelChange,
+                        discChange:        discChange
                     )
                     collected.append(updated)
                     await MainActor.run { savedCount += 1 }

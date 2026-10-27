@@ -281,7 +281,7 @@ final class LucidaWebProvider: NSObject, StreamerProvider {
 /// album shape mirroring Lucida's `GetByUrlResponse` (Resources/lucida/src/
 /// types.ts) on top of a `{success, error?}` envelope. Field availability
 /// varies by upstream service so almost everything is optional.
-private struct LucidaMetadata: Decodable {
+struct LucidaMetadata: Decodable {
     let success: Bool?
     let error: String?
     let type: String?
@@ -303,6 +303,10 @@ private struct LucidaMetadata: Decodable {
     /// service; `creator` and `owner` are the two we've observed.
     let creator: String?
     let owner: String?
+    /// Label and copyright line. Not every upstream service sends them (and
+    /// Lucida doesn't document either), so both are read leniently.
+    let label: LenientText?
+    let copyright: LenientText?
 
     struct Artist: Decodable { let name: String?; let url: String?; let pictures: [Artwork]? }
     struct Album: Decodable {
@@ -315,6 +319,38 @@ private struct LucidaMetadata: Decodable {
         let trackCount: Int?
         let url: String?
         let coverArtwork: [Artwork]?
+        let label: LenientText?
+        let copyright: LenientText?
+    }
+
+    /// Text sent as a bare string, as `{name}` or `{text}`, or as a list of
+    /// those (the first wins). Never throws: an unexpected shape reads as
+    /// nil rather than failing the whole metadata payload.
+    struct LenientText: Decodable {
+        let text: String?
+
+        init(from decoder: Decoder) {
+            text = Self.read(decoder)
+        }
+
+        private static func read(_ decoder: Decoder) -> String? {
+            if let s = try? decoder.singleValueContainer().decode(String.self) { return s }
+            if let c = try? decoder.container(keyedBy: CodingKeys.self) {
+                return (try? c.decodeIfPresent(String.self, forKey: .name)) ?? (try? c.decodeIfPresent(String.self, forKey: .text)) ?? nil
+            }
+            if var list = try? decoder.unkeyedContainer(), !list.isAtEnd,
+               let first = try? list.decode(LenientText.self) {
+                return first.text
+            }
+            return nil
+        }
+
+        private enum CodingKeys: String, CodingKey { case name, text }
+    }
+
+    /// This release's label, from the album first, then the top level.
+    var releaseLabel: String? {
+        ReleaseLabel.from(label: album?.label?.text ?? label?.text, copyright: album?.copyright?.text ?? copyright?.text)
     }
 
     /// Lucida returns artwork two ways depending on the upstream service:
@@ -391,7 +427,8 @@ private struct LucidaMetadata: Decodable {
                 url: al.url.flatMap(URL.init(string:)),
                 coverArt: (al.coverArtwork ?? []).compactMap(Self.toCover),
                 releaseYear: al.releaseYear ?? Self.year(from: al.releaseDate),
-                trackCount: al.trackCount
+                trackCount: al.trackCount,
+                label: releaseLabel
             )
         } else {
             resolvedAlbum = RemoteAlbumRef(
@@ -400,7 +437,8 @@ private struct LucidaMetadata: Decodable {
                 url: nil,
                 coverArt: (coverArtwork ?? []).compactMap(Self.toCover),
                 releaseYear: Self.year(from: releaseDate),
-                trackCount: 1
+                trackCount: 1,
+                label: releaseLabel
             )
         }
         return RemoteTrack(
@@ -426,6 +464,9 @@ private struct LucidaMetadata: Decodable {
         }
         let albumTitle = album?.title ?? title ?? originalURL.lastPathComponent
         let albumYear = album?.releaseYear ?? Self.year(from: album?.releaseDate ?? releaseDate)
+        let albumLabel = releaseLabel
+        // The full tracklist is here, so the disc count is too.
+        let discTotal = (tracks ?? []).compactMap(\.discNumber).max()
         let trackList: [RemoteTrack] = (tracks ?? []).enumerated().map { idx, t in
             RemoteTrack(
                 id: "\(originalURL.absoluteString)#\(idx)",
@@ -437,7 +478,8 @@ private struct LucidaMetadata: Decodable {
                 album: RemoteAlbumRef(
                     id: albumTitle, title: albumTitle,
                     url: originalURL, coverArt: albumArts,
-                    releaseYear: albumYear, trackCount: album?.trackCount
+                    releaseYear: albumYear, trackCount: album?.trackCount,
+                    label: albumLabel, discTotal: discTotal
                 ),
                 trackNumber: t.trackNumber ?? (idx + 1),
                 discNumber: t.discNumber,
