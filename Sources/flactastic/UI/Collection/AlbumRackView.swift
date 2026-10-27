@@ -30,12 +30,16 @@ struct AlbumRackView: View {
 
     @Environment(PlayerState.self) private var player
     @Environment(ListeningStore.self) private var listening
+    @Environment(Settings.self) private var settings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.displayScale) private var displayScale
 
     /// How far the rack is scrolled, in points.
     @State private var scrollX: CGFloat = 0
     @State private var hoveredID: String?
+    /// Where the clear-case sheen sits down the hovered spine, from its top.
+    /// Springs after the pointer, so it rushes to catch up and settles softly.
+    @State private var sheenY: CGFloat = 0
     /// The album the readout under the shelf shows: the last one hovered, so
     /// it doesn't blink out as the pointer crosses a gap.
     @State private var readoutID: String?
@@ -45,9 +49,14 @@ struct AlbumRackView: View {
     @State private var takenOut: Album?
     /// Where its spine sat, in the rack's coordinates, so it can go back.
     @State private var takenFrom: CGRect = .zero
-    /// 0 on the shelf, edge-on; 1 out, front on.
-    @State private var isOut = false
-    @State private var closeTask: Task<Void, Never>?
+    @State private var stage: CaseStage = .shelf
+    /// Which way the case is travelling, so each stage picks its curve.
+    @State private var isClosing = false
+    /// The rest of the rack falls back while a case is out.
+    @State private var shelfReceded = false
+    @State private var sequence: Task<Void, Never>?
+
+    private var isOut: Bool { stage == .open }
 
     private var metrics: RackMetrics { RackMetrics(available: available) }
 
@@ -67,12 +76,12 @@ struct AlbumRackView: View {
                 rack(metrics, layout: layout)
                 readout(metrics, layout: layout)
             }
-                .blur(radius: isOut && !reduceMotion ? 10 : 0)
-                .opacity(isOut ? 0.16 : 1)
-                .scaleEffect(isOut ? 0.96 : 1, anchor: .center)
-                // Falls back as the case comes out; comes forward again only
-                // once the case is nearly home.
-                .animation(isOut ? .easeOut(duration: 0.5) : .easeOut(duration: 0.45).delay(0.6), value: isOut)
+                .blur(radius: shelfReceded && !reduceMotion ? 10 : 0)
+                .opacity(shelfReceded ? 0.16 : 1)
+                .scaleEffect(shelfReceded ? 0.96 : 1, anchor: .center)
+                // Falls back as the case comes out; comes forward again as
+                // the case reaches its slot, so it slides into a sharp shelf.
+                .animation(shelfReceded ? .easeOut(duration: 0.5) : .easeOut(duration: 0.45).delay(0.6), value: shelfReceded)
                 .allowsHitTesting(takenOut == nil)
 
             if let album = takenOut {
@@ -106,7 +115,8 @@ struct AlbumRackView: View {
                         credit: credit,
                         width: metrics.spineWidth,
                         height: metrics.spineHeight,
-                        isHovered: hovered
+                        isHovered: hovered,
+                        clearCase: settings.clearCaseLook
                     )
                     .equatable()
                     .offset(
@@ -121,6 +131,16 @@ struct AlbumRackView: View {
                     .accessibilityAddTraits(.isButton)
                     .accessibilityAction { takeOut(album, at: spineFrame(index, layout: layout, metrics: metrics)) }
                 }
+                // The sheen on the hovered spine only, drawn apart from the
+                // spines so following the pointer redraws nothing else.
+                if settings.clearCaseLook, takenOut == nil, let id = hoveredID,
+                   let index = layout.albums.firstIndex(where: { $0.id == id }), visible.contains(index) {
+                    RackSheen(width: metrics.spineWidth, height: metrics.spineHeight, y: sheenY)
+                        .offset(x: layout.x(of: index), y: metrics.top - metrics.hoverLift)
+                        .zIndex(2)
+                        .id(id)
+                        .transition(.opacity)
+                }
             }
             .offset(x: collectionGutter - scrollX)
             .animation(reduceMotion ? nil : .timingCurve(0.16, 1, 0.3, 1, duration: 0.35), value: hoveredID)
@@ -133,14 +153,25 @@ struct AlbumRackView: View {
         // The spine under the pointer is worked out from the pointer's
         // position: spines are placed by offset, and per-spine hover areas
         // stay where the spines were laid out, not where they're drawn.
-        .onContinuousHover(coordinateSpace: .local) { phase in
-            let id: String?
-            switch phase {
-            case .active(let point): id = spineIndex(at: point, layout: layout, metrics: metrics).map { layout.albums[$0].id }
-            case .ended: id = nil
-            }
-            if id != hoveredID { hoveredID = id }
-            if let id, id != readoutID { readoutID = id }
+        // Watched at the window level rather than with `onContinuousHover`,
+        // whose tracking went stale after returning from an album page (the
+        // rack is rebuilt mid-transition), leaving spines that never lift.
+        .background {
+            PointerWatcher(
+                onMove: { point in
+                    let inside = point.x >= 0 && point.x <= available.width
+                    hover(inside ? spineIndex(at: point, layout: layout, metrics: metrics).map { layout.albums[$0].id } : nil)
+                    if settings.clearCaseLook, hoveredID != nil {
+                        let y = point.y - (metrics.top - metrics.hoverLift)
+                        if reduceMotion {
+                            sheenY = y
+                        } else {
+                            withAnimation(.spring(response: 0.32, dampingFraction: 1)) { sheenY = y }
+                        }
+                    }
+                },
+                onExit: { hover(nil) }
+            )
         }
         .onTapGesture(coordinateSpace: .local) { point in
             guard let index = spineIndex(at: point, layout: layout, metrics: metrics) else { return }
@@ -171,6 +202,14 @@ struct AlbumRackView: View {
                 .frame(width: 96)
         }
         .allowsHitTesting(false)
+    }
+
+    private func hover(_ id: String?) {
+        // The watcher sees moves even while a case is out and the shelf
+        // ignores the pointer; nothing on the shelf lifts then.
+        let id = takenOut == nil ? id : nil
+        if id != hoveredID { hoveredID = id }
+        if let id, id != readoutID { readoutID = id }
     }
 
     /// The spine under `point` (in the rack's own coordinates), if any.
@@ -258,16 +297,18 @@ struct AlbumRackView: View {
     // MARK: - Taking a case out
 
     private func takeOut(_ album: Album, at spine: CGRect) {
-        closeTask?.cancel()
+        sequence?.cancel()
         hoveredID = nil
         let front = caseFrame(metrics)
         takenFrom = spine
         takenOut = album
-        isOut = false
+        stage = .shelf
+        isClosing = false
         // Decode the cover at the case's size and sample its colours for the
         // disc first, so neither pops in mid-animation; then go.
         let scale = displayScale
-        Task { @MainActor in
+        let reduceMotion = reduceMotion
+        sequence = Task { @MainActor in
             if let data = album.artwork, !data.isEmpty {
                 let id = "album:\(album.id)"
                 async let caseArt = ArtworkImageCache.shared.thumbnailAsync(
@@ -275,20 +316,39 @@ struct AlbumRackView: View {
                 async let palette = CoverPalette.load(for: data)
                 _ = await (caseArt, palette)
             }
-            guard takenOut?.id == album.id else { return }
-            isOut = true
+            guard !Task.isCancelled, takenOut?.id == album.id else { return }
+            shelfReceded = true
+            if !reduceMotion {
+                // Out of the slot towards the viewer, still edge-on…
+                stage = .pulled
+                try? await Task.sleep(for: .milliseconds(Int(CaseStage.pullDuration * 1000)))
+                guard !Task.isCancelled else { return }
+            }
+            // …then it turns to its front and opens.
+            stage = .open
         }
     }
 
     private func putBack() {
-        isOut = false
-        closeTask?.cancel()
-        closeTask = Task { @MainActor in
-            // Once the case has seated (0.2s wait + 0.85s turn) and the rack
-            // is back, swap it for the shelf's own spine.
-            try? await Task.sleep(for: .milliseconds(reduceMotion ? 300 : 1120))
+        sequence?.cancel()
+        isClosing = true
+        shelfReceded = false
+        let reduceMotion = reduceMotion
+        sequence = Task { @MainActor in
+            if !reduceMotion {
+                // The disc goes in and the case turns back to its spine,
+                // hovering just out of its slot (0.2s wait + 0.85s turn)…
+                stage = .pulled
+                try? await Task.sleep(for: .milliseconds(1050))
+                guard !Task.isCancelled else { return }
+            }
+            // …then slides home.
+            stage = .shelf
+            try? await Task.sleep(for: .milliseconds(reduceMotion ? 300 : Int(CaseStage.pullDuration * 1000) + 60))
             guard !Task.isCancelled else { return }
+            // Swap it for the shelf's own spine.
             takenOut = nil
+            isClosing = false
         }
     }
 
@@ -314,10 +374,30 @@ struct AlbumRackView: View {
         // its spine face matches a shelf spine.
         let restScale = takenFrom.height / size
         let depth = takenFrom.width / max(restScale, 0.01)
-        let lift = reduceMotion ? Animation.easeOut(duration: 0.25) : .timingCurve(0.16, 1, 0.3, 1, duration: 0.9)
-        // Back in: eased at both ends, so the case glides into its slot
-        // rather than rushing there and creeping the last few points.
-        let seat = reduceMotion ? Animation.easeOut(duration: 0.25) : .timingCurve(0.45, 0, 0.2, 1, duration: 0.85).delay(0.2)
+        // Pulled clear of the shelf, the case is nearer the viewer than its
+        // neighbours, so a little larger.
+        let pulledScale = restScale * CaseStage.pullScale
+        let caseScale: CGFloat
+        let caseCentre: CGPoint
+        let caseMotion: Animation
+        switch stage {
+        case .shelf:
+            caseScale = restScale
+            caseCentre = CGPoint(x: takenFrom.midX, y: takenFrom.midY)
+            // Back into the slot: eased at both ends, so it glides home.
+            caseMotion = reduceMotion ? .easeOut(duration: 0.25) : .timingCurve(0.45, 0, 0.25, 1, duration: CaseStage.pullDuration)
+        case .pulled:
+            caseScale = pulledScale
+            caseCentre = CGPoint(x: takenFrom.midX, y: takenFrom.midY)
+            caseMotion = isClosing
+                // Turning back to its spine, after the disc has gone in.
+                ? .timingCurve(0.45, 0, 0.2, 1, duration: 0.85).delay(0.2)
+                : .timingCurve(0.25, 0.8, 0.35, 1, duration: CaseStage.pullDuration)
+        case .open:
+            caseScale = 1
+            caseCentre = CGPoint(x: front.midX, y: front.midY)
+            caseMotion = reduceMotion ? .easeOut(duration: 0.25) : .timingCurve(0.16, 1, 0.3, 1, duration: 0.9)
+        }
 
         return ZStack(alignment: .topLeading) {
             // The disc, behind the case, sliding out to the right.
@@ -331,13 +411,11 @@ struct AlbumRackView: View {
                     ? .timingCurve(0.16, 1, 0.3, 1, duration: 0.8).delay(reduceMotion ? 0 : 0.5)
                     : .timingCurve(0.4, 0, 0.6, 1, duration: 0.35), value: isOut)
 
-            RackBox(album: album, credit: credit(album), size: size, depth: depth, angle: isOut ? RackBox.restingAngle : 90)
-                .scaleEffect(isOut ? 1 : restScale)
-                .position(
-                    x: isOut ? front.midX : takenFrom.midX,
-                    y: isOut ? front.midY : takenFrom.midY
-                )
-                .animation(isOut ? lift : seat, value: isOut)
+            RackBox(album: album, credit: credit(album), size: size, depth: depth, shelfScale: restScale, clearCase: settings.clearCaseLook, angle: isOut ? RackBox.restingAngle : 90)
+                .scaleEffect(caseScale)
+                .shadow(color: .black.opacity(stage == .shelf ? 0 : 0.4), radius: 14, y: 8)
+                .position(caseCentre)
+                .animation(caseMotion, value: stage)
 
             details(album)
                 .frame(width: max(260, available.width - (front.maxX + discTravel + 72) - collectionGutter), alignment: .leading)
@@ -540,18 +618,64 @@ struct RackLayout {
 
 // MARK: - Spine
 
-/// One CD spine: a blurred slice of the album's art under clear plastic, the
-/// title and artist printed down it.
+/// One CD spine: a blurred slice of the album's art with the title and
+/// artist printed down it. In the clear-case look the printed card sits just
+/// inside a plastic lid: a bright rim, lighter caps at top and bottom and a
+/// hard highlight down the hinge side.
 private struct RackSpine: View, Equatable {
     let album: Album
     let credit: String
     let width: CGFloat
     let height: CGFloat
     let isHovered: Bool
+    var clearCase: Bool = false
+    /// One shelf point in this spine's own points: above 1 when it's drawn
+    /// large and scaled down (the case's spine face), so its rim, insets and
+    /// print come out the same as on the shelf.
+    var unit: CGFloat = 1
 
     @State private var art: NSImage?
 
     var body: some View {
+        Group {
+            if clearCase {
+                ZStack {
+                    Color(white: 0.07)
+                    printed
+                        .clipShape(RoundedRectangle(cornerRadius: unit))
+                        .padding(.vertical, 3 * unit)
+                        .padding(.horizontal, 1.5 * unit)
+                    lid
+                }
+            } else {
+                ZStack {
+                    printed
+                    // The plastic: a hard highlight down the left edge, a soft sheen.
+                    LinearGradient(
+                        stops: [
+                            .init(color: .white.opacity(0.28), location: 0),
+                            .init(color: .white.opacity(0.06), location: 0.18),
+                            .init(color: .clear, location: 0.4),
+                            .init(color: .black.opacity(0.18), location: 1),
+                        ],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    LinearGradient(colors: [.white.opacity(0.1), .clear, .black.opacity(0.2)], startPoint: .top, endPoint: .bottom)
+                }
+            }
+        }
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 2 * unit))
+        .overlay(
+            RoundedRectangle(cornerRadius: 2 * unit)
+                .strokeBorder(.white.opacity(isHovered ? 0.3 : clearCase ? 0.2 : 0.14), lineWidth: (clearCase ? 1 : 0.5) * unit)
+        )
+        .shadow(color: .black.opacity(isHovered ? 0.6 : 0), radius: isHovered ? 14 : 0, y: isHovered ? 12 : 0)
+        .task(id: album.id) { await loadArt() }
+    }
+
+    /// The printed spine card.
+    private var printed: some View {
         ZStack {
             Color(white: 0.12)
             if let art {
@@ -565,40 +689,54 @@ private struct RackSpine: View, Equatable {
             // moving spine costs no per-frame effects; it also keeps the
             // printed title readable on bright art.
             Color.black.opacity(isHovered ? 0.06 : 0.2)
-            // The plastic: a hard highlight down the left edge, a soft sheen.
+            spineText
+        }
+    }
+
+    /// The clear lid over the card: caps, and the hinge-side highlights.
+    private var lid: some View {
+        let cap = 3 * unit / max(height, 1), soft = 6 * unit / max(height, 1)
+        let px = unit / max(width, 1)
+        return ZStack {
             LinearGradient(
                 stops: [
-                    .init(color: .white.opacity(0.28), location: 0),
-                    .init(color: .white.opacity(0.06), location: 0.18),
-                    .init(color: .clear, location: 0.4),
-                    .init(color: .black.opacity(0.18), location: 1),
+                    .init(color: .white.opacity(0.22), location: 0),
+                    .init(color: .white.opacity(0.04), location: cap),
+                    .init(color: .clear, location: soft),
+                    .init(color: .clear, location: 1 - soft),
+                    .init(color: .white.opacity(0.04), location: 1 - cap),
+                    .init(color: .white.opacity(0.18), location: 1),
+                ],
+                startPoint: .top, endPoint: .bottom
+            )
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .white.opacity(0.55), location: 2 * px),
+                    .init(color: .white.opacity(0.08), location: 4 * px),
+                    .init(color: .clear, location: 9 * px),
+                    .init(color: .clear, location: 1 - 9 * px),
+                    .init(color: .white.opacity(0.05), location: 1 - 4 * px),
+                    .init(color: .white.opacity(0.28), location: 1 - 2 * px),
+                    .init(color: .clear, location: 1),
                 ],
                 startPoint: .leading, endPoint: .trailing
             )
-            LinearGradient(colors: [.white.opacity(0.1), .clear, .black.opacity(0.2)], startPoint: .top, endPoint: .bottom)
-            spineText
         }
-        .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: 2))
-        .overlay(
-            RoundedRectangle(cornerRadius: 2)
-                .strokeBorder(.white.opacity(isHovered ? 0.3 : 0.14), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(isHovered ? 0.6 : 0), radius: isHovered ? 14 : 0, y: isHovered ? 12 : 0)
-        .task(id: album.id) { await loadArt() }
+        .allowsHitTesting(false)
     }
 
     private var spineText: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 6 * unit) {
             Text(album.name)
-                .font(.system(size: 12.5, weight: .heavy))
+                .font(.system(size: 12.5 * unit, weight: .heavy))
             Text(credit)
-                .font(.system(size: 12.5, weight: .medium))
+                .font(.system(size: 12.5 * unit, weight: .medium))
                 .opacity(0.8)
         }
         .foregroundStyle(.white)
         .lineLimit(1)
-        .frame(width: height - 28, alignment: .leading)
+        .frame(width: height - 28 * unit, alignment: .leading)
         .rotationEffect(.degrees(90))
         .frame(width: width, height: height)
         .allowsHitTesting(false)
@@ -628,6 +766,52 @@ private struct RackSpine: View, Equatable {
             && lhs.width == rhs.width
             && lhs.height == rhs.height
             && lhs.isHovered == rhs.isHovered
+            && lhs.clearCase == rhs.clearCase
+            && lhs.unit == rhs.unit
+    }
+}
+
+/// The clear-case sheen: a slightly tilted band of light across a spine,
+/// centred `y` from its top.
+private struct RackSheen: View {
+    static let band: CGFloat = 150
+
+    let width: CGFloat
+    let height: CGFloat
+    let y: CGFloat
+
+    var body: some View {
+        RackSheenBand(tilt: -8)
+            .frame(width: width * 3, height: Self.band)
+            .position(x: width / 2, y: y)
+            .frame(width: width, height: height)
+            .clipShape(RoundedRectangle(cornerRadius: 2))
+            .blendMode(.plusLighter)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+/// A soft band of light, brightest just above its middle.
+private struct RackSheenBand: View {
+    let tilt: Double
+    var strength: Double = 1
+    /// Vertical runs the band across, top to bottom; horizontal, side to side.
+    var axis: Axis = .vertical
+
+    var body: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .clear, location: 0),
+                .init(color: .white.opacity(0.1 * strength), location: 0.3),
+                .init(color: .white.opacity(0.6 * strength), location: 0.47),
+                .init(color: .white.opacity(0.14 * strength), location: 0.54),
+                .init(color: .clear, location: 0.72),
+            ],
+            startPoint: axis == .vertical ? .top : .leading,
+            endPoint: axis == .vertical ? .bottom : .trailing
+        )
+        .rotationEffect(.degrees(tilt))
     }
 }
 
@@ -656,6 +840,15 @@ private struct RackTab: View {
 
 // MARK: - Case and disc
 
+/// Where a taken-out case is: in its slot, pulled clear of it edge-on, or
+/// turned to its front with the disc out.
+enum CaseStage {
+    case shelf, pulled, open
+
+    static let pullDuration: Double = 0.4
+    static let pullScale: CGFloat = 1.14
+}
+
 /// The jewel case out of the rack, as a box: a front with the cover, the
 /// spine on its left and a clear plastic edge on its right. One animated
 /// `angle` turns the whole box about its centre: 90° shows the spine face on,
@@ -672,6 +865,10 @@ private struct RackBox: View, Animatable {
     let credit: String
     let size: CGFloat
     let depth: CGFloat
+    /// The scale the box is shrunk to on the shelf, so its spine face's
+    /// plastic matches the shelf spine it's swapped for, point for point.
+    var shelfScale: CGFloat = 1
+    var clearCase: Bool = false
     var angle: Double
 
     nonisolated var animatableData: Double {
@@ -682,8 +879,9 @@ private struct RackBox: View, Animatable {
     var body: some View {
         ZStack {
             if let spine = face(width: depth, turnedBy: -90, out: size / 2) {
-                RackSpine(album: album, credit: credit, width: depth, height: size, isHovered: false)
+                RackSpine(album: album, credit: credit, width: depth, height: size, isHovered: false, clearCase: clearCase, unit: 1 / max(shelfScale, 0.01))
                     .equatable()
+                    .overlay { if clearCase { turnSheen(width: depth, reversed: true) } }
                     .overlay(Color.black.opacity(spine.shade))
                     .projectionEffect(spine.transform)
             }
@@ -729,6 +927,24 @@ private struct RackBox: View, Animatable {
         return (ProjectionTransform(t), (1 - cos(total)) * 0.45)
     }
 
+    /// How far through its turn the case is: 0 edge-on, 1 at rest front-on.
+    private var turnProgress: CGFloat {
+        CGFloat(min(1, max(0, (90 - angle) / (90 - Self.restingAngle))))
+    }
+
+    /// A band of light that sweeps across a face as the case turns. It fades
+    /// to nothing at either end of the turn, so nothing is left on the case
+    /// when it settles, or when it's swapped for the shelf's own spine.
+    private func turnSheen(width: CGFloat, reversed: Bool = false) -> some View {
+        let t = reversed ? 1 - turnProgress : turnProgress
+        return RackSheenBand(tilt: reversed ? 0 : 15, strength: 0.75 * sin(.pi * Double(t)), axis: .horizontal)
+            .frame(width: width * 3, height: size * 1.4)
+            .position(x: width * 1.5 - width * 2 * (1 - t), y: size / 2)
+            .frame(width: width, height: size)
+            .clipped()
+            .blendMode(.plusLighter)
+    }
+
     /// The case's open side: clear plastic over the tray's dark edge.
     private var edgeFace: some View {
         ZStack {
@@ -741,25 +957,69 @@ private struct RackBox: View, Animatable {
     }
 
     private var frontFace: some View {
-        ZStack(alignment: .leading) {
-            ArtworkView(data: album.artwork, size: size, id: "album:\(album.id)", showsShadow: false, alwaysSquare: true)
-            // The hinge strip down the left, and the plastic over the cover.
-            LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.05), .black.opacity(0.25)], startPoint: .leading, endPoint: .trailing)
-                .frame(width: max(10, size * 0.045))
+        Group {
+            if clearCase {
+                clearFront
+            } else {
+                ZStack(alignment: .leading) {
+                    ArtworkView(data: album.artwork, size: size, id: "album:\(album.id)", showsShadow: false, alwaysSquare: true)
+                    // The hinge strip down the left, and the plastic over the cover.
+                    LinearGradient(colors: [.white.opacity(0.22), .white.opacity(0.05), .black.opacity(0.25)], startPoint: .leading, endPoint: .trailing)
+                        .frame(width: max(10, size * 0.045))
+                    lidGloss
+                }
+                .frame(width: size, height: size)
+                .clipped()
+                .overlay(Rectangle().strokeBorder(.white.opacity(0.14), lineWidth: 1))
+            }
+        }
+        .shadow(color: .black.opacity(0.5), radius: 22, y: 20)
+    }
+
+    /// The cover under a clear lid: the booklet set just inside the plastic,
+    /// a ridged hinge strip down the left, a bright rim and a sheen that
+    /// sweeps across as the case turns.
+    private var clearFront: some View {
+        let inset = max(3, size * 0.017)
+        let hinge = max(12, size * 0.067)
+        return ZStack(alignment: .topLeading) {
+            Color(white: 0.07)
+            ArtworkView(data: album.artwork, size: size - hinge - inset, id: "album:\(album.id)", showsShadow: false, alwaysSquare: true)
+                .frame(width: size - hinge - inset, height: size - inset * 2)
+                .clipped()
+                .offset(x: hinge, y: inset)
             LinearGradient(
                 stops: [
-                    .init(color: .white.opacity(0.2), location: 0),
-                    .init(color: .clear, location: 0.32),
-                    .init(color: .clear, location: 0.7),
-                    .init(color: .white.opacity(0.07), location: 1),
+                    .init(color: .white.opacity(0.16), location: 0),
+                    .init(color: .white.opacity(0.04), location: 0.3),
+                    .init(color: .white.opacity(0.1), location: 0.34),
+                    .init(color: .white.opacity(0.03), location: 0.38),
+                    .init(color: .white.opacity(0.12), location: 0.7),
+                    .init(color: .white.opacity(0.02), location: 0.74),
+                    .init(color: .black.opacity(0.25), location: 1),
                 ],
-                startPoint: .topLeading, endPoint: .bottomTrailing
+                startPoint: .leading, endPoint: .trailing
             )
+            .frame(width: hinge, height: size)
+            lidGloss
+            turnSheen(width: size)
         }
         .frame(width: size, height: size)
         .clipped()
-        .overlay(Rectangle().strokeBorder(.white.opacity(0.14), lineWidth: 1))
-        .shadow(color: .black.opacity(0.5), radius: 22, y: 20)
+        .overlay(Rectangle().strokeBorder(.white.opacity(0.22), lineWidth: 1))
+        .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.35)).frame(height: 1) }
+    }
+
+    private var lidGloss: some View {
+        LinearGradient(
+            stops: [
+                .init(color: .white.opacity(0.2), location: 0),
+                .init(color: .clear, location: 0.32),
+                .init(color: .clear, location: 0.7),
+                .init(color: .white.opacity(0.07), location: 1),
+            ],
+            startPoint: .topLeading, endPoint: .bottomTrailing
+        )
     }
 }
 

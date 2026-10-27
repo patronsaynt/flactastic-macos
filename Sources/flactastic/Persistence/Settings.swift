@@ -66,6 +66,14 @@ final class Settings {
         didSet { UserDefaults.standard.set(hideSinglesInAlbums, forKey: "flactastic.hideSinglesInAlbums") }
     }
 
+    /// When true (the default), the Albums CD rack draws each case as clear
+    /// plastic: a rim and hinge highlight on every spine, a sheen that follows
+    /// the pointer down the hovered one, and a sheen across the case as it
+    /// turns. Off, the spines are plain printed cards.
+    var clearCaseLook: Bool {
+        didSet { UserDefaults.standard.set(clearCaseLook, forKey: "flactastic.clearCaseLook") }
+    }
+
     var customGenres: [String] {
         didSet { UserDefaults.standard.set(customGenres, forKey: "flactastic.customGenres") }
     }
@@ -171,6 +179,7 @@ final class Settings {
         seenTutorials = Set(UserDefaults.standard.stringArray(forKey: "flactastic.seenTutorials") ?? [])
         showAllArtists = UserDefaults.standard.bool(forKey: "flactastic.showAllArtists")
         hideSinglesInAlbums = (UserDefaults.standard.object(forKey: "flactastic.hideSinglesInAlbums") as? Bool) ?? true
+        clearCaseLook = (UserDefaults.standard.object(forKey: "flactastic.clearCaseLook") as? Bool) ?? true
         customGenres = UserDefaults.standard.stringArray(forKey: "flactastic.customGenres") ?? []
         let storedAutoFetch = UserDefaults.standard.object(forKey: "flactastic.autoFetchArtistImages")
         autoFetchArtistImages = (storedAutoFetch as? Bool) ?? true

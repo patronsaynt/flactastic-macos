@@ -616,6 +616,12 @@ private struct AppearanceSettingsPane: View {
                     subtitle: "Leave releases with fewer than three tracks out of the Albums view. They still show on artist pages and in search.",
                     isOn: $settings.hideSinglesInAlbums
                 )
+                GroupDivider()
+                ToggleRow(
+                    label: "Clear Case Look",
+                    subtitle: "Draw the Albums rack's CDs in clear plastic cases that catch the light as you move over them.",
+                    isOn: $settings.clearCaseLook
+                )
             }
 
             // Artwork ──────────────────────────────────────────────────────
