@@ -1,7 +1,7 @@
 # Privacy Policy for FLACtastic
 
-**Last Updated:** June 2026  
-**Version:** 1.0
+**Last Updated:** October 2026  
+**Version:** 1.1
 
 ## 1. Introduction
 
@@ -59,12 +59,18 @@ When you choose to use optional features that require external services, we shar
 - **LrcLib's privacy:** Governed by LrcLib's Privacy Policy
 
 #### Discord Rich Presence
-- **What we share:** When Discord is running and you enable Discord presence:
+- **What we share:** When Discord is running and Discord presence is on (it is on by default):
   - Currently playing track information (artist, title, album artwork)
   - Playback state (playing, paused, stopped)
-- **Storage location:** Data is sent only to Discord's local IPC socket on your machine—it does not leave your computer
-- **Your control:** This feature only works when Discord is running on your machine and can be disabled in settings
+- **Where it goes:** FLACtastic hands this to the Discord app through its local IPC socket. Discord then shows it on your profile, so people who can see your Discord status can see what you're listening to
+- **Album artwork:** To show the cover, FLACtastic looks up the album's artist and title with Apple's iTunes Search API (see below)
+- **Your control:** This feature only works when Discord is running on your machine and can be turned off in Settings
 - **Discord's privacy:** Governed by Discord's Privacy Policy
+
+#### Apple iTunes Search API
+- **What we share:** Artist, album and track names, when looking up album artwork for Discord presence and when matching a track to its Apple Music link
+- **No authentication required:** This is a public API call with no account or personal information attached
+- **Apple's privacy:** Governed by Apple's Privacy Policy
 
 #### Lucida.to Integration
 - **What we are:** FLACtastic acts as a frontend to Lucida.to, a music discovery and download service
@@ -80,7 +86,12 @@ When you choose to use optional features that require external services, we shar
 - **Internet connection required:** Some features require network access to fetch artist images, lyrics, and playlist information
 - **Local analytics only:** FLACtastic tracks your listening behavior (play counts, skip patterns, frequently played tracks) entirely on your device. This data is **never sent** to any external server or third party
 - **No external tracking:** FLACtastic does not collect or send usage analytics, error reports, or behavioral data to any server we control
-- **Your network:** All network requests are made from your computer directly to the services listed above (Spotify, Deezer, LrcLib, Discord)
+- **Your network:** All internet requests are made from your computer directly to the services listed above (Spotify, Deezer, LrcLib, Apple's iTunes Search API, Lucida.to)
+
+### 2.5 Local Network Features
+- **Library sync:** While the Sync window or Devices tab is open, FLACtastic advertises itself on your local network (Bonjour) so your other devices can find it. A device must be paired with a code shown on screen before it can exchange anything, and paired devices talk over an encrypted connection. Pairing keys are stored in the macOS Keychain and never leave this Mac
+- **Casting:** When you play to a network speaker, FLACtastic serves that track and its artwork to the speaker over your local network, at a random address that only the speaker is given and that expires shortly afterwards
+- Neither feature sends anything over the internet
 
 ## 3. How We Use Your Information
 
@@ -112,7 +123,7 @@ We do not use your information for:
 - Playlists, settings, and analytics are stored in standard macOS formats
 - You can export your music library configuration by backing up your UserDefaults directory
 - You can reset all listening analytics at any time through the application settings
-- Uninstalling FLACtastic will delete all locally-stored data (playlists, settings, analytics) unless you explicitly back it up
+- Deleting FLACtastic from Applications does not remove its data. To remove everything, also delete `~/Library/Preferences/com.flactastic.app.plist` and `~/Library/Application Support/flactastic`, and remove any "com.flactastic.sync.peerKey" items from Keychain Access
 
 ## 5. Data Retention
 
@@ -126,6 +137,7 @@ We do not use your information for:
 - FLACtastic does not use sandboxing, meaning it has full access to your file system with the permissions you grant
 - Your data is protected by macOS file system permissions and your computer's security settings
 - Spotify tokens are stored in UserDefaults without encryption; protect your computer from physical access or unauthorized users
+- Keys for paired sync devices are stored in the macOS Keychain, limited to this Mac
 
 ### 6.2 Network Security
 - All communication with external services (Spotify, Deezer, LrcLib) uses HTTPS encryption
@@ -147,6 +159,7 @@ FLACtastic integrates with the following services. Their data practices are gove
 | Deezer | Artist profile images | https://www.deezer.com/legal/privacy |
 | LrcLib | Song lyrics database | https://lrclib.net (public service) |
 | Discord | Rich presence for currently playing track | https://discord.com/privacy |
+| Apple iTunes Search API | Album artwork and Apple Music links | https://www.apple.com/legal/privacy/ |
 | Lucida.to | Music discovery and downloading | https://lucida.to (see their terms) |
 
 We are not responsible for the privacy practices of these third-party services. When using Lucida.to through FLACtastic, you are bound by Lucida.to's privacy policy and terms of service.

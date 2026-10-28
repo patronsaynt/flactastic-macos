@@ -275,8 +275,7 @@ final class SpotifyAuthController {
     // MARK: - PKCE helpers
 
     private static func makeCodeVerifier() -> String {
-        var bytes = [UInt8](repeating: 0, count: 64)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let bytes = (0..<64).map { _ in UInt8.random(in: .min ... .max) }
         return base64URL(Data(bytes))
     }
 

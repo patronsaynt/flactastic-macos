@@ -199,6 +199,25 @@ func rejectsSymlinkedAncestor() throws {
     }
 }
 
+@Test("A dangling symlink is refused rather than written through")
+func rejectsDanglingSymlink() throws {
+    let fm = FileManager.default
+    let base = fm.temporaryDirectory.appendingPathComponent("flactastic-sync-\(UUID().uuidString)")
+    let root = base.appendingPathComponent("library")
+    try fm.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: base) }
+
+    // Points outside the library at something that doesn't exist yet, so
+    // `fileExists` reports the link as absent.
+    try fm.createSymbolicLink(at: root.appendingPathComponent("song.flac"),
+                              withDestinationURL: base.appendingPathComponent("outside.flac"))
+
+    let safe = try PathSanitizer.sanitizeAudioRelativePath("song.flac")
+    #expect(throws: PathSanitizer.Rejection.self) {
+        try PathSanitizer.resolvedDestination(forSanitizedPath: safe, under: root)
+    }
+}
+
 @Test("A clean path resolves to a URL under the root")
 func resolvesCleanPath() throws {
     let fm = FileManager.default

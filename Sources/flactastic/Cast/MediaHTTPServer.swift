@@ -165,8 +165,9 @@ final class MediaHTTPServer: @unchecked Sendable {
 
     /// Registers a resource and returns its URL path, e.g. `/t/<token>.flac`.
     func register(_ resource: MediaResource, fileExtension: String) -> String {
-        var bytes = [UInt8](repeating: 0, count: 16)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        // The system generator is cryptographically secure and, unlike an
+        // unchecked `SecRandomCopyBytes`, can't silently leave zeros behind.
+        let bytes = (0..<16).map { _ in UInt8.random(in: .min ... .max) }
         let token = bytes.map { String(format: "%02x", $0) }.joined()
         resources.withLock { table in
             table.byToken[token] = resource

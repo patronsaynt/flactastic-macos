@@ -93,10 +93,6 @@ enum PeerKeyStore {
         }
     }
 
-    static func hasKey(for deviceID: UUID) -> Bool {
-        (try? key(for: deviceID)) .flatMap { $0 } != nil
-    }
-
     // MARK: - Delete
 
     /// Revokes a peer. After this the peer cannot complete a TLS handshake
@@ -106,18 +102,6 @@ enum PeerKeyStore {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: deviceID.uuidString,
-        ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw StoreError.keychainFailure(status)
-        }
-    }
-
-    /// Removes every sync key. Backs "Forget all devices".
-    static func deleteAll() throws {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {

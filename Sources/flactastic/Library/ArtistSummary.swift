@@ -10,6 +10,4 @@ struct ArtistSummary: Identifiable, Sendable {
     let appearsOn: [Album]
     let trackCount: Int
     let artworkSample: Data?
-
-    var totalReleases: Int { albums.count + singles.count + appearsOn.count }
 }

@@ -192,8 +192,15 @@ enum PathSanitizer {
         for component in path.split(separator: "/").map(String.init) {
             current = current.appendingPathComponent(component)
             // Only an existing entry can be a symlink; anything we create
-            // ourselves is a plain directory or file.
-            if fileManager.fileExists(atPath: current.path) {
+            // ourselves is a plain directory or file. `fileExists` follows
+            // links, so a dangling one would read as absent and be written
+            // through to wherever it points; refuse it outright.
+            let isLink = (try? fileManager.destinationOfSymbolicLink(atPath: current.path)) != nil
+            let exists = fileManager.fileExists(atPath: current.path)
+            if isLink && !exists {
+                throw Rejection.escapesRoot(current.path)
+            }
+            if exists {
                 let resolved = current.resolvingSymlinksInPath().standardizedFileURL
                 guard isContained(resolved, in: canonicalRoot) else {
                     throw Rejection.escapesRoot(current.path)

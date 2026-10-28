@@ -9,10 +9,6 @@ import Observation
 final class StreamerRegistry {
     private(set) var providers: [String: any StreamerProvider] = [:]   // serviceID → provider
 
-    var allProviders: [any StreamerProvider] {
-        providers.values.sorted { $0.displayName < $1.displayName }
-    }
-
     func register(_ provider: any StreamerProvider) {
         providers[provider.serviceID] = provider
     }

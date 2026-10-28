@@ -91,14 +91,6 @@ struct SyncPeerStore {
         load()[deviceID]?.filter ?? .unrestricted
     }
 
-    func setFilter(_ filter: SyncFilter, for deviceID: UUID) {
-        var records = load()
-        guard var record = records[deviceID] else { return }
-        record.filter = filter
-        records[deviceID] = record
-        save(records)
-    }
-
     /// "Last synced 2 hours ago" / "Never synced" — the device row's subtitle.
     static func lastSyncedDescription(_ date: Date?) -> String {
         guard let date else { return "Never synced" }

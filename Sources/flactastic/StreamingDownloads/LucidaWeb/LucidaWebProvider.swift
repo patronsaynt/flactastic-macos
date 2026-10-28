@@ -594,8 +594,6 @@ private struct LucidaStreamInitiateResponse: Decodable {
     /// every subsequent call routed to the same backend node.
     let name: String?
     let error: String?
-    let skipbo: String?
-    let skipboExpiration: Double?
 }
 
 private struct LucidaPollResponse: Decodable {

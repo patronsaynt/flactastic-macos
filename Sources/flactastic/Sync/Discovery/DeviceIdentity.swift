@@ -57,13 +57,6 @@ enum DeviceIdentity {
     }
 
     static let kind: SyncDeviceKind = .mac
-
-    /// Resets identity. Only for "forget all devices" — every peer that has
-    /// paired with us will see this installation as a brand-new, unpaired
-    /// device afterwards.
-    static func regenerate() {
-        UserDefaults.standard.removeObject(forKey: idKey)
-    }
 }
 
 /// A peer seen on the network but not necessarily connected to or trusted.

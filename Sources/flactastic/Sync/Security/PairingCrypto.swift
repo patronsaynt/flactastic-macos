@@ -38,8 +38,6 @@ enum PairingCrypto {
     enum Role: String, Sendable {
         case host
         case guest
-
-        var opposite: Role { self == .host ? .guest : .host }
     }
 
     static let nonceBytes = 32
@@ -65,20 +63,15 @@ enum PairingCrypto {
         // 250 is the largest multiple of 10 below 256, so values above it are
         // discarded rather than folded back in unevenly.
         while true {
-            var byte: UInt8 = 0
-            _ = withUnsafeMutableBytes(of: &byte) { buffer in
-                SecRandomCopyBytes(kSecRandomDefault, 1, buffer.baseAddress!)
-            }
+            // The system generator is cryptographically secure and traps
+            // rather than returning a predictable zero when it fails.
+            let byte = UInt8.random(in: .min ... .max)
             if byte < 250 { return Int(byte) % 10 }
         }
     }
 
     static func randomNonce() -> Data {
-        var bytes = [UInt8](repeating: 0, count: nonceBytes)
-        _ = bytes.withUnsafeMutableBytes { buffer in
-            SecRandomCopyBytes(kSecRandomDefault, nonceBytes, buffer.baseAddress!)
-        }
-        return Data(bytes)
+        Data((0..<nonceBytes).map { _ in UInt8.random(in: .min ... .max) })
     }
 
     // MARK: - Commitment

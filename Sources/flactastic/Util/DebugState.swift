@@ -20,7 +20,6 @@ final class DebugState {
     var showsPerformanceOverlay: Bool { didSet { save(showsPerformanceOverlay, "showsPerformanceOverlay") } }
     var lucidaInspector: Bool { didSet { save(lucidaInspector, "lucidaInspector") } }
 
-    var onboardingEveryLaunchActive: Bool { debuggingEnabled && showsOnboardingEveryLaunch }
     var tutorialsEveryVisitActive: Bool { debuggingEnabled && showsTutorialsEveryVisit }
     var emptyLibraryPreviewActive: Bool { debuggingEnabled && previewsEmptyLibrary }
     var performanceOverlayActive: Bool { debuggingEnabled && showsPerformanceOverlay }
