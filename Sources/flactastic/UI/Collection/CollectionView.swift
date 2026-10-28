@@ -56,6 +56,10 @@ struct CollectionView: View {
     /// every render (hover, selection, any observable tick). Same pattern as
     /// `AllTracksView.cachedVisible`.
     @State private var cachedFiltered: [Album] = []
+    /// Bumped whenever `cachedFiltered` is rebuilt, so the album rack can tell
+    /// its list changed (an edited label or genre keeps the album's ID)
+    /// without comparing the whole list on every frame.
+    @State private var filteredRevision = 0
 
     private func recomputeVisible() {
         // Singles are left out of browsing when the setting says so, but a
@@ -77,6 +81,19 @@ struct CollectionView: View {
             sorted = albums.sorted {
                 ($0.genre ?? "Unknown").localizedStandardCompare($1.genre ?? "Unknown") == .orderedAscending
             }
+        case .label:
+            // Labelled albums A to Z by label, then by artist within a label;
+            // the unlabelled after them, by artist.
+            sorted = albums.sorted {
+                switch ($0.label, $1.label) {
+                case let (a?, b?) where a.localizedCaseInsensitiveCompare(b) != .orderedSame:
+                    return a.localizedStandardCompare(b) == .orderedAscending
+                case (nil, _?): return false
+                case (_?, nil): return true
+                default:
+                    return ($0.artist ?? "").localizedStandardCompare($1.artist ?? "") == .orderedAscending
+                }
+            }
         }
 
         let filtered: [Album]
@@ -91,6 +108,7 @@ struct CollectionView: View {
             }
         }
         cachedFiltered = filtered
+        filteredRevision &+= 1
     }
 
     /// Room kept free under the shelf's details for the floating player bar.
@@ -108,6 +126,10 @@ struct CollectionView: View {
         Group {
             if let top = router.collectionPath.last {
                 detailView(for: top)
+                    // One identity per page: going album → album (e.g. from
+                    // "More by") is otherwise the same view with a new ID, so
+                    // it updated in place — no fade, scroll left at the bottom.
+                    .id(top)
                     .transition(.opacity)
             } else {
                 rootContent
@@ -187,6 +209,7 @@ struct CollectionView: View {
                 GeometryReader { geo in
                     AlbumRackView(
                         albums: cachedFiltered,
+                        revision: filteredRevision,
                         sort: sortOption,
                         available: CGSize(width: geo.size.width, height: geo.size.height - Self.shelfBottomClearance),
                         open: { router.collectionPath.append($0.id) },

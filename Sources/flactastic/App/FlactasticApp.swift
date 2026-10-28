@@ -23,6 +23,8 @@ struct FlactasticApp: App {
         // A write to a closed socket/pipe should surface as EPIPE, not kill the
         // app mid-album. Sockets also set SO_NOSIGPIPE; this is the backstop.
         signal(SIGPIPE, SIG_IGN)
+        // The rack's spine faces, before any view asks for them by name.
+        SpineFonts.register()
 
         // Listening history recorder, injected into the player so plays are
         // tracked into whichever library is currently loaded. Settings is built

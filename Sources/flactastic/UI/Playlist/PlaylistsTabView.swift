@@ -41,6 +41,9 @@ struct PlaylistsTabView: View {
         Group {
             if let playlistID = router.playlistsPath.last {
                 PlaylistDetailView(playlistID: playlistID)
+                    // A new page per playlist, so switching fades and starts
+                    // at the top (see CollectionView).
+                    .id(playlistID)
                     .transition(.opacity)
             } else {
                 rootContent

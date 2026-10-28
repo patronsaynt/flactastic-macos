@@ -79,3 +79,104 @@ final class BlurredArtworkCache: @unchecked Sendable {
         }.value
     }
 }
+
+/// Sharp slices of album covers for the Albums rack's spines: the cover
+/// decoded at the spine's height, one spine-wide strip cut from it, with any
+/// ageing (faded, warmed colour) baked in. Made once off the main thread and
+/// kept, so scrolling the rack runs no image work at all.
+final class SpineArtCache: @unchecked Sendable {
+    static let shared = SpineArtCache()
+
+    struct Art: Sendable {
+        let image: NSImage?
+        /// Mean brightness (0…1) of the slice's top and bottom fifths, for
+        /// type printed straight onto the art there.
+        let topLuminance: Double
+        let bottomLuminance: Double
+    }
+
+    private final class Box { let art: Art; init(_ art: Art) { self.art = art } }
+
+    /// `NSCache` is internally thread-safe; that is the whole of the
+    /// `@unchecked Sendable` claim. Each slice is small (a spine's width by
+    /// its height), so a few hundred cover a long shelf.
+    private let cache = NSCache<NSString, Box>()
+
+    private init() {
+        cache.countLimit = 300
+    }
+
+    static func key(data: Data, slice: Double, pixelSize: CGSize, age: Double) -> String {
+        "\(sizeFreeKey(data: data, slice: slice, age: age))|\(Int(pixelSize.width))x\(Int(pixelSize.height))"
+    }
+
+    /// The same slice at any size.
+    static func sizeFreeKey(data: Data, slice: Double, age: Double) -> String {
+        "\(ArtworkImageCache.contentID(for: data))|\(Int(slice * 1000))|\(Int(age * 20))"
+    }
+
+    func cached(key: String) -> Art? {
+        cache.object(forKey: key as NSString)?.art
+    }
+
+    /// The last slice cut for this cover, position and age, whatever its
+    /// size: a spine drawn at a new size (the case lifted off the shelf)
+    /// shows it straight away while its own is cut, instead of drawing blank.
+    func anySize(_ sizeFreeKey: String) -> Art? {
+        latest.object(forKey: sizeFreeKey as NSString)?.art
+    }
+
+    private let latest = NSCache<NSString, Box>()
+
+    func art(for data: Data, key: String, slice: Double, pixelSize: CGSize, age: Double) async -> Art {
+        if let hit = cached(key: key) { return hit }
+        let result = await Task.detached(priority: .userInitiated) { [cache] in
+            let art = Self.render(data, slice: slice, pixelSize: pixelSize, age: age)
+            cache.setObject(Box(art), forKey: key as NSString)
+            return art
+        }.value
+        latest.setObject(Box(result), forKey: Self.sizeFreeKey(data: data, slice: slice, age: age) as NSString)
+        return result
+    }
+
+    private static let context = CIContext(options: [.cacheIntermediates: false])
+
+    private static func render(_ data: Data, slice: Double, pixelSize: CGSize, age: Double) -> Art {
+        let blank = Art(image: nil, topLuminance: 0.2, bottomLuminance: 0.2)
+        let height = max(1, Int(pixelSize.height)), width = max(1, Int(pixelSize.width))
+        guard let cover = PrerenderedImage.downsampled(data, maxPixel: height) else { return blank }
+        // Scale the cover to the spine's height, then cut the slice.
+        let scale = CGFloat(height) / CGFloat(cover.height)
+        let coverWidth = CGFloat(cover.width) * scale
+        let x = (coverWidth - CGFloat(width)) * CGFloat(min(max(slice, 0), 1))
+        var image = CIImage(cgImage: cover)
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            .transformed(by: CGAffineTransform(translationX: -max(0, x), y: 0))
+        if age > 0 {
+            image = image
+                .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1 - age * 0.35])
+                .applyingFilter("CISepiaTone", parameters: [kCIInputIntensityKey: age * 0.22])
+        }
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        guard let cg = context.createCGImage(image, from: rect) else { return blank }
+        return Art(
+            image: NSImage(cgImage: cg, size: NSSize(width: width, height: height)),
+            topLuminance: luminance(cg, top: true),
+            bottomLuminance: luminance(cg, top: false)
+        )
+    }
+
+    /// Mean brightness of the top or bottom fifth, drawn down to one grey pixel.
+    private static func luminance(_ image: CGImage, top: Bool) -> Double {
+        let band = max(1, image.height / 5)
+        let rect = CGRect(x: 0, y: top ? 0 : image.height - band, width: image.width, height: band)
+        guard let part = image.cropping(to: rect) else { return 0.2 }
+        var pixel: UInt8 = 0
+        guard let ctx = CGContext(data: &pixel, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 1,
+                                  space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue)
+        else { return 0.2 }
+        ctx.interpolationQuality = .medium
+        ctx.draw(part, in: CGRect(x: 0, y: 0, width: 1, height: 1))
+        return Double(pixel) / 255
+    }
+}

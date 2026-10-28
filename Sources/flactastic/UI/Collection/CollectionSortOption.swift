@@ -5,6 +5,8 @@ enum CollectionSortOption: String, CaseIterable, Identifiable {
     case artist = "Artist"
     case year = "Year"
     case genre = "Genre"
+    /// By record label, A to Z; albums with no label come last.
+    case label = "Label"
 
     var id: String { rawValue }
 }

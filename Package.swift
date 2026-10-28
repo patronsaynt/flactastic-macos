@@ -34,6 +34,8 @@ let package = Package(
             resources: [
                 .process("Assets.xcassets"),
                 .copy("Resources/Wordmark.png"),
+                // The rack's spine title faces and their licences.
+                .copy("Resources/SpineFonts"),
             ],
             linkerSettings: [
                 .unsafeFlags(

@@ -584,6 +584,7 @@ private struct ConnectionsSettingsPane: View {
 
 private struct AppearanceSettingsPane: View {
     @Environment(Settings.self) private var settings
+    @State private var showsGenreGroups = false
 
     private let scaleRange: ClosedRange<Double> = 0.9...1.35
 
@@ -623,6 +624,34 @@ private struct AppearanceSettingsPane: View {
                     isOn: $settings.clearCaseLook
                 )
             }
+
+            // Album Spines ─────────────────────────────────────────────────
+            // The rack's spines. Everything after Blur Spine Art shapes the
+            // designed inserts, so it rests while another style is on.
+            SettingsGroup(title: "Album Spines") {
+                PickerRow(
+                    label: "Spine Style",
+                    subtitle: "Designed gives every album its own printed insert, in a face picked by genre. Art + Title and Art Only show the cover's art down the spine."
+                ) {
+                    Picker("", selection: $settings.spineStyle) {
+                        ForEach(SpineStyle.allCases) { Text($0.label).tag($0) }
+                    }
+                }
+                GroupDivider()
+                ToggleRow(
+                    label: "Use Spine Scans",
+                    subtitle: "When an album's folder has a spine image (spine.jpg or similar), show that real printed spine instead.",
+                    isOn: $settings.useSpineScans
+                )
+                GroupDivider()
+                ToggleRow(
+                    label: "Blur Spine Art",
+                    subtitle: "Soften the album art on each spine. Off shows the art as printed.",
+                    isOn: $settings.blurSpineArt
+                )
+                designedRows
+            }
+            .sheet(isPresented: $showsGenreGroups) { GenreGroupsSheet() }
 
             // Artwork ──────────────────────────────────────────────────────
             SettingsGroup(title: "Artwork") {
@@ -859,5 +888,60 @@ private struct DebugSettingsPane: View {
 
     private static func size(_ bytes: Int) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+}
+
+private extension AppearanceSettingsPane {
+    /// Rows that shape designed spines, resting (dimmed, inactive) while
+    /// another spine style is on.
+    @ViewBuilder
+    var designedRows: some View {
+        @Bindable var settings = settings
+        let designed = settings.spineStyle == .designed
+        Group {
+            GroupDivider()
+            PickerRow(
+                label: "Spine Variety",
+                subtitle: "Uniform gives every album the same tidy insert. Wild widens the ranges, sets inserts a little askew and borrows faces from neighbouring genres."
+            ) {
+                Picker("", selection: $settings.spineVariety) {
+                    ForEach(SpineVariety.allCases) { Text($0.label).tag($0) }
+                }
+            }
+            GroupDivider()
+            PickerRow(
+                label: "Shelf Theme",
+                subtitle: "Artist Series gives each artist one design, in each album's cover colour. Label House Style gives each record label one design."
+            ) {
+                Picker("", selection: $settings.shelfTheme) {
+                    ForEach(ShelfTheme.allCases) { Text($0.label).tag($0) }
+                }
+            }
+            GroupDivider()
+            PickerRow(
+                label: "Label Mark",
+                subtitle: "The record label at the top or foot of the spine: its logo if you've added one, its initials otherwise."
+            ) {
+                Picker("", selection: $settings.spineLabelMark) {
+                    ForEach(LabelMarkStyle.allCases) { Text($0.label).tag($0) }
+                }
+            }
+            GroupDivider()
+            ToggleRow(
+                label: "Age Spines With Release Year",
+                subtitle: "Older albums' inserts yellow and fade, and their cases pick up fine scuffs.",
+                isOn: $settings.ageSpinesWithYear
+            )
+            GroupDivider()
+            PickerRow(
+                label: "Genre Groups",
+                subtitle: "Which genres share a title face, and which faces each group may use."
+            ) {
+                Button("Edit Groups…") { showsGenreGroups = true }
+                    .buttonStyle(PillButtonStyle())
+            }
+        }
+        .disabled(!designed)
+        .opacity(designed ? 1 : 0.4)
     }
 }

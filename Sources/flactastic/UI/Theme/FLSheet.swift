@@ -32,6 +32,12 @@ struct FLSheet<Content: View, Footer: View>: View {
     let title: String
     var width: CGFloat = 520
     var height: CGFloat = 500
+    /// For forms always taller than the sheet: skip measuring whether they
+    /// fit (which builds the whole form twice) and scroll straight away.
+    var alwaysScrolls = false
+    /// For content that scrolls itself (Genre Groups' detail pane): used as
+    /// it is, with no fit test and no scroll view around it.
+    var contentScrolls = false
     @ViewBuilder var content: () -> Content
     @ViewBuilder var footer: () -> Footer
 
@@ -47,13 +53,23 @@ struct FLSheet<Content: View, Footer: View>: View {
             // A form taller than the sheet scrolls instead of pushing the
             // footer out of the frame. Content that fits (or that fills the
             // space, or scrolls itself) is shown as is.
-            ViewThatFits(in: .vertical) {
+            if contentScrolls {
                 content()
                     .frame(maxHeight: .infinity, alignment: .top)
+            } else if alwaysScrolls {
                 ScrollView {
                     content()
                 }
                 .scrollIndicators(.automatic)
+            } else {
+                ViewThatFits(in: .vertical) {
+                    content()
+                        .frame(maxHeight: .infinity, alignment: .top)
+                    ScrollView {
+                        content()
+                    }
+                    .scrollIndicators(.automatic)
+                }
             }
             Rectangle()
                 .fill(Theme.divider)

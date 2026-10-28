@@ -74,6 +74,107 @@ final class Settings {
         didSet { UserDefaults.standard.set(clearCaseLook, forKey: "flactastic.clearCaseLook") }
     }
 
+    /// Blurs the album art behind each rack spine's insert (off by default:
+    /// the art shows as printed).
+    var blurSpineArt: Bool {
+        didSet { UserDefaults.standard.set(blurSpineArt, forKey: "flactastic.blurSpineArt") }
+    }
+
+    var spineVariety: SpineVariety {
+        didSet { UserDefaults.standard.set(spineVariety.rawValue, forKey: "flactastic.spineVariety") }
+    }
+
+    var shelfTheme: ShelfTheme {
+        didSet { UserDefaults.standard.set(shelfTheme.rawValue, forKey: "flactastic.shelfTheme") }
+    }
+
+    var spineLabelMark: LabelMarkStyle {
+        didSet { UserDefaults.standard.set(spineLabelMark.rawValue, forKey: "flactastic.spineLabelMark") }
+    }
+
+    /// Older albums' spines yellow and scuff with their release year.
+    var ageSpinesWithYear: Bool {
+        didSet { UserDefaults.standard.set(ageSpinesWithYear, forKey: "flactastic.ageSpinesWithYear") }
+    }
+
+    /// How many times each album's spine has been shuffled, by album ID. The
+    /// rest of a spine's design comes from its seed, so this is all that's
+    /// stored.
+    var spineShuffles: [String: Int] {
+        didSet { UserDefaults.standard.set(spineShuffles, forKey: "flactastic.spineShuffles") }
+    }
+
+    /// Designed inserts, or the art with or without a plain title.
+    var spineStyle: SpineStyle {
+        didSet { UserDefaults.standard.set(spineStyle.rawValue, forKey: "flactastic.spineStyle") }
+    }
+
+    /// When an album's folder has a spine image (spine.jpg and the like),
+    /// the rack shows that real printed spine instead of drawing one.
+    var useSpineScans: Bool {
+        didSet { UserDefaults.standard.set(useSpineScans, forKey: "flactastic.useSpineScans") }
+    }
+
+    /// What's locked in Edit Spine, by album ID.
+    var spineOverrides: [String: SpineOverrides] {
+        didSet { Self.saveJSON(spineOverrides, key: "flactastic.spineOverrides") }
+    }
+
+    /// Genre Groups: keywords moved between groups or added.
+    var genreGroups: GenreGroups {
+        didSet { Self.saveJSON(genreGroups, key: "flactastic.genreGroups") }
+    }
+
+    /// Title faces switched off in Genre Groups.
+    var disabledSpineFaces: Set<SpineFont> {
+        didSet { UserDefaults.standard.set(disabledSpineFaces.map(\.rawValue).sorted(), forKey: "flactastic.disabledSpineFaces") }
+    }
+
+    /// The person's own logos for spines: lower-cased artist or label name →
+    /// image file name in `SpineLogoStore`'s folder.
+    var artistLogos: [String: String] {
+        didSet { UserDefaults.standard.set(artistLogos, forKey: "flactastic.artistLogos") }
+    }
+
+    var labelLogos: [String: String] {
+        didSet { UserDefaults.standard.set(labelLogos, forKey: "flactastic.labelLogos") }
+    }
+
+    /// How each logo is coloured on spines, by the same keys as the logos.
+    var artistLogoTints: [String: LogoTint] {
+        didSet { Self.saveJSON(artistLogoTints, key: "flactastic.artistLogoTints") }
+    }
+
+    var labelLogoTints: [String: LogoTint] {
+        didSet { Self.saveJSON(labelLogoTints, key: "flactastic.labelLogoTints") }
+    }
+
+    /// Per label logo: its badge or band shown behind it, and which way it faces.
+    var labelLogoBackings: [String: Bool] {
+        didSet { Self.saveJSON(labelLogoBackings, key: "flactastic.labelLogoBackings") }
+    }
+
+    var labelLogoRotations: [String: LogoRotation] {
+        didSet { Self.saveJSON(labelLogoRotations, key: "flactastic.labelLogoRotations") }
+    }
+
+    var spineOptions: SpineDesign.Options {
+        SpineDesign.Options(
+            variety: spineVariety, theme: shelfTheme, labelMark: spineLabelMark, ageWithYear: ageSpinesWithYear,
+            groups: genreGroups, disabledFaces: disabledSpineFaces, artistLogos: artistLogos, labelLogos: labelLogos,
+            artistLogoTints: artistLogoTints, labelLogoTints: labelLogoTints,
+            labelLogoBackings: labelLogoBackings, labelLogoRotations: labelLogoRotations
+        )
+    }
+
+    private static func saveJSON<T: Encodable>(_ value: T, key: String) {
+        UserDefaults.standard.set(try? JSONEncoder().encode(value), forKey: key)
+    }
+
+    private static func loadJSON<T: Decodable>(_ type: T.Type, key: String) -> T? {
+        UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(type, from: $0) }
+    }
+
     var customGenres: [String] {
         didSet { UserDefaults.standard.set(customGenres, forKey: "flactastic.customGenres") }
     }
@@ -180,6 +281,23 @@ final class Settings {
         showAllArtists = UserDefaults.standard.bool(forKey: "flactastic.showAllArtists")
         hideSinglesInAlbums = (UserDefaults.standard.object(forKey: "flactastic.hideSinglesInAlbums") as? Bool) ?? true
         clearCaseLook = (UserDefaults.standard.object(forKey: "flactastic.clearCaseLook") as? Bool) ?? true
+        blurSpineArt = UserDefaults.standard.bool(forKey: "flactastic.blurSpineArt")
+        spineVariety = UserDefaults.standard.string(forKey: "flactastic.spineVariety").flatMap(SpineVariety.init(rawValue:)) ?? .varied
+        shelfTheme = UserDefaults.standard.string(forKey: "flactastic.shelfTheme").flatMap(ShelfTheme.init(rawValue:)) ?? .off
+        spineLabelMark = UserDefaults.standard.string(forKey: "flactastic.spineLabelMark").flatMap(LabelMarkStyle.init(rawValue:)) ?? .badge
+        ageSpinesWithYear = (UserDefaults.standard.object(forKey: "flactastic.ageSpinesWithYear") as? Bool) ?? true
+        spineShuffles = (UserDefaults.standard.dictionary(forKey: "flactastic.spineShuffles") as? [String: Int]) ?? [:]
+        spineStyle = UserDefaults.standard.string(forKey: "flactastic.spineStyle").flatMap(SpineStyle.init(rawValue:)) ?? .designed
+        useSpineScans = (UserDefaults.standard.object(forKey: "flactastic.useSpineScans") as? Bool) ?? true
+        spineOverrides = Self.loadJSON([String: SpineOverrides].self, key: "flactastic.spineOverrides") ?? [:]
+        genreGroups = Self.loadJSON(GenreGroups.self, key: "flactastic.genreGroups") ?? GenreGroups()
+        disabledSpineFaces = Set((UserDefaults.standard.stringArray(forKey: "flactastic.disabledSpineFaces") ?? []).compactMap(SpineFont.init(rawValue:)))
+        artistLogos = (UserDefaults.standard.dictionary(forKey: "flactastic.artistLogos") as? [String: String]) ?? [:]
+        labelLogos = (UserDefaults.standard.dictionary(forKey: "flactastic.labelLogos") as? [String: String]) ?? [:]
+        artistLogoTints = Self.loadJSON([String: LogoTint].self, key: "flactastic.artistLogoTints") ?? [:]
+        labelLogoTints = Self.loadJSON([String: LogoTint].self, key: "flactastic.labelLogoTints") ?? [:]
+        labelLogoBackings = Self.loadJSON([String: Bool].self, key: "flactastic.labelLogoBackings") ?? [:]
+        labelLogoRotations = Self.loadJSON([String: LogoRotation].self, key: "flactastic.labelLogoRotations") ?? [:]
         customGenres = UserDefaults.standard.stringArray(forKey: "flactastic.customGenres") ?? []
         let storedAutoFetch = UserDefaults.standard.object(forKey: "flactastic.autoFetchArtistImages")
         autoFetchArtistImages = (storedAutoFetch as? Bool) ?? true
