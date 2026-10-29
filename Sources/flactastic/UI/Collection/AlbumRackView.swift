@@ -214,8 +214,8 @@ struct AlbumRackView: View {
         settings.useSpineScans ? album.tracks.first?.url.deletingLastPathComponent() : nil
     }
 
-    /// Edit Spine opens the sheet; Shuffle Spine rolls whatever isn't locked
-    /// (one stored count); Reset Spine forgets both. Designed spines only.
+    /// Edit Spine opens the sheet; Shuffle Spine rolls whatever wasn't picked
+    /// there (one stored count); Reset Spine forgets both. Designed spines only.
     private func spineMenu(_ album: Album) -> [FLContextMenuItem] {
         guard settings.spineStyle == .designed else { return [] }
         let shuffles = settings.spineShuffles[album.id] ?? 0
@@ -837,6 +837,9 @@ struct RackSpine: View, Equatable {
     /// the design's slice instead of being cut, so dragging the art's
     /// position moves an image rather than cutting a new one each step.
     var fullCover: NSImage?
+    /// Edit Spine's preview: reports where the strip, title, artist, label
+    /// mark and disc count land (`spinePartReporter`), so they can be clicked.
+    var reportsParts = false
 
     @Environment(\.displayScale) private var displayScale
     /// A real spine scan from the album's folder, which replaces the drawn spine.
@@ -1098,6 +1101,7 @@ struct RackSpine: View, Equatable {
             // Only a torn edge needs a clipping mask; a straight one is
             // already its own rectangle.
             .modifier(TornClip(isTorn: !bare && design.edge == .torn, seed: design.detailSeed, depth: 3.2 * unit))
+            .spinePart(.insert, reportsParts)
             .rotationEffect(.degrees(design.askew))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
             .padding(.leading, (design.position == .top ? margin : 0) + (reservesHead && design.position != .bottom ? head : 0))
@@ -1133,6 +1137,7 @@ struct RackSpine: View, Equatable {
                         .padding(.vertical, 1 * unit)
                         .overlay(RoundedRectangle(cornerRadius: 2 * unit).strokeBorder(ink.opacity(0.7), lineWidth: unit))
                         .fixedSize()
+                        .spinePart(.discCount, reportsParts)
                 }
             }
             .padding(.horizontal, 8 * unit)
@@ -1187,6 +1192,7 @@ struct RackSpine: View, Equatable {
             .foregroundStyle(ink)
             .lineLimit(1)
             .offset(y: -raise)
+            .spinePart(.title, reportsParts)
     }
 
     /// The design's title text; a design rolled before it had one prints the
@@ -1195,6 +1201,7 @@ struct RackSpine: View, Equatable {
 
     private func artist(ink: Color) -> some View {
         artistLine(ink: ink.opacity(0.78), ground: Self.luminance(NSColor(resolvedFill)), weight: .medium, logoHeight: 11 * unit)
+            .spinePart(.artist, reportsParts)
     }
 
     /// The album's artists, each as their logo if the person added one or
@@ -1302,6 +1309,7 @@ struct RackSpine: View, Equatable {
         return artistLine(ink: light ? Color(white: 0.07) : .white, ground: top ? artEnds.top : artEnds.bottom,
                           weight: .semibold, logoHeight: 12 * unit)
         .shadow(color: light ? .white.opacity(0.5) : .black.opacity(0.75), radius: 2 * unit, y: light ? 0 : unit)
+        .spinePart(.artist, reportsParts)
         .layoutPriority(1)
     }
 
@@ -1333,6 +1341,7 @@ struct RackSpine: View, Equatable {
             rotatedLogo(logo, color: logoColor(design.labelLogoTint, on: ground), rotation: design.labelLogoRotation,
                         along: bareLogoAlong, across: min(across - 6 * unit, 18 * unit))
                 .shadow(color: ground > 0.6 ? .white.opacity(0.4) : .black.opacity(0.6), radius: 1.5 * unit)
+                .spinePart(.labelMark, reportsParts)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: top ? .leading : .trailing)
                 .padding(top ? .leading : .trailing, 6 * unit)
         } else if let mark = design.mark {
@@ -1348,6 +1357,7 @@ struct RackSpine: View, Equatable {
                     .background(MarkShape(shape: mark.shape, corner: 4 * unit).fill(colors.ground))
                     .overlay(MarkShape(shape: mark.shape, corner: 4 * unit)
                         .strokeBorder(colors.ring, lineWidth: (mark.style == .ringed ? 1.2 : 0.5) * unit))
+                    .spinePart(.labelMark, reportsParts)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
                     .padding(mark.end == .top ? .leading : .trailing, 6 * unit)
             case .band:
@@ -1358,6 +1368,7 @@ struct RackSpine: View, Equatable {
                     .overlay(alignment: mark.end == .top ? .trailing : .leading) {
                         if mark.style == .ringed { Rectangle().fill(colors.ring).frame(width: unit) }
                     }
+                    .spinePart(.labelMark, reportsParts)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
             }
         }
@@ -1623,6 +1634,62 @@ struct RackSpine: View, Equatable {
             && lhs.style == rhs.style
             && lhs.scanFolder == rhs.scanFolder
             && lhs.fullCover === rhs.fullCover
+            && lhs.reportsParts == rhs.reportsParts
+    }
+}
+
+/// Where Edit Spine's preview hears where each part of the spine is drawn.
+/// Frames are reported once layout is done, in the coordinate space the
+/// preview names `SpinePartReporting.space`; nil when the part goes away.
+/// Each drawn view reports under its own id, so a part that moves from one
+/// view to another (the artist from the card to the art) can't have its new
+/// place cleared by the old view going away afterwards.
+struct SpinePartReporter: @unchecked Sendable {
+    let report: (SpineElement, UUID, CGRect?) -> Void
+}
+
+enum SpinePartReporting {
+    static let space = "spinePreview"
+}
+
+private struct SpinePartReporterKey: EnvironmentKey {
+    static let defaultValue: SpinePartReporter? = nil
+}
+
+extension EnvironmentValues {
+    var spinePartReporter: SpinePartReporter? {
+        get { self[SpinePartReporterKey.self] }
+        set { self[SpinePartReporterKey.self] = newValue }
+    }
+}
+
+/// Reports this part's frame to the preview after layout. Measured with
+/// onGeometryChange rather than read through a GeometryReader or anchor
+/// preference, so the sheet's own sizing never depends on it.
+private struct SpinePartModifier: ViewModifier {
+    let element: SpineElement
+    @Environment(\.spinePartReporter) private var reporter
+    @State private var id = UUID()
+
+    func body(content: Content) -> some View {
+        if let reporter {
+            content
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(SpinePartReporting.space)) } action: { reporter.report(element, id, $0) }
+                .onDisappear { reporter.report(element, id, nil) }
+        } else {
+            content
+        }
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func spinePart(_ element: SpineElement, _ reports: Bool) -> some View {
+        if reports {
+            modifier(SpinePartModifier(element: element))
+        } else {
+            self
+        }
     }
 }
 
@@ -1801,7 +1868,7 @@ enum CaseStage {
 /// Each face is projected with its own perspective matrix (the same maths as
 /// CSS's `perspective` + `rotateY` + `translateZ`), which places the faces as
 /// one solid rather than as separately tilted pictures.
-private struct RackBox: View, Animatable {
+struct RackBox: View, Animatable {
     static let restingAngle: Double = -14
 
     let album: Album

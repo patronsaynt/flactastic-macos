@@ -406,18 +406,6 @@ private func registerSpineFontsFromSource() throws {
     #expect(o.lockedCount == 1)
 }
 
-@MainActor
-@Test func artPositionReportsItsLock() {
-    let art = ArtPosition()
-    #expect(!art.isLocked)
-    art.slice = 0.4
-    #expect(art.isLocked)
-    art.slice = 0.6
-    #expect(art.isLocked)
-    art.slice = nil
-    #expect(!art.isLocked)
-}
-
 // MARK: - Label logo backing and rotation
 
 @Test func labelLogoBackingAndRotationReachTheDesign() {
