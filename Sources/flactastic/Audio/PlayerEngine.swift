@@ -572,6 +572,10 @@ final class PlayerEngine {
         decodeTask = Task.detached(priority: .userInitiated) { [weak self] in
             var trackIndex = index
             var isFirstTrack = true
+            // A track whose file failed mid-read (rewritten on disk by a tag
+            // edit while it played, say): reopened and read on from where it
+            // stopped, into the same entry. Nil for a track starting fresh.
+            var resume: (startFrame: AVAudioFramePosition, scheduled: AVAudioFramePosition, seconds: TimeInterval, attempts: Int)?
 
             while !Task.isCancelled {
                 // Read the current queue entry live on each iteration so appended
@@ -588,6 +592,9 @@ final class PlayerEngine {
                 }
                 guard let track = nextTrack else { return }
 
+                var startFrame: AVAudioFramePosition = resume?.startFrame ?? 0
+                var totalScheduledFrames: AVAudioFramePosition = resume?.scheduled ?? 0
+                var entryOpened = resume != nil
                 do {
                     let file = try AVAudioFile(
                         forReading: track.url,
@@ -596,15 +603,18 @@ final class PlayerEngine {
                     )
                     let sourceFormat = file.processingFormat
 
-                    // Seek within the first track.
-                    if isFirstTrack && seekOffset > 0 {
+                    // Seek within the first track, or back to where a failed read stopped.
+                    if let resume {
+                        let seekFrame = AVAudioFramePosition(resume.seconds * sourceFormat.sampleRate)
+                        file.framePosition = max(0, min(seekFrame, file.length - 1))
+                    } else if isFirstTrack && seekOffset > 0 {
                         let seekFrame = AVAudioFramePosition(seekOffset * sourceFormat.sampleRate)
                         file.framePosition = max(0, min(seekFrame, file.length - 1))
                     }
 
                     // Update duration for the current track.
                     let fileDuration = Double(file.length) / sourceFormat.sampleRate
-                    if isFirstTrack && startsAtCurrentTrack {
+                    if isFirstTrack && startsAtCurrentTrack && resume == nil {
                         await MainActor.run { [weak self] in
                             self?.duration = fileDuration
                         }
@@ -635,25 +645,28 @@ final class PlayerEngine {
                     // current track (endFrame == .max) stays in place — we must NOT create
                     // a second entry. We only capture nextScheduleFrame so the finalization
                     // below can compute the correct absolute endFrame for the existing entry.
-                    let startFrame = await MainActor.run { [weak self] () -> AVAudioFramePosition in
-                        guard let self else { return 0 }
-                        let sf = self.nextScheduleFrame
-                        if appendingEntry && isFirstTrack {
-                            // Continuation: no new entry. Just update the live pointer.
-                            scheduleEnd.withLock { $0 = sf }
-                        } else {
-                            let entry = ScheduledEntry(track: track, startFrame: sf, endFrame: .max)
-                            self.scheduledEntries.append(entry)
-                            scheduleEnd.withLock { $0 = sf }
+                    if resume == nil {
+                        startFrame = await MainActor.run { [weak self] () -> AVAudioFramePosition in
+                            guard let self else { return 0 }
+                            let sf = self.nextScheduleFrame
+                            if appendingEntry && isFirstTrack {
+                                // Continuation: no new entry. Just update the live pointer.
+                                scheduleEnd.withLock { $0 = sf }
+                            } else {
+                                let entry = ScheduledEntry(track: track, startFrame: sf, endFrame: .max)
+                                self.scheduledEntries.append(entry)
+                                scheduleEnd.withLock { $0 = sf }
+                            }
+                            return sf
                         }
-                        return sf
                     }
-
-                    var totalScheduledFrames: AVAudioFramePosition = 0
+                    entryOpened = true
+                    let startFrame = startFrame
 
                     if needsConverter, let converter {
                         // --- Converter path: pull-based conversion ---
                         let fileBox = UncheckedSendableBox(file)
+                        let readFailure = ReadFailure()
                         var fileExhausted = false
 
                         while !fileExhausted, !Task.isCancelled {
@@ -684,6 +697,7 @@ final class PlayerEngine {
                                 do {
                                     try f.read(into: srcBuf, frameCount: toRead)
                                 } catch {
+                                    readFailure.error = error
                                     outStatus.pointee = .endOfStream
                                     return nil
                                 }
@@ -720,6 +734,7 @@ final class PlayerEngine {
                                 fileExhausted = true
                             }
                         }
+                        if let error = readFailure.error { throw error }
                     } else {
                         // --- Passthrough path: read directly into schedule buffers ---
                         while file.framePosition < file.length, !Task.isCancelled {
@@ -778,9 +793,39 @@ final class PlayerEngine {
                         self.nextScheduleFrame = actualEnd
                     }
 
+                    resume = nil
                 } catch {
                     if Task.isCancelled { return }
-                    print("[PlayerEngine] Error opening \(track.title): \(error)")
+                    if generation.withLock({ $0 }) != myGeneration { return }
+                    let attempts = (resume?.attempts ?? 0) + 1
+                    if entryOpened, attempts <= 3 {
+                        // The file changed under the decoder (a tag edit rewrote
+                        // it in place). Its audio is the same, so wait for the
+                        // write to finish, then reopen it and read on from the
+                        // same point in time, into the same entry.
+                        print("[PlayerEngine] Reading \(track.title) failed; reopening (attempt \(attempts)): \(error)")
+                        let base = resume?.seconds ?? (isFirstTrack ? seekOffset : 0)
+                        let alreadyCounted = resume?.scheduled ?? 0
+                        let seconds = base + Double(totalScheduledFrames - alreadyCounted) / canonical.sampleRate
+                        resume = (startFrame, totalScheduledFrames, seconds, attempts)
+                        try? await Task.sleep(for: .milliseconds(250 * attempts))
+                        continue
+                    }
+                    print("[PlayerEngine] Couldn't read \(track.title): \(error)")
+                    resume = nil
+                    // Close its entry at what was scheduled, so the clock moves
+                    // on to the next track at the right frame instead of
+                    // leaving the broken one "playing" forever.
+                    if entryOpened {
+                        let actualEnd = startFrame + totalScheduledFrames
+                        await MainActor.run { [weak self] in
+                            guard let self else { return }
+                            if let idx = self.scheduledEntries.firstIndex(where: { $0.track.id == track.id && $0.endFrame == .max }) {
+                                self.scheduledEntries[idx].endFrame = actualEnd
+                            }
+                            self.nextScheduleFrame = actualEnd
+                        }
+                    }
                 }
 
                 isFirstTrack = false
@@ -1155,6 +1200,11 @@ final class BufferThrottle: @unchecked Sendable {
 }
 
 // MARK: - Concurrency helpers
+
+/// A read error raised inside a converter's input block, carried out of it.
+private final class ReadFailure: @unchecked Sendable {
+    var error: Error?
+}
 
 struct UncheckedSendableBox<T>: @unchecked Sendable {
     let value: T
