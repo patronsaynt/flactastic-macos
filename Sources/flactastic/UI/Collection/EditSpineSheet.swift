@@ -254,12 +254,14 @@ struct EditSpineSheet: View {
                     .scrollIndicators(.automatic)
                 }
             }
+            // A new panel for each part, so each opens scrolled to its top.
+            // Swapped without a transition: a panel sliding in while the
+            // face list's lazy stack measured itself made SwiftUI's layout
+            // depend on itself.
             .id(shown)
-            .transition(.opacity.combined(with: .offset(x: 8)))
         }
         .padding(.leading, 24)
         .padding(.trailing, 28)
-        .animation(.easeOut(duration: 0.2), value: shown)
     }
 
     private func tabs(_ parts: [SpinePart], selected: SpinePart) -> some View {
