@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// The library home / dashboard screen: the lyric hero, then a Recently Played
-/// shelf, Your Listening (summary sentence, "On this day", hourly genre chart,
-/// top artists), Top Albums This Week and the Fidelidex spec sheet. Monochrome
-/// throughout. Sections that depend on listening history are hidden until that
-/// history exists.
+/// The library home: the lyric banner, then shelves built from the library
+/// and listening history, streaming-service style (see `HomeSection` for the
+/// list and `HomeFeed` for what fills them). Monochrome throughout, coloured
+/// only by the banner's palette and audio-quality tiers. A section with
+/// nothing to show is left out, so the page never has an empty block.
 struct HomeView: View {
     @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self) private var library
@@ -55,7 +55,6 @@ struct HomeView: View {
     /// re-renders whenever any observed store ticks — so computing them inline
     /// in section bodies made every Home render O(history).
     private struct HomeMetrics {
-        var recentlyPlayed: [RecentItem] = []
         var onThisDay: OnThisDayPick? = nil
         var minutesListened: Int = 0
         var tracksPlayed: Int = 0
@@ -69,6 +68,14 @@ struct HomeView: View {
         var footerHours: Int = 0
     }
     @State private var metrics = HomeMetrics()
+    /// The shelves' contents, rebuilt with the metrics.
+    @State private var feed = HomeFeed()
+    /// Mixes saved to the library this session, mix ID → playlist ID, so
+    /// the menu opens the saved copy instead of saving another.
+    @State private var savedMixes: [String: UUID] = [:]
+    /// The "Playlist saved" notice, and the playlist it opens.
+    @State private var savedNotice: (name: String, id: UUID)?
+    @State private var noticeTask: Task<Void, Never>?
     @State private var removalRequest: LibraryRemovalRequest? = nil
     @State private var editingAlbum: Album? = nil
     /// Tracks of every playlist, resolved once per change to the playlists or
@@ -80,7 +87,7 @@ struct HomeView: View {
     @State private var hasEntered = false
 
     /// Banner height below the top bar. The page's sections start this far
-    /// down, less `bannerOverlap`, so Recently Played sits in the fade.
+    /// down, less `bannerOverlap`, so the first shelf sits in the fade.
     private static let bannerHeight: CGFloat = 520
     private static let bannerOverlap: CGFloat = 116
     private var calmMotion: Bool { reduceMotion || !settings.fadeAnimationsEnabled }
@@ -100,7 +107,6 @@ struct HomeView: View {
 
     private func recomputeMetrics() {
         var m = HomeMetrics()
-        m.recentlyPlayed = listening.recentlyPlayed(limit: 12)
         let albums = albumsByID
         m.onThisDay = listening.onThisDay { albums[$0] != nil }
         let since = statsRange.since()
@@ -111,11 +117,30 @@ struct HomeView: View {
         m.topGenre = listening.topGenre(since: since)
         m.streakDays = listening.currentStreakDays
         m.topArtists = listening.topArtists(limit: 5, since: since)
-        m.topAlbums = listening.topAlbumsThisWeek(limit: 6)
+        m.topAlbums = listening.topAlbums(limit: 5, since: since)
         m.footerAlbumCount = library.albums.count
         m.footerHours = Int((library.tracks.compactMap(\.duration).reduce(0, +) / 3600).rounded())
         metrics = m
         recomputeChart()
+
+        let stored = Self.storedRotation()
+        let built = HomeFeed.build(.init(
+            albums: library.albums, tracks: library.tracks, events: listening.events,
+            recentContexts: listening.recentContexts, onThisDay: m.onThisDay,
+            storedRotation: stored, resolver: library.makeArtistResolver()
+        ))
+        if let rotation = built.rotation, rotation != stored { Self.store(rotation) }
+        feed = built
+    }
+
+    private static let rotationKey = "flactastic.home.todayRotation"
+
+    private static func storedRotation() -> TodayRotation? {
+        UserDefaults.standard.data(forKey: rotationKey).flatMap { try? JSONDecoder().decode(TodayRotation.self, from: $0) }
+    }
+
+    private static func store(_ rotation: TodayRotation) {
+        if let data = try? JSONEncoder().encode(rotation) { UserDefaults.standard.set(data, forKey: rotationKey) }
     }
 
     /// The listening chart only: cheaper than a full recompute when just the
@@ -142,14 +167,11 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 hero
-                VStack(alignment: .leading, spacing: 56) {
+                VStack(alignment: .leading, spacing: 44) {
                     if isLibraryEmpty {
                         gettingStarted
                     } else {
-                        recentlyPlayedSection
-                        listeningSection
-                        topAlbumsSection
-                        FidelidexView(palette: highlight.palette)
+                        ForEach(settings.homeSections) { section($0) }
                         homeFooter
                     }
                 }
@@ -162,6 +184,8 @@ struct HomeView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
+        .overlay(alignment: .bottom) { savedNoticeView }
+        .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.35), value: savedNotice?.id)
         .removeFromLibraryConfirmation($removalRequest, library: library)
         .onAppear {
             recomputeMetrics()
@@ -459,113 +483,465 @@ struct HomeView: View {
         .padding(.top, 8)
     }
 
-    // MARK: - Recently Played
+    // MARK: - Sections
 
     @ViewBuilder
-    private var recentlyPlayedSection: some View {
-        let items = metrics.recentlyPlayed
-        if !items.isEmpty {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .firstTextBaseline) {
-                    sectionHeader("Recently Played")
-                    Spacer()
-                    Text(recentCountLabel(items))
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.textTertiary)
+    private func section(_ section: HomeSection) -> some View {
+        switch section {
+        case .recommended:
+            recommendedSection
+        case .recentlyPlayed:
+            recentlyPlayedSection
+        case .jumpBackIn:
+            albumShelf("Jump back in", subtitle: "Old favourites you haven't played in a while", picks: feed.jumpBackIn)
+        case .onRepeat:
+            onRepeatSection
+        case .mixes:
+            mixesSection
+        case .timeOfDay:
+            albumShelf(feed.timeOfDayTitle, subtitle: feed.timeOfDaySubtitle, picks: feed.timeOfDay)
+        case .recentlyAdded:
+            albumShelf("Recently added", subtitle: "New in your library", picks: feed.recentlyAdded)
+        case .listening:
+            listeningSection
+        case .bestSounding:
+            bestSoundingSection
+        case .fidelidex:
+            FidelidexView(palette: highlight.palette)
+        }
+    }
+
+    // MARK: Recommended for today
+
+    @ViewBuilder
+    private var recommendedSection: some View {
+        if let today = feed.today {
+            VStack(alignment: .leading, spacing: 14) {
+                HomeSectionHeader(title: "Recommended for today", subtitle: "Picked fresh this morning from your library")
+                HomeTodayGrid(albums: today.albums) { width, height in
+                    HomeTodayFeature(
+                        album: today.lead, why: today.why, width: width, height: height,
+                        onOpen: { router.navigateToAlbum(id: today.lead.id) },
+                        onPlay: { playAlbum(today.lead) },
+                        menu: { albumContextMenu(today.lead) }
+                    )
+                } tile: { album, size in
+                    albumTile(album, caption: artistCaption(album), size: size)
                 }
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(alignment: .top, spacing: 18) {
-                        ForEach(items) { item in
-                            recentTile(item)
-                        }
-                    }
-                    // Room for the hover lift and its shadow.
-                    .padding(.vertical, 6)
-                    .padding(.horizontal, 2)
-                }
-                .padding(.horizontal, -2)
             }
         }
     }
 
-    /// "12 albums", "3 playlists", or "12 albums & playlists".
-    private func recentCountLabel(_ items: [RecentItem]) -> String {
-        let albums = items.filter { $0.kind == .album }.count
-        let playlists = items.count - albums
-        if playlists == 0 { return "\(albums) album\(albums == 1 ? "" : "s")" }
-        if albums == 0 { return "\(playlists) playlist\(playlists == 1 ? "" : "s")" }
-        return "\(items.count) albums & playlists"
+    // MARK: Recently played
+
+    @ViewBuilder
+    private var recentlyPlayedSection: some View {
+        let picks = feed.recent.filter { pick in
+            switch pick.item.kind {
+            case .album: albumsByID[pick.item.targetID] != nil
+            case .playlist: UUID(uuidString: pick.item.targetID).flatMap { playlistsByID[$0] } != nil
+            }
+        }
+        if !picks.isEmpty {
+            HomeShelf(title: "Recently played", subtitle: "Albums and playlists you played last", items: picks) { pick in
+                recentTile(pick)
+            }
+        }
     }
 
     @ViewBuilder
-    private func recentTile(_ item: RecentItem) -> some View {
-        switch item.kind {
-        case .album:   recentAlbumTile(item)
-        case .playlist: recentPlaylistTile(item)
+    private func recentTile(_ pick: HomeFeed.RecentPick) -> some View {
+        switch pick.item.kind {
+        case .album:
+            if let album = albumsByID[pick.item.targetID] {
+                let playing = isPlaying(album)
+                albumTile(album, caption: artistCaption(album, note: playing ? "Now playing" : pick.when, accent: playing))
+            }
+        case .playlist:
+            if let playlist = UUID(uuidString: pick.item.targetID).flatMap({ playlistsByID[$0] }) {
+                let tracks = playlistTracks[playlist.id] ?? []
+                HomeAlbumTile(
+                    artwork: playlist.customArtwork ?? tracks.first?.artwork,
+                    artworkID: nil,
+                    title: playlist.name,
+                    caption: Text("Playlist · \(pick.when)"),
+                    onOpen: { router.navigateToPlaylist(id: playlist.id) },
+                    onPlay: { playPlaylist(playlist, tracks: tracks) },
+                    menu: { playlistContextMenu(playlist, tracks: tracks) }
+                )
+            }
         }
     }
 
-    /// Shared tile layout. `onOpen` is the default click action; `menu` supplies
-    /// the right-click items.
-    private func tile(
-        artwork: Data?,
-        artworkID: String?,
-        title: String,
-        subtitle: String,
-        enabled: Bool,
-        onOpen: @escaping () -> Void,
-        menu: @escaping () -> [FLContextMenuItem]
-    ) -> some View {
-        Button(action: onOpen) {
-            ShelfTile(artwork: artwork, artworkID: artworkID, title: title, subtitle: subtitle, size: 180)
+    // MARK: Album shelves
+
+    @ViewBuilder
+    private func albumShelf(_ title: String, subtitle: String, picks: [HomeFeed.AlbumPick]) -> some View {
+        if !picks.isEmpty {
+            HomeShelf(title: title, subtitle: subtitle, items: picks) { pick in
+                albumTile(pick.album, caption: artistCaption(pick.album, note: pick.note, accent: pick.noteIsAccent))
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .flContextMenu { menu() }
     }
 
-    private func recentAlbumTile(_ item: RecentItem) -> some View {
-        let album = albumsByID[item.targetID]
-        let subtitle: String = {
-            if album?.isMixCompilation == true { return "Mix Compilation" }
-            return ArtistResolver.displayString(album?.artist)
-                ?? ArtistResolver.displayString(item.subtitle)
-                ?? item.subtitle
-        }()
-        return tile(
-            artwork: album?.artwork,
-            artworkID: album.map { "album:\($0.id)" },
-            title: item.title,
-            subtitle: subtitle,
-            enabled: album != nil,
-            onOpen: { if let album { router.navigateToAlbum(id: album.id) } },
-            menu: { album.map(albumContextMenu) ?? [] }
+    @ViewBuilder
+    private var bestSoundingSection: some View {
+        if !feed.bestSounding.isEmpty {
+            HomeShelf(title: "Best sounding", subtitle: "Your highest-fidelity albums", items: feed.bestSounding) { pick in
+                albumTile(pick.album, caption: artistCaption(pick.album, note: "\(pick.bits)-bit / \(Self.rateLabel(pick.rate))"),
+                          badge: pick.quality)
+            }
+        }
+    }
+
+    // MARK: On repeat
+
+    @ViewBuilder
+    private var onRepeatSection: some View {
+        let rows = feed.onRepeat
+        if rows.count >= 3 {
+            VStack(alignment: .leading, spacing: 14) {
+                HomeSectionHeader(title: "On repeat", subtitle: "Your most-played tracks, last 30 days") {
+                    Button("Play all") { play(rows.map(\.track), at: 0, source: "On repeat") }
+                        .buttonStyle(QuietTextButtonStyle())
+                }
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 28), GridItem(.flexible())], alignment: .leading, spacing: 0) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                        HomeRepeatRow(
+                            rank: index + 1, track: row.track, plays: row.plays, accent: homeAccent,
+                            onPlay: { play(rows.map(\.track), at: index, source: "On repeat") },
+                            menu: { playbackContextMenuItems(for: [row.track], player: player) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Mixes
+
+    @ViewBuilder
+    private var mixesSection: some View {
+        if !feed.mixes.isEmpty {
+            let resolver = library.makeArtistResolver()
+            HomeMixRow(title: "Mixes from your library", subtitle: "Built from your own files, fresh each day", mixes: feed.mixes) { mix, size in
+                let photo = artistImage(credit: mix.leadArtist, resolver: resolver) ?? mix.tracks.first?.artwork
+                HomeMixTile(
+                    mix: mix,
+                    image: photo,
+                    size: size,
+                    onPlay: { play(mix.tracks, at: 0, source: mix.name) },
+                    menu: {
+                        var items: [FLContextMenuItem] = [
+                            .button("Play", systemImage: "play.fill") { play(mix.tracks, at: 0, source: mix.name) },
+                            .button("Shuffle", systemImage: "shuffle") { play(mix.tracks, at: 0, source: mix.name, shuffle: true) },
+                        ]
+                        items += playbackContextMenuItems(for: mix.tracks, player: player)
+                        items.append(.divider)
+                        if let saved = savedMixes[mix.id], playlistsByID[saved] != nil {
+                            items.append(.button("Open Saved Playlist", systemImage: "music.note.list") {
+                                router.navigateToPlaylist(id: saved)
+                            })
+                        } else {
+                            items.append(.button("Save Playlist to Library", systemImage: "plus.square.on.square") {
+                                saveMix(mix, photo: photo)
+                            })
+                        }
+                        return items
+                    }
+                )
+            }
+        }
+    }
+
+    /// Saves today's mix as a playlist in the library, with its cover
+    /// rendered once to a 1024 × 1024 JPEG.
+    private func saveMix(_ mix: HomeFeed.Mix, photo: Data?) {
+        let playlist = playlistStore.createPlaylist(name: mix.name)
+        playlistStore.addTracks(mix.tracks, to: playlist.id, relativeTo: library.rootURL)
+        let date = Date.now.formatted(.dateTime.month(.wide).day().year())
+        playlistStore.updatePlaylistMetadata(
+            id: playlist.id,
+            name: mix.name,
+            description: "Saved from Home on \(date). With \(mix.artists.joined(separator: ", ")).",
+            customArtwork: mix.coverJPEG(photo: photo)
+        )
+        // Only confirm once it's really there.
+        guard playlistStore.playlists.contains(where: { $0.id == playlist.id }) else { return }
+        savedMixes[mix.id] = playlist.id
+        noticeTask?.cancel()
+        savedNotice = (mix.name, playlist.id)
+        noticeTask = Task {
+            try? await Task.sleep(for: .seconds(3.2))
+            if !Task.isCancelled { savedNotice = nil }
+        }
+    }
+
+    /// "Playlist saved", above the player bar. Clicking it opens the playlist.
+    @ViewBuilder
+    private var savedNoticeView: some View {
+        if let notice = savedNotice {
+            Button {
+                savedNotice = nil
+                router.navigateToPlaylist(id: notice.id)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .heavy))
+                    (Text("Playlist saved").fontWeight(.semibold) + Text(" · \(notice.name)").foregroundColor(Theme.background.opacity(0.7)))
+                        .lineLimit(1)
+                }
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.background)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 9)
+                .background(Capsule().fill(Theme.textPrimary))
+                .shadow(color: .black.opacity(0.3), radius: 12, y: 6)
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Open \(notice.name)")
+            .padding(.bottom, 104)   // above the floating player bar
+            .transition(.opacity.combined(with: .offset(y: 8)))
+        }
+    }
+
+    /// An artist's picture: one set by hand first, then a fetched one.
+    private func artistImage(credit: String, resolver: ArtistResolver) -> Data? {
+        guard let key = resolver.keys(forCredit: credit).first else { return nil }
+        if let override = artistStore.override(forKey: key), let data = override.profileImage ?? override.bannerImage {
+            return data
+        }
+        return artistRemoteCache.entry(forKey: key)?.profileImage
+    }
+
+    // MARK: Your listening
+
+    @ViewBuilder
+    private var listeningSection: some View {
+        // Gated on having any history: without plays there's nothing to show.
+        if listening.hasHistory {
+            VStack(alignment: .leading, spacing: 14) {
+                HomeSectionHeader(title: "Your listening")
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(alignment: .top, spacing: 32) {
+                        listeningFigures
+                        Spacer(minLength: 16)
+                        statsRangePicker
+                    }
+                    HStack(alignment: .top, spacing: 28) {
+                        ListeningChart(
+                            breakdown: chart,
+                            palette: highlight.palette,
+                            mode: $chartMode,
+                            weekOffset: $chartWeekOffset,
+                            canGoBack: chartCanGoBack
+                        )
+                        .frame(maxWidth: .infinity)
+                        topArtistsColumn.frame(width: 240, alignment: .topLeading)
+                        topAlbumsColumn.frame(width: 240, alignment: .topLeading)
+                    }
+                    .padding(.top, 20)
+                    .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
+                    .padding(.top, 22)
+                }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 22)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.textPrimary.opacity(0.05)))
+            }
+        }
+    }
+
+    /// Time listened, streak, and how much of it there was.
+    private var listeningFigures: some View {
+        let minutes = metrics.minutesListened
+        let series = highlight.palette?.series(4)
+        return HStack(alignment: .top, spacing: 32) {
+            if minutes >= 60 {
+                figure("\(minutes / 60)", unit: "h \(minutes % 60)m", label: "Listened, \(statsRange.label.lowercased())", color: homeAccent)
+            } else {
+                figure("\(minutes)", unit: "min", label: "Listened, \(statsRange.label.lowercased())", color: homeAccent)
+            }
+            if metrics.streakDays > 0 {
+                figure("\(metrics.streakDays)", unit: metrics.streakDays == 1 ? "day" : "days", label: "Listening streak",
+                       color: series?[1] ?? Theme.textPrimary)
+            }
+            figure(metrics.tracksPlayed.formatted(), unit: metrics.tracksPlayed == 1 ? "track" : "tracks",
+                   label: "across \(metrics.albumsPlayed.formatted()) album\(metrics.albumsPlayed == 1 ? "" : "s")", color: Theme.textPrimary)
+        }
+    }
+
+    private func figure(_ value: String, unit: String, label: String, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            (Text(value).foregroundColor(color)
+             + Text(" " + unit).font(.system(size: 18, weight: .bold)).foregroundColor(Theme.textSecondary))
+                .font(.system(size: 40, weight: .heavy))
+                .tracking(-1)
+                .monospacedDigit()
+                .lineLimit(1)
+            Text(label)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.textTertiary)
+        }
+    }
+
+    /// Week / Month / Year / All time, side by side.
+    private var statsRangePicker: some View {
+        HStack(spacing: 2) {
+            ForEach(StatsRange.allCases) { range in
+                let on = range == statsRange
+                Button {
+                    withAnimation(.easeOut(duration: 0.2)) { statsRange = range }
+                } label: {
+                    Text(range.shortLabel)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(on ? Theme.background : Theme.textSecondary)
+                        .padding(.horizontal, 11)
+                        .frame(height: 24)
+                        .background(Capsule().fill(on ? Theme.textPrimary : .clear))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .overlay(Capsule().strokeBorder(Theme.textPrimary.opacity(0.1), lineWidth: 1))
+    }
+
+    private var topArtistsColumn: some View {
+        let resolver = library.makeArtistResolver()
+        return VStack(alignment: .leading, spacing: 4) {
+            columnTitle("Top artists")
+            if metrics.topArtists.isEmpty {
+                Text("Not enough plays yet").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
+            }
+            ForEach(Array(metrics.topArtists.prefix(5).enumerated()), id: \.element.id) { index, artist in
+                let key = resolver.keys(forCredit: artist.name).first
+                let name = ArtistResolver.displayString(artist.name) ?? artist.name
+                Button {
+                    if let key { router.navigateToArtist(key: key) }
+                } label: {
+                    rankRow(index, image: artistImage(credit: artist.name, resolver: resolver), round: true,
+                            name: name, value: minutesLabel(artist.minutes))
+                }
+                .buttonStyle(.plain)
+                .disabled(key == nil)
+                .help(key == nil ? "" : "Open \(name)")
+                .flContextMenu { artistContextMenuItems(credit: artist.name, library: library, router: router) }
+            }
+        }
+    }
+
+    private var topAlbumsColumn: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            columnTitle("Top albums")
+            if metrics.topAlbums.isEmpty {
+                Text("Not enough plays yet").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
+            }
+            ForEach(Array(metrics.topAlbums.prefix(5).enumerated()), id: \.element.id) { index, rank in
+                let album = albumsByID[rank.albumID]
+                Button {
+                    if let album { router.navigateToAlbum(id: album.id) }
+                } label: {
+                    rankRow(index, image: album?.artwork, imageID: album.map { "album:\($0.id)" }, round: false,
+                            name: album?.name ?? rank.album, value: "\(rank.plays) play\(rank.plays == 1 ? "" : "s")")
+                }
+                .buttonStyle(.plain)
+                .disabled(album == nil)
+                .flContextMenu { album.map(albumContextMenu) ?? [] }
+            }
+        }
+    }
+
+    private func columnTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 13, weight: .bold))
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.bottom, 6)
+    }
+
+    private func rankRow(_ index: Int, image: Data?, imageID: String? = nil, round: Bool, name: String, value: String) -> some View {
+        HStack(spacing: 10) {
+            Text("\(index + 1)")
+                .font(.system(size: 13, weight: .heavy))
+                .monospacedDigit()
+                .foregroundStyle(homeAccent)
+                .frame(width: 16, alignment: .trailing)
+            ArtworkView(data: image, size: 32, id: imageID, showsShadow: false)
+                .clipShape(round ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: 5, style: .continuous)))
+            Text(name)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            Text(value)
+                .font(.system(size: 11.5))
+                .monospacedDigit()
+                .foregroundStyle(Theme.textTertiary)
+        }
+        .frame(height: 42)
+        .contentShape(Rectangle())
+    }
+
+    // MARK: Tiles and playback
+
+    private func albumTile(_ album: Album, caption: Text, size: CGFloat = HomeTile.size, badge: AudioQuality? = nil) -> some View {
+        HomeAlbumTile(
+            artwork: album.artwork,
+            artworkID: "album:\(album.id)",
+            title: album.name,
+            caption: caption,
+            size: size,
+            badge: badge,
+            onOpen: { router.navigateToAlbum(id: album.id) },
+            onPlay: { playAlbum(album) },
+            menu: { albumContextMenu(album) }
         )
     }
 
-    private func recentPlaylistTile(_ item: RecentItem) -> some View {
-        let playlist = UUID(uuidString: item.targetID).flatMap { playlistsByID[$0] }
-        let tracks = playlist.flatMap { playlistTracks[$0.id] } ?? []
-        let artwork = playlist?.customArtwork ?? tracks.first?.artwork
-        return tile(
-            artwork: artwork,
-            artworkID: nil,
-            title: item.title,
-            subtitle: item.subtitle,
-            enabled: playlist != nil,
-            onOpen: { if let playlist { router.navigateToPlaylist(id: playlist.id) } },
-            menu: { playlist.map { playlistContextMenu($0, tracks: tracks) } ?? [] }
-        )
+    /// "Artist", or "Artist · note" with the note in the banner's colour when
+    /// it's a highlight (how long since, now playing).
+    private func artistCaption(_ album: Album, note: String? = nil, accent: Bool = false) -> Text {
+        let artist = album.isMixCompilation ? "Mix Compilation" : (ArtistResolver.displayString(album.artist) ?? "Unknown Artist")
+        guard let note else { return Text(artist) }
+        let tail = accent ? Text(note).foregroundColor(homeAccent).fontWeight(.semibold) : Text(note)
+        return Text(artist + " · ") + tail
+    }
+
+    private func isPlaying(_ album: Album) -> Bool {
+        guard player.isPlaying, let current = player.currentTrack?.id else { return false }
+        return album.tracks.contains { $0.id == current }
+    }
+
+    private func playAlbum(_ album: Album) {
+        guard !album.tracks.isEmpty else { return }
+        play(album.tracks, at: 0, source: album.name)
+        listening.recordAlbumPlay(album)
+    }
+
+    private func playPlaylist(_ playlist: Playlist, tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+        play(tracks, at: 0, source: playlist.name)
+        listening.recordPlaylistPlay(playlist)
+    }
+
+    private func play(_ tracks: [Track], at index: Int, source: String, shuffle: Bool = false) {
+        guard !tracks.isEmpty else { return }
+        player.isShuffleEnabled = shuffle
+        let start = shuffle ? Int.random(in: 0..<tracks.count) : index
+        player.startFreshQueue(tracks, startAt: start, source: source)
+        player.engine.play()
+    }
+
+    private static func rateLabel(_ rate: Double) -> String {
+        let khz = rate / 1000
+        return khz == khz.rounded() ? String(format: "%.0f kHz", khz) : String(format: "%.1f kHz", khz)
     }
 
     /// The shared album menu (see `LibraryMenus`), with Play first.
     private func albumContextMenu(_ album: Album) -> [FLContextMenuItem] {
-        let play: FLContextMenuItem = .button("Play Album", systemImage: "play.fill") {
-            player.isShuffleEnabled = false
-            player.startFreshQueue(album.tracks, source: album.name)
-            player.engine.play()
-            listening.recordAlbumPlay(album)
-        }
+        let play: FLContextMenuItem = .button("Play Album", systemImage: "play.fill") { playAlbum(album) }
         let menus = LibraryMenus(player: player, library: library, playlistStore: playlistStore, playlistAdd: playlistAddCoordinator, router: router)
         return [play] + menus.album(
             album,
@@ -579,12 +955,7 @@ struct HomeView: View {
     /// View Playlist.
     private func playlistContextMenu(_ playlist: Playlist, tracks: [Track]) -> [FLContextMenuItem] {
         var items: [FLContextMenuItem] = [
-            .button("Play", systemImage: "play.fill") {
-                player.isShuffleEnabled = false
-                player.startFreshQueue(tracks, source: playlist.name)
-                player.engine.play()
-                listening.recordPlaylistPlay(playlist)
-            }
+            .button("Play", systemImage: "play.fill") { playPlaylist(playlist, tracks: tracks) }
         ]
         items.append(contentsOf: playbackContextMenuItems(for: tracks, player: player))
         items.append(.divider)
@@ -592,303 +963,6 @@ struct HomeView: View {
             router.navigateToPlaylist(id: playlist.id)
         })
         return items
-    }
-
-    // MARK: - Your Listening
-
-    @ViewBuilder
-    private var listeningSection: some View {
-        // The whole block is gated on having any history — without plays there
-        // is nothing meaningful to show besides the always-available album count
-        // already in the footer.
-        if listening.hasHistory {
-            VStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .firstTextBaseline) {
-                    sectionHeader("Your Listening")
-                    Spacer()
-                    statsRangePicker
-                }
-                HStack(alignment: .center, spacing: 40) {
-                    listeningSentence
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    if let pick = metrics.onThisDay {
-                        onThisDayPanel(pick)
-                            .frame(width: 300, alignment: .leading)
-                    }
-                }
-                HStack(alignment: .top, spacing: 40) {
-                    ListeningChart(
-                        breakdown: chart,
-                        palette: highlight.palette,
-                        mode: $chartMode,
-                        weekOffset: $chartWeekOffset,
-                        canGoBack: chartCanGoBack
-                    )
-                        .frame(maxWidth: .infinity)
-                    topArtistsColumn
-                        .frame(width: 280, alignment: .topLeading)
-                }
-                .padding(.top, 22)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(Theme.divider).frame(height: 1)
-                }
-            }
-        }
-    }
-
-    /// Dropdown that switches the stats time window.
-    private var statsRangePicker: some View {
-        Menu {
-            ForEach(StatsRange.allCases) { range in
-                Button {
-                    statsRange = range
-                } label: {
-                    if range == statsRange {
-                        Label(range.label, systemImage: "checkmark")
-                    } else {
-                        Text(range.label)
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Text(statsRange.label)
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textSecondary)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(Theme.textSecondary)
-            }
-        }
-        .menuIndicator(.hidden)
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-    }
-
-    /// The stats as one sentence: "You've listened for 412 hours: 6.8k tracks
-    /// across 318 albums in 1,204 sessions. Mostly Electronic (34% of plays),
-    /// and you're on a 9-day streak." Figures are bright, connective text dim.
-    private var listeningSentence: some View {
-        var text = AttributedString()
-        func dim(_ string: String) {
-            var run = AttributedString(string)
-            run.foregroundColor = Theme.textTertiary
-            text += run
-        }
-        func figure(_ string: String, bold: Bool = false) {
-            var run = AttributedString(string)
-            run.foregroundColor = bold ? homeAccent : Theme.textPrimary
-            if bold { run.font = .system(size: 28, weight: .bold) }
-            text += run
-        }
-        func counted(_ n: Int, _ noun: String, compact: Bool = false) -> String {
-            "\(compact ? n.abbreviated() : n.formatted()) \(noun)\(n == 1 ? "" : "s")"
-        }
-
-        let minutes = metrics.minutesListened
-        let hours = Int((Double(minutes) / 60).rounded())
-        dim(statsRange.sentenceLead)
-        figure(hours >= 1 ? counted(hours, "hour") : counted(minutes, "minute"), bold: true)
-        dim(": ")
-        figure(counted(metrics.tracksPlayed, "track", compact: true))
-        dim(" across ")
-        figure(counted(metrics.albumsPlayed, "album"))
-        dim(" in ")
-        figure(counted(metrics.sessions, "session"))
-        dim(".")
-
-        let streak = metrics.streakDays
-        if let genre = metrics.topGenre {
-            dim(" Mostly ")
-            figure(genre.name)
-            dim(" (\(Int((genre.share * 100).rounded()))% of plays)")
-            if streak > 0 {
-                dim(", and you’re on a ")
-                figure("\(streak)-day streak", bold: true)
-            }
-            dim(".")
-        } else if streak > 0 {
-            dim(" You’re on a ")
-            figure("\(streak)-day streak", bold: true)
-            dim(".")
-        }
-
-        return Text(text)
-            .font(.system(size: 28, weight: .medium))
-            .tracking(-0.28)
-            .monospacedDigit()
-            .lineSpacing(5)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    /// An album resurfaced from this date in an earlier year. Only shown when
-    /// `ListeningStore.onThisDay` finds one; otherwise the sentence takes the
-    /// full width.
-    private func onThisDayPanel(_ pick: OnThisDayPick) -> some View {
-        let album = albumsByID[pick.albumID]
-        let artist = ArtistResolver.displayString(album?.artist)
-            ?? ArtistResolver.displayString(pick.artist)
-            ?? pick.artist
-        return VStack(alignment: .leading, spacing: 14) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("On this day")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
-                Text(pick.headline)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            Button {
-                if let album { router.navigateToAlbum(id: album.id) }
-            } label: {
-                HStack(spacing: 14) {
-                    ArtworkView(data: album?.artwork, size: 88, id: album.map { "album:\($0.id)" })
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(album?.name ?? pick.album)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundStyle(Theme.textPrimary)
-                            .lineLimit(1)
-                        Text(artist)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1)
-                        Text("\(pick.plays) play\(pick.plays == 1 ? "" : "s") · \(pick.date.formatted(.dateTime.month(.wide).day().year()))")
-                            .font(.system(size: 11))
-                            .monospacedDigit()
-                            .foregroundStyle(Theme.textTertiary)
-                            .lineLimit(1)
-                    }
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .disabled(album == nil)
-            .flContextMenu { album.map(albumContextMenu) ?? [] }
-        }
-        .padding(.leading, 28)
-        .overlay(alignment: .leading) {
-            Rectangle().fill(Theme.divider).frame(width: 1)
-        }
-    }
-
-    private var topArtistsColumn: some View {
-        let artists = metrics.topArtists
-        let maxMinutes = max(artists.first?.minutes ?? 1, 0.0001)
-        return VStack(alignment: .leading, spacing: 14) {
-            Text("Top Artists")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            if artists.isEmpty {
-                Text("Not enough plays yet")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textTertiary)
-            } else {
-                ForEach(Array(artists.enumerated()), id: \.element.id) { idx, artist in
-                    let key = library.makeArtistResolver().keys(forCredit: artist.name).first
-                    Button {
-                        if let key { router.navigateToArtist(key: key) }
-                    } label: {
-                    HStack(spacing: 12) {
-                        Text("\(idx + 1)")
-                            .font(.system(size: 11))
-                            .foregroundStyle(Theme.textTertiary)
-                            .monospacedDigit()
-                            .frame(width: 14, alignment: .trailing)
-                        VStack(spacing: 6) {
-                            HStack(spacing: 8) {
-                                Text(ArtistResolver.displayString(artist.name) ?? artist.name)
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(idx == 0 ? Theme.textPrimary : Theme.textSecondary)
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(minutesLabel(artist.minutes))
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(Theme.textTertiary)
-                                    .monospacedDigit()
-                            }
-                            ProgressBar(
-                                fraction: artist.minutes / maxMinutes,
-                                tint: idx == 0 ? homeAccent : Theme.textPrimary.opacity(0.45)
-                            )
-                        }
-                    }
-                    .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(key == nil)
-                    .help(key == nil ? "" : "Open \(ArtistResolver.displayString(artist.name) ?? artist.name)")
-                    .flContextMenu {
-                        artistContextMenuItems(credit: artist.name, library: library, router: router)
-                    }
-                }
-            }
-        }
-    }
-
-    // MARK: - Top Albums This Week
-
-    @ViewBuilder
-    private var topAlbumsSection: some View {
-        let albums = metrics.topAlbums
-        if !albums.isEmpty {
-            VStack(alignment: .leading, spacing: 14) {
-                sectionHeader("Top Albums This Week")
-                LazyVGrid(
-                    columns: [GridItem(.flexible(), spacing: 32), GridItem(.flexible())],
-                    alignment: .leading,
-                    spacing: 2
-                ) {
-                    ForEach(Array(albums.enumerated()), id: \.element.id) { idx, rank in
-                        topAlbumRow(idx: idx, rank: rank)
-                    }
-                }
-            }
-        }
-    }
-
-    private func topAlbumRow(idx: Int, rank: AlbumRank) -> some View {
-        let album = albumsByID[rank.albumID]
-        let artist = ArtistResolver.displayString(album?.artist)
-            ?? ArtistResolver.displayString(rank.artist)
-            ?? rank.artist
-        return Button {
-            if let album { router.navigateToAlbum(id: album.id) }
-        } label: {
-            HStack(spacing: 14) {
-                Text("\(idx + 1)")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(idx == 0 ? homeAccent : Theme.textTertiary)
-                    .monospacedDigit()
-                    .frame(width: 22, alignment: .trailing)
-                ArtworkView(data: album?.artwork, size: 44, id: album.map { "album:\($0.id)" })
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(rank.album)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    Text(artist)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 3) {
-                    Text("\(rank.plays) plays")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textSecondary)
-                        .monospacedDigit()
-                    Text("\(Int(rank.minutes.rounded())) min")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.textTertiary)
-                        .monospacedDigit()
-                }
-            }
-            .padding(.leading, 4).padding(.trailing, 10).padding(.vertical, 10)
-            .modifier(HoverRowBackground())
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .flContextMenu { album.map(albumContextMenu) ?? [] }
     }
 
     // MARK: - Helpers
@@ -904,62 +978,6 @@ struct HomeView: View {
             .font(.system(size: 20, weight: .bold))
             .tracking(-0.2)
             .foregroundStyle(Theme.textPrimary)
-    }
-}
-
-// MARK: - Shelf tile
-
-/// A Recently Played tile: square artwork that lifts on hover, title and
-/// subtitle beneath. Every tile is the same size.
-private struct ShelfTile: View {
-    let artwork: Data?
-    let artworkID: String?
-    let title: String
-    let subtitle: String
-    let size: CGFloat
-
-    @State private var isHovering = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            ArtworkView(data: artwork, size: size, id: artworkID)
-                .shadow(
-                    color: .black.opacity(isHovering ? 0.45 : 0.25),
-                    radius: isHovering ? 14 : 3,
-                    y: isHovering ? 10 : 2
-                )
-                .offset(y: isHovering ? -3 : 0)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textTertiary)
-                    .lineLimit(1)
-            }
-        }
-        .frame(width: size, alignment: .leading)
-        .contentShape(Rectangle())
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { isHovering = hovering }
-        }
-    }
-}
-
-/// Subtle surface fill behind a list row while the pointer is over it.
-private struct HoverRowBackground: ViewModifier {
-    @State private var isHovering = false
-
-    func body(content: Content) -> some View {
-        content
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovering ? Theme.surface : .clear)
-            )
-            .onHover { isHovering = $0 }
-            .animation(.easeOut(duration: 0.15), value: isHovering)
     }
 }
 
@@ -1293,13 +1311,13 @@ enum StatsRange: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Opening words of the Your Listening sentence for this window.
-    var sentenceLead: String {
+    /// The side-by-side picker's label.
+    var shortLabel: String {
         switch self {
-        case .allTime: return "You’ve listened for "
-        case .year:    return "This past year you’ve listened for "
-        case .month:   return "This past month you’ve listened for "
-        case .week:    return "This past week you’ve listened for "
+        case .allTime: return "All time"
+        case .year:    return "Year"
+        case .month:   return "Month"
+        case .week:    return "Week"
         }
     }
 

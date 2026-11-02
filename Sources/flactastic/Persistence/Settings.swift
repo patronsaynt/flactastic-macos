@@ -125,6 +125,31 @@ final class Settings {
         didSet { Self.saveJSON(genreGroups, key: "flactastic.genreGroups") }
     }
 
+    /// Home in its designed order (on), or in `homeSectionOrder` with
+    /// `homeHiddenSections` left out (off). Empty sections hide either way.
+    var homeArrangesAutomatically: Bool {
+        didSet { UserDefaults.standard.set(homeArrangesAutomatically, forKey: "flactastic.home.arrangesAutomatically") }
+    }
+
+    var homeSectionOrder: [HomeSection] {
+        didSet { UserDefaults.standard.set(homeSectionOrder.map(\.rawValue), forKey: "flactastic.home.sectionOrder") }
+    }
+
+    var homeHiddenSections: Set<HomeSection> {
+        didSet { UserDefaults.standard.set(homeHiddenSections.map(\.rawValue).sorted(), forKey: "flactastic.home.hiddenSections") }
+    }
+
+    /// The sections Home shows, in order.
+    var homeSections: [HomeSection] {
+        guard !homeArrangesAutomatically else { return HomeSection.allCases }
+        // Sections added in a later version join at their designed place.
+        var order = homeSectionOrder.filter { HomeSection.allCases.contains($0) }
+        for (index, section) in HomeSection.allCases.enumerated() where !order.contains(section) {
+            order.insert(section, at: min(index, order.count))
+        }
+        return order.filter { !homeHiddenSections.contains($0) }
+    }
+
     /// Title faces switched off in Genre Groups.
     var disabledSpineFaces: Set<SpineFont> {
         didSet { UserDefaults.standard.set(disabledSpineFaces.map(\.rawValue).sorted(), forKey: "flactastic.disabledSpineFaces") }
@@ -291,6 +316,11 @@ final class Settings {
         useSpineScans = (UserDefaults.standard.object(forKey: "flactastic.useSpineScans") as? Bool) ?? true
         spineOverrides = Self.loadJSON([String: SpineOverrides].self, key: "flactastic.spineOverrides") ?? [:]
         genreGroups = Self.loadJSON(GenreGroups.self, key: "flactastic.genreGroups") ?? GenreGroups()
+        homeArrangesAutomatically = (UserDefaults.standard.object(forKey: "flactastic.home.arrangesAutomatically") as? Bool) ?? true
+        homeSectionOrder = (UserDefaults.standard.stringArray(forKey: "flactastic.home.sectionOrder") ?? [])
+            .compactMap(HomeSection.init(rawValue:))
+        homeHiddenSections = Set((UserDefaults.standard.stringArray(forKey: "flactastic.home.hiddenSections") ?? [])
+            .compactMap(HomeSection.init(rawValue:)))
         disabledSpineFaces = Set((UserDefaults.standard.stringArray(forKey: "flactastic.disabledSpineFaces") ?? []).compactMap(SpineFont.init(rawValue:)))
         artistLogos = (UserDefaults.standard.dictionary(forKey: "flactastic.artistLogos") as? [String: String]) ?? [:]
         labelLogos = (UserDefaults.standard.dictionary(forKey: "flactastic.labelLogos") as? [String: String]) ?? [:]

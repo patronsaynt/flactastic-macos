@@ -34,6 +34,8 @@ struct LibraryFidelity {
     let rates: [RateSlice]
     let losslessFraction: Double
     let hiResCount: Int
+    /// Share of files in each quality tier, best first; empty tiers left out.
+    let tiers: [(quality: AudioQuality, fraction: Double)]
     /// 0…100 weighted fidelity index across the whole library.
     let score: Int
 
@@ -42,7 +44,7 @@ struct LibraryFidelity {
     init(tracks: [Track]) {
         totalFiles = tracks.count
         guard !tracks.isEmpty else {
-            formats = []; depths = []; rates = []
+            formats = []; depths = []; rates = []; tiers = []
             losslessFraction = 0; hiResCount = 0; score = 0
             return
         }
@@ -110,6 +112,14 @@ struct LibraryFidelity {
         }
         let avg = tracks.map(tierScore).reduce(0, +) / total
         score = Int(avg.rounded())
+
+        var tierCounts: [AudioQuality: Int] = [:]
+        for t in tracks {
+            tierCounts[AudioQuality.classify(sampleRate: t.sampleRate, bitDepth: t.bitDepth, format: t.fileFormat), default: 0] += 1
+        }
+        tiers = [AudioQuality.hiRes, .cd, .mid, .low].compactMap { q in
+            tierCounts[q].map { (q, Double($0) / total) }
+        }
     }
 
     private static func rateLabel(_ rate: Double) -> String {

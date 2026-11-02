@@ -306,15 +306,6 @@ final class ListeningStore {
         filtered(since).filter(\.counted).count
     }
 
-    /// Newest-first collections (albums/playlists) the user intentionally
-    /// played, for the Recently Played rail.
-    func recentlyPlayed(limit: Int) -> [RecentItem] {
-        recentContexts
-            .sorted { $0.date > $1.date }
-            .prefix(limit)
-            .map { RecentItem(kind: $0.kind, targetID: $0.targetID, title: $0.title, subtitle: $0.subtitle) }
-    }
-
     /// Number of listening sessions — runs of events separated by gaps larger
     /// than `sessionGap`.
     func sessionCount(since: Date? = nil) -> Int {
@@ -486,11 +477,10 @@ final class ListeningStore {
             .map { $0 }
     }
 
-    func topAlbumsThisWeek(limit: Int) -> [AlbumRank] {
-        let cal = Calendar.current
-        let weekAgo = cal.date(byAdding: .day, value: -7, to: Date()) ?? Date()
+    /// Albums ranked by minutes listened since `since` (all time when nil).
+    func topAlbums(limit: Int, since: Date?) -> [AlbumRank] {
         var byAlbum: [String: AlbumRank] = [:]
-        for event in events where event.date >= weekAgo {
+        for event in filtered(since) {
             guard let albumID = event.albumID else { continue }
             var rank = byAlbum[albumID] ?? AlbumRank(
                 albumID: albumID,

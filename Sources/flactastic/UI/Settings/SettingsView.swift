@@ -585,6 +585,7 @@ private struct ConnectionsSettingsPane: View {
 private struct AppearanceSettingsPane: View {
     @Environment(Settings.self) private var settings
     @State private var showsGenreGroups = false
+    @State private var showsHomeSections = false
 
     private let scaleRange: ClosedRange<Double> = 0.9...1.35
 
@@ -601,6 +602,26 @@ private struct AppearanceSettingsPane: View {
                     isOn: $settings.useLightMode
                 )
             }
+
+            // Home ─────────────────────────────────────────────────────────
+            SettingsGroup(title: "Home") {
+                ToggleRow(
+                    label: "Arrange Automatically",
+                    subtitle: "Show Home's sections in their designed order. Turn off to choose which appear, and where.",
+                    isOn: $settings.homeArrangesAutomatically
+                )
+                GroupDivider()
+                PickerRow(
+                    label: "Home Sections",
+                    subtitle: "Reorder or hide Recommended for today, Recently played, Mixes and the rest."
+                ) {
+                    Button("Customize…") { showsHomeSections = true }
+                        .buttonStyle(PillButtonStyle())
+                }
+                .disabled(settings.homeArrangesAutomatically)
+                .opacity(settings.homeArrangesAutomatically ? 0.4 : 1)
+            }
+            .sheet(isPresented: $showsHomeSections) { HomeSectionsSheet() }
 
             // Library View ─────────────────────────────────────────────────
             // Grid/list layout is chosen in-page on the Collection and

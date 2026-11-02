@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Library-derived audio-fidelity panel (formerly "Studio Quality Index"),
-/// laid out as a spec sheet: the score and headline counts on the left, the
-/// format, bit-depth and sample-rate breakdowns on the right. Recomputes from
+/// Library-derived audio-fidelity panel (formerly "Studio Quality Index").
+/// Compact on Home: the score, how the library splits across the quality
+/// tiers, and its formats at a glance. Details opens the full spec sheet
+/// (format, bit-depth and sample-rate breakdowns) in place. Recomputes from
 /// `library.tracks` on every change, so each breakdown only ever shows values
 /// present in the current library. Colored from the Home banner palette when
 /// there is one; otherwise series are told apart by gray shade.
@@ -10,86 +11,107 @@ struct FidelidexView: View {
     @Environment(LibraryStore.self) private var library
     var palette: HomePalette? = nil
 
+    @State private var showsDetails = false
+
     private var fidelity: LibraryFidelity { LibraryFidelity(tracks: library.tracks) }
 
     var body: some View {
         let f = fidelity
-        HStack(alignment: .top, spacing: 48) {
-            summary(f)
-                .frame(width: 300, alignment: .leading)
-            if !f.isEmpty {
-                VStack(alignment: .leading, spacing: 32) {
-                    formatBlock(f)
-                    bitDepthBlock(f)
-                    sampleRateBlock(f)
+        VStack(alignment: .leading, spacing: 14) {
+            HomeSectionHeader(title: "Fidelidex", subtitle: "Audio fidelity across your library") {
+                if !f.isEmpty {
+                    Button(showsDetails ? "Hide details" : "Details") {
+                        withAnimation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.45)) { showsDetails.toggle() }
+                    }
+                    .buttonStyle(QuietTextButtonStyle())
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-        }
-        .padding(.top, 30)
-        .overlay(alignment: .top) {
-            Rectangle().fill(Theme.divider).frame(height: 1)
-        }
-    }
-
-    // MARK: - Summary
-
-    private func summary(_ f: LibraryFidelity) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Fidelidex")
-                .font(.system(size: 20, weight: .bold))
-                .tracking(-0.2)
-                .foregroundStyle(Theme.textPrimary)
-            Text("Audio fidelity breakdown across your library.")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.textSecondary)
-
-            if f.isEmpty {
-                Text("No audio files in your library yet.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textTertiary)
-                    .padding(.top, 8)
-            } else {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(f.score)")
-                        .font(.system(size: 96, weight: .bold))
-                        .tracking(-3.8)
-                        .monospacedDigit()
-                        .foregroundStyle(palette?.accent ?? Theme.textPrimary)
-                    Text("/ 100")
-                        .font(.system(size: 15))
+            VStack(alignment: .leading, spacing: 0) {
+                if f.isEmpty {
+                    Text("No audio files in your library yet.")
+                        .font(.system(size: 13))
                         .foregroundStyle(Theme.textTertiary)
+                } else {
+                    HStack(alignment: .center, spacing: 32) {
+                        compactScore(f).frame(width: 220, alignment: .leading)
+                        compactBreakdown(f)
+                    }
+                    if showsDetails {
+                        HStack(alignment: .top, spacing: 40) {
+                            VStack(alignment: .leading, spacing: 28) {
+                                formatBlock(f)
+                                bitDepthBlock(f)
+                            }
+                            sampleRateBlock(f)
+                        }
+                        .padding(.top, 22)
+                        .overlay(alignment: .top) { Rectangle().fill(Theme.divider).frame(height: 1) }
+                        .padding(.top, 22)
+                        .transition(.opacity)
+                    }
                 }
-                .padding(.top, 8)
-                Text("Fidelity score")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textTertiary)
-
-                HStack(alignment: .top, spacing: 16) {
-                    summaryStat(percent(f.losslessFraction), "Lossless")
-                    summaryStat(f.hiResCount.formatted(), "Hi-Res files")
-                    summaryStat(f.totalFiles.formatted(), "Total files")
-                }
-                .padding(.top, 16)
-                .overlay(alignment: .top) {
-                    Rectangle().fill(Theme.surfaceElevated).frame(height: 1)
-                }
-                .padding(.top, 14)
             }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 22)
+            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Theme.textPrimary.opacity(0.05)))
         }
     }
 
-    private func summaryStat(_ value: String, _ label: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(value)
-                .font(.system(size: 18, weight: .bold))
-                .monospacedDigit()
-                .foregroundStyle(Theme.textPrimary)
-            Text(label)
-                .font(.system(size: 10))
+    private func compactScore(_ f: LibraryFidelity) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("\(f.score)")
+                    .font(.system(size: 64, weight: .heavy))
+                    .tracking(-2.5)
+                    .monospacedDigit()
+                    .foregroundStyle(palette?.accent ?? Theme.textPrimary)
+                Text("/ 100")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+            Text("Fidelity score across \(f.totalFiles.formatted()) files")
+                .font(.system(size: 12))
                 .foregroundStyle(Theme.textTertiary)
         }
+    }
+
+    /// The quality tiers as one bar in their own colours, then the formats,
+    /// deepest bit depth and highest rates as chips.
+    private func compactBreakdown(_ f: LibraryFidelity) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SegmentedBar(segments: f.tiers.map { ($0.fraction, $0.quality.color) })
+                .frame(height: 12)
+            HStack(spacing: 18) {
+                ForEach(f.tiers, id: \.quality) { tier in
+                    (Text(percent(tier.fraction)).foregroundColor(tier.quality.color).fontWeight(.bold) + Text(" \(tier.quality.label)"))
+                        .font(.system(size: 12))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            FlowLayout(spacing: 8, lineSpacing: 8) {
+                ForEach(f.formats.prefix(3)) { chip($0.name, percent($0.fraction)) }
+                if let deepest = f.depths.first, deepest.bits > 16 {
+                    chip("\(deepest.bits)-bit", percent(deepest.fraction))
+                }
+                let hiRate = f.rates.filter { $0.rate > 48000 }
+                if !hiRate.isEmpty {
+                    chip("Above 48 kHz", percent(Double(hiRate.map(\.count).reduce(0, +)) / Double(max(f.totalFiles, 1))))
+                }
+            }
+            .padding(.top, 4)
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func chip(_ name: String, _ value: String) -> some View {
+        (Text(name) + Text(" ") + Text(value).foregroundColor(Theme.textPrimary).fontWeight(.bold))
+            .font(.system(size: 12, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(Theme.textSecondary)
+            .padding(.horizontal, 10)
+            .frame(height: 26)
+            .overlay(Capsule().strokeBorder(Theme.textPrimary.opacity(0.1), lineWidth: 1))
     }
 
     // MARK: - File format
