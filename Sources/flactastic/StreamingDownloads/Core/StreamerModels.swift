@@ -48,6 +48,9 @@ struct RemoteTrack: Sendable, Hashable, Identifiable {
     /// True when the service indicates lossless / FLAC. Drives the UI badge and
     /// any user warnings before downloading lossy material.
     let isLossless: Bool
+    /// The recording's ISRC when the service reports it; how the same track
+    /// is recognised on another service.
+    var isrc: String? = nil
 }
 
 struct RemoteAlbum: Sendable, Hashable, Identifiable {

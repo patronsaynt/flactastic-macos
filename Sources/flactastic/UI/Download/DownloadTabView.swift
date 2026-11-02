@@ -1,10 +1,11 @@
 import SwiftUI
 import AppKit
 
-/// The Download tab, as one page. A single field takes any link — album,
-/// track or Spotify playlist — with the download options beside it; your
-/// Spotify playlists sit below it until something is fetched, which then
-/// opens in their place. The downloads panel slides in on the right once
+/// The Download tab, as one page. A single field takes a search or any link
+/// — album, track or Spotify playlist — with the download options below it.
+/// Typing searches the catalogue as you go; a link waits for Fetch. Your
+/// Spotify playlists sit below the field while it's empty, search results
+/// while it holds a search, and whatever is opened takes their place. The downloads panel slides in on the right once
 /// something is downloading (or a playlist is rebuilding) and goes away
 /// again when it's cleared.
 ///
@@ -20,8 +21,27 @@ struct DownloadTabView: View {
     @Environment(LucidaWebController.self) private var lucidaController
     @Environment(SpotifyAuthController.self) private var spotifyAuth
     @Environment(Settings.self) private var settings
+    @Environment(LibraryStore.self) private var library
 
     @State private var pasteURL: String = ""
+
+    /// The catalogue behind search. Deezer for now; any `CatalogSearching`
+    /// whose links Lucida resolves can replace it.
+    private let catalog: any CatalogSearching = DeezerCatalogSearch.shared
+    @State private var searchResults: CatalogSearchResults?
+    @State private var isSearching = false
+    @State private var searchError: String?
+    /// What's already in the library, for the In Library marks on results,
+    /// opened albums and tracks, and playlists. Worked out off the main
+    /// thread whenever the library changes, so marks appear as downloads land.
+    @State private var ownership: LibraryOwnership?
+    /// Bumped by Return (or Try again) to search at once instead of after
+    /// the typing pause.
+    @State private var searchNow = 0
+    /// One-click downloads started from results, by result ID.
+    @State private var quick: [String: QuickEntry] = [:]
+    @FocusState private var fieldFocused: Bool
+    @FocusState private var focusedResult: String?
 
     /// A resolved album / track / artist link.
     @State private var resolved: RemoteResolveResponse?
@@ -95,6 +115,14 @@ struct DownloadTabView: View {
                 withAnimation(.easeOut(duration: 0.35)) { heroArtwork = result.image }
             }
         }
+        .task(id: library.tracksRevision) {
+            let tracks = library.tracks
+            let resolver = library.makeArtistResolver()
+            let built = await Task.detached(priority: .userInitiated) {
+                LibraryOwnership(tracks: tracks, resolver: resolver)
+            }.value
+            ownership = built
+        }
         .sheet(isPresented: $showVpnSheet) {
             VpnNoticeSheet(showVpnNoticeAgain: Bindable(settings).showVpnNotice)
         }
@@ -103,6 +131,32 @@ struct DownloadTabView: View {
     // MARK: - State
 
     private enum PageState { case idle, loading, error, resolved }
+
+    private enum QuickEntry {
+        case resolving
+        case queued(trackIDs: [String])
+        case failed(String)
+    }
+
+    /// The field holds a link rather than a search.
+    static func isLink(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains(" ") else { return false }
+        let lower = trimmed.lowercased()
+        if lower.hasPrefix("http://") || lower.hasPrefix("https://") || lower.hasPrefix("www.") { return true }
+        let hosts = ["open.spotify.com", "spotify.com", "tidal.com", "listen.tidal.com", "qobuz.com",
+                     "play.qobuz.com", "open.qobuz.com", "deezer.com", "soundcloud.com", "on.soundcloud.com",
+                     "music.apple.com", "music.amazon.", "music.youtube.com"]
+        return hosts.contains { lower.hasPrefix($0) }
+    }
+
+    private var isLinkInput: Bool { Self.isLink(pasteURL) }
+
+    /// The search the field holds, or nil when it's empty or a link.
+    private var searchQuery: String? {
+        let trimmed = pasteURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty || isLinkInput ? nil : trimmed
+    }
 
     private var pageState: PageState {
         if isWorking || isResolvingPlaylist { return .loading }
@@ -138,7 +192,7 @@ struct DownloadTabView: View {
                     .font(.system(size: 72, weight: .heavy))
                     .tracking(-2.9)
                     .foregroundStyle(Theme.textPrimary)
-                Text("Paste a link or pick one of your Spotify playlists. Automatically downloads at the highest available quality.")
+                Text("Search, paste a link, or pick a Spotify playlist. Downloads at the highest available quality.")
                     .font(.system(size: 15))
                     .foregroundStyle(Theme.textTertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -146,8 +200,16 @@ struct DownloadTabView: View {
 
                 pasteBar
                     .padding(.top, 30)
-                worksWith
-                    .padding(.top, 14)
+                ZStack(alignment: .leading) {
+                    worksWith
+                        .opacity(searchQuery == nil ? 1 : 0)
+                        .offset(y: searchQuery == nil ? 0 : 4)
+                    sourceNote
+                        .opacity(searchQuery == nil ? 0 : 1)
+                        .offset(y: searchQuery == nil ? 4 : 0)
+                }
+                .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.35), value: searchQuery == nil)
+                .padding(.top, 14)
                 optionsRow
                     .padding(.top, 18)
                     .padding(.top, 16)
@@ -155,7 +217,7 @@ struct DownloadTabView: View {
 
                 Group {
                     switch pageState {
-                    case .idle:     spotifySection
+                    case .idle:     if searchQuery != nil { searchContent } else { spotifySection }
                     case .loading:  loadingState
                     case .error:    errorState
                     case .resolved: resolvedContent
@@ -175,37 +237,112 @@ struct DownloadTabView: View {
         Rectangle().fill(Theme.divider).frame(height: 1)
     }
 
+    /// One field for both: a link fetches on Return or Fetch, anything else
+    /// searches as you type. The leading glyph turns into a link the moment
+    /// a link is pasted, and Fetch only appears then.
     private var pasteBar: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "link")
-                .font(.system(size: 16))
-                .foregroundStyle(Theme.textTertiary)
-            TextField("Paste an album, track or playlist link", text: $pasteURL)
+        let link = isLinkInput
+        let hasText = !pasteURL.trimmingCharacters(in: .whitespaces).isEmpty
+        return HStack(spacing: 12) {
+            ZStack {
+                Image(systemName: "magnifyingglass")
+                    .opacity(link ? 0 : 1)
+                    .rotationEffect(.degrees(link ? 30 : 0))
+                    .scaleEffect(link ? 0.6 : 1)
+                Image(systemName: "link")
+                    .foregroundStyle(Theme.textPrimary)
+                    .opacity(link ? 1 : 0)
+                    .rotationEffect(.degrees(link ? 0 : -30))
+                    .scaleEffect(link ? 1 : 0.6)
+            }
+            .font(.system(size: 16))
+            .foregroundStyle(Theme.textTertiary)
+            .frame(width: 18)
+            .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.32), value: link)
+            TextField("Search or paste a link", text: $pasteURL)
                 .textFieldStyle(.plain)
                 .font(.system(size: 17))
+                .focused($fieldFocused)
                 .disabled(pageState == .loading)
-                .onSubmit(resolve)
-            if pageState == .loading {
+                .onSubmit(submit)
+                .onKeyPress(.downArrow) {
+                    guard let first = firstResultID else { return .ignored }
+                    focusedResult = first
+                    return .handled
+                }
+                .onKeyPress(.escape) {
+                    guard hasText else { return .ignored }
+                    clearField()
+                    return .handled
+                }
+            if pageState == .loading || isSearching {
                 ProgressView().controlSize(.small)
             }
-            Button("Fetch", action: resolve)
-                .buttonStyle(SheetPillStyle(isPrimary: true))
-                .disabled(pasteURL.trimmingCharacters(in: .whitespaces).isEmpty || pageState == .loading)
+            if hasText && !link && searchResults != nil && pageState == .idle {
+                Text("↓ to browse")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 6)
+                    .frame(height: 20)
+                    .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.textPrimary.opacity(0.12), lineWidth: 1))
+            }
+            if hasText {
+                Button(action: clearField) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Theme.textTertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear")
+                .accessibilityLabel("Clear")
+            }
+            if link {
+                Button("Fetch", action: resolve)
+                    .buttonStyle(SheetPillStyle(isPrimary: true))
+                    .disabled(pageState == .loading)
+                    .transition(.opacity.combined(with: .scale(scale: 0.9, anchor: .trailing)))
+            }
         }
+        .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.35), value: link)
         .padding(.leading, 22)
-        .padding(.trailing, 6)
+        .padding(.trailing, link ? 6 : 16)
         .padding(.vertical, 6)
-        .background(Theme.textPrimary.opacity(0.06), in: Capsule())
-        .overlay(Capsule().strokeBorder(Theme.textPrimary.opacity(0.1), lineWidth: 1))
+        .frame(minHeight: 52)
+        .background(Theme.textPrimary.opacity(fieldFocused ? 0.08 : 0.06), in: Capsule())
+        .overlay(Capsule().strokeBorder(Theme.textPrimary.opacity(fieldFocused ? 0.18 : 0.1), lineWidth: 1))
+        .task(id: SearchKey(query: searchQuery, now: searchNow)) { await runSearch() }
+        .onChange(of: searchQuery) { _, query in
+            // Typing a new search takes the page back to the results.
+            if query != nil, pageState != .loading, resolved != nil || resolvedPlaylist != nil || error != nil || playlistError != nil {
+                clearOpen()
+            }
+        }
+    }
+
+    /// Says what a search reaches: the catalogue it looks in, and that each
+    /// download comes from the best copy Lucida can get, Hi-Res when one exists.
+    private var sourceNote: some View {
+        HStack(spacing: 8) {
+            Circle().fill(Theme.qualityLossless).frame(width: 6, height: 6)
+            (Text("Searching ")
+             + Text(catalog.sourceName).foregroundColor(Theme.textSecondary).fontWeight(.semibold)
+             + Text(" · downloads from the best source available, up to ")
+             + Text("Hi-Res").foregroundColor(Theme.qualityLossless).fontWeight(.semibold)
+             + Text("."))
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+        }
+        .frame(height: 24)
     }
 
     private var worksWith: some View {
         HStack(spacing: 8) {
-            Text("Works with")
+            Text("Links from")
                 .font(.system(size: 12))
                 .foregroundStyle(Theme.textTertiary)
                 .padding(.trailing, 4)
-            ForEach(["Spotify", "Tidal", "Qobuz", "Amazon Music", "SoundCloud"], id: \.self) { service in
+            ForEach(["Spotify", "Tidal", "Qobuz", "Deezer", "Amazon Music", "SoundCloud"], id: \.self) { service in
                 Text(service)
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.textSecondary)
@@ -309,6 +446,64 @@ struct DownloadTabView: View {
         .fixedSize()
     }
 
+    // MARK: - Search
+
+    /// Restarts the search task when the query changes, or when Return asks
+    /// for it now.
+    private struct SearchKey: Equatable {
+        let query: String?
+        let now: Int
+    }
+
+    @ViewBuilder
+    private var searchContent: some View {
+        if let results = searchResults, !results.isEmpty {
+            DownloadSearchResults(
+                results: results,
+                ownership: ownership ?? LibraryOwnership(),
+                state: quickState,
+                onOpen: openResult,
+                onDownload: quickDownload,
+                focus: $focusedResult,
+                onLeaveTop: { focusedResult = nil; fieldFocused = true }
+            )
+            .opacity(isSearching ? 0.55 : 1)
+            .animation(.easeOut(duration: 0.2), value: isSearching)
+        } else if let searchError {
+            VStack(alignment: .leading, spacing: 0) {
+                sectionTitle("Search isn't reachable")
+                Text(searchError)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.top, 6)
+                Button("Try again") { searchNow += 1 }
+                    .buttonStyle(SheetPillStyle())
+                    .padding(.top, 18)
+            }
+        } else if let results = searchResults, results.isEmpty, !isSearching {
+            VStack(alignment: .leading, spacing: 6) {
+                sectionTitle("Nothing on \(catalog.sourceName) for “\(results.query)”")
+                Text("Try different words, or paste a link.")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.textTertiary)
+            }
+        } else {
+            HStack(spacing: 14) {
+                ProgressView().controlSize(.regular)
+                Text("Searching \(catalog.sourceName)…")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .padding(.vertical, 20)
+        }
+    }
+
+    /// The first result ↓ moves to from the field.
+    private var firstResultID: String? {
+        guard pageState == .idle, searchQuery != nil, let results = searchResults else { return nil }
+        return results.top?.id ?? results.tracks.first?.id ?? results.albums.first?.id
+    }
+
     // MARK: - Spotify playlists (idle)
 
     private var spotifySection: some View {
@@ -406,7 +601,7 @@ struct DownloadTabView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 560, alignment: .leading)
                 .padding(.top, 6)
-            Button(spotifyAuth.isConnected && playlistError != nil ? "Back to your playlists" : "Try another link", action: clearOpen)
+            Button(searchQuery != nil ? "Back to results" : spotifyAuth.isConnected && playlistError != nil ? "Back to your playlists" : "Try another link", action: clearOpen)
                 .buttonStyle(SheetPillStyle())
                 .padding(.top, 18)
         }
@@ -418,7 +613,7 @@ struct DownloadTabView: View {
     private var resolvedContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: clearOpen) {
-                Label(spotifyAuth.isConnected ? "Back to your playlists" : "Back", systemImage: "chevron.left")
+                Label(searchQuery != nil ? "Back to results" : spotifyAuth.isConnected ? "Back to your playlists" : "Back", systemImage: "chevron.left")
             }
             .buttonStyle(QuietTextButtonStyle())
             .padding(.leading, -10)
@@ -463,7 +658,11 @@ struct DownloadTabView: View {
     /// Cover, kind, title, details and the download button, then the
     /// tracklist. One layout for every resolved kind.
     private func collection(kind: String, title: String, meta: String, tracks: [RemoteTrack], cta: String, onDownload: @escaping () -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let owned = tracks.filter(isOwned).count
+        // A playlist still rebuilds from files already in the library, so it
+        // keeps its button; an album or track that's all here has nothing to fetch.
+        let nothingToFetch = owned == tracks.count && !tracks.isEmpty && kind != "Playlist"
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .bottom, spacing: 28) {
                 cover
                 VStack(alignment: .leading, spacing: 0) {
@@ -481,11 +680,27 @@ struct DownloadTabView: View {
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.textSecondary)
                         .padding(.top, 10)
-                    Button(action: onDownload) {
-                        Label(cta, systemImage: "arrow.down.to.line")
+                    if owned > 0 && !nothingToFetch {
+                        Text(owned == tracks.count
+                             ? "All \(owned) already in your library"
+                             : "\(owned) of \(tracks.count) already in your library")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Theme.textTertiary)
+                            .padding(.top, 4)
                     }
-                    .buttonStyle(SheetPillStyle(isPrimary: true))
-                    .padding(.top, 18)
+                    if nothingToFetch {
+                        Label(tracks.count == 1 ? "In your library" : "All in your library", systemImage: "checkmark")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Theme.textSecondary)
+                            .frame(height: 34)
+                            .padding(.top, 18)
+                    } else {
+                        Button(action: onDownload) {
+                            Label(cta, systemImage: "arrow.down.to.line")
+                        }
+                        .buttonStyle(SheetPillStyle(isPrimary: true))
+                        .padding(.top, 18)
+                    }
                 }
                 Spacer(minLength: 0)
             }
@@ -520,6 +735,11 @@ struct DownloadTabView: View {
         .shadow(color: .black.opacity(0.55), radius: 30, y: 20)
     }
 
+    /// Already in the library, by the rule a download uses to skip it.
+    private func isOwned(_ track: RemoteTrack) -> Bool {
+        ownership?.owns(track) ?? false
+    }
+
     /// The latest download of this track in the queue, if any.
     private func job(for track: RemoteTrack) -> DownloadCoordinator.Job? {
         downloads.jobs.last { $0.track.id == track.id }
@@ -527,6 +747,7 @@ struct DownloadTabView: View {
 
     private func trackRow(_ track: RemoteTrack, number: Int) -> some View {
         let job = job(for: track)
+        let owned = isOwned(track)
         return HStack(spacing: 12) {
             Text("\(number)")
                 .font(.system(size: 13))
@@ -544,14 +765,26 @@ struct DownloadTabView: View {
                     .lineLimit(1)
             }
             Spacer(minLength: 12)
-            qualityTag(lossless: track.isLossless)
+            if owned {
+                Text("In Library")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+            } else {
+                qualityTag(lossless: track.isLossless)
+            }
             Text(FormatUtils.formatDuration(track.durationSeconds))
                 .font(.system(size: 12.5))
                 .monospacedDigit()
                 .foregroundStyle(Theme.textTertiary)
                 .frame(width: 48, alignment: .trailing)
-            trackAction(track, job: job)
-                .frame(width: 34, height: 34)
+            Group {
+                if owned && job == nil {
+                    InLibraryCheck()
+                } else {
+                    trackAction(track, job: job)
+                }
+            }
+            .frame(width: 34, height: 34)
         }
         .padding(.horizontal, 10)
         .frame(height: 48)
@@ -929,6 +1162,109 @@ struct DownloadTabView: View {
 
     // MARK: - Actions
 
+    /// Return: a link fetches, a search runs without waiting for the pause.
+    private func submit() {
+        if isLinkInput { resolve() } else if searchQuery != nil { searchNow += 1 }
+    }
+
+    private func clearField() {
+        pasteURL = ""
+        clearOpen()
+        fieldFocused = true
+    }
+
+    /// Searches after a short pause in typing (none when Return asked).
+    /// Earlier results stay on screen, dimmed, until the new ones arrive.
+    private func runSearch() async {
+        guard let query = searchQuery else {
+            isSearching = false
+            return
+        }
+        if searchResults?.query != query || searchError != nil {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+        }
+        isSearching = true
+        do {
+            let results = try await catalog.search(query)
+            guard !Task.isCancelled else { return }
+            searchResults = results
+            searchError = nil
+        } catch is CancellationError {
+            return
+        } catch {
+            guard !Task.isCancelled else { return }
+            searchError = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+        }
+        isSearching = false
+    }
+
+    /// A result opens just as its link would if pasted.
+    private func openResult(_ result: CatalogResult) {
+        clearOpen()
+        focusedResult = nil
+        isWorking = true
+        options = .default
+        Task {
+            do {
+                resolved = try await registry.resolve(result.link)
+            } catch {
+                self.error = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+            }
+            isWorking = false
+        }
+    }
+
+    /// Lists the result's tracks through Lucida and queues them all with
+    /// the current options, without leaving the results.
+    private func quickDownload(_ result: CatalogResult) {
+        if case .resolving? = quick[result.id] { return }
+        quick[result.id] = .resolving
+        Task {
+            do {
+                let tracks: [RemoteTrack]
+                switch try await registry.resolve(result.link) {
+                case .album(let album): tracks = album.tracks
+                case .track(let track): tracks = [track]
+                case .playlist(let playlist): tracks = playlist.tracks
+                case .artist: tracks = []
+                }
+                guard !tracks.isEmpty else {
+                    quick[result.id] = .failed("Lucida found nothing to download.")
+                    return
+                }
+                enqueueWithOptions(tracks)
+                quick[result.id] = .queued(trackIDs: tracks.map(\.id))
+            } catch {
+                quick[result.id] = .failed((error as? LocalizedError)?.errorDescription ?? "Couldn't start the download.")
+            }
+        }
+    }
+
+    /// A result's download, read from the queue: overall progress across
+    /// its tracks, a check once every one is in, a failure if any didn't make it.
+    private func quickState(_ result: CatalogResult) -> QuickDownloadState {
+        switch quick[result.id] {
+        case nil: return .idle
+        case .resolving: return .resolving
+        case .failed(let message): return .failed(message)
+        case .queued(let ids):
+            let jobs = ids.compactMap { id in downloads.jobs.last { $0.track.id == id } }
+            // Cleared from the panel after finishing.
+            guard !jobs.isEmpty else { return .done }
+            if jobs.contains(where: { isInFlight($0.status) || isQueued($0.status) }) {
+                if jobs.allSatisfy({ isQueued($0.status) }) { return .progress(nil) }
+                let total = jobs.reduce(CGFloat(0)) { $0 + jobProgress($1.status) }
+                return .progress(total / CGFloat(jobs.count))
+            }
+            if jobs.contains(where: { isRetryable($0.status) }) {
+                let failed = jobs.filter { isRetryable($0.status) }.count
+                return .failed(failed == 1 ? "A track didn't download." : "\(failed) tracks didn't download.")
+            }
+            return .done
+        }
+    }
+
     /// Back to the idle page (your playlists), clearing whatever was open.
     private func clearOpen() {
         resolved = nil
@@ -942,7 +1278,8 @@ struct DownloadTabView: View {
         let trimmed = pasteURL.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         clearOpen()
-        guard let url = URL(string: trimmed) else {
+        let withScheme = trimmed.lowercased().hasPrefix("http") ? trimmed : "https://" + trimmed
+        guard let url = URL(string: withScheme), url.host != nil else {
             error = "That URL doesn't look valid."
             return
         }
@@ -1016,17 +1353,18 @@ struct DownloadTabView: View {
 
 /// A small ring: the arc fills with `fraction`, or spins when it's nil
 /// (queued, or no size known yet).
-private struct ProgressRing: View {
+struct ProgressRing: View {
     let fraction: CGFloat?
+    var tint: Color = Theme.textPrimary
 
     @State private var spinning = false
 
     var body: some View {
         ZStack {
-            Circle().stroke(Theme.textPrimary.opacity(0.15), lineWidth: 2)
+            Circle().stroke(tint.opacity(0.15), lineWidth: 2)
             Circle()
                 .trim(from: 0, to: fraction.map { max(0.04, min(1, $0)) } ?? 0.28)
-                .stroke(Theme.textPrimary, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .stroke(tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 .rotationEffect(.degrees(-90))
                 .rotationEffect(.degrees(fraction == nil && spinning ? 360 : 0))
                 .animation(fraction == nil ? .linear(duration: 0.9).repeatForever(autoreverses: false) : .easeOut(duration: 0.25), value: spinning)
@@ -1160,7 +1498,7 @@ private struct SpotifyPlaylistCard: View {
 
 /// Fixes content to a square of the proposed width, centering and clipping
 /// whatever is inside.
-private struct SquareSlot: ViewModifier {
+struct SquareSlot: ViewModifier {
     func body(content: Content) -> some View {
         Color.clear
             .aspectRatio(1, contentMode: .fit)

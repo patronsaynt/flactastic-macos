@@ -2,6 +2,9 @@ import Foundation
 import WebKit
 import AppKit
 import Observation
+import os
+
+let lucidaLog = Logger(subsystem: "com.flactastic.app", category: "Lucida")
 
 /// Thin host for a hidden `WKWebView` pointed at https://lucida.to.
 ///
@@ -45,6 +48,14 @@ final class LucidaWebController: NSObject {
     private(set) var log: [LogEntry] = []
 
     func addLog(_ kind: LogEntry.Kind, _ message: String) {
+        // Mirrored to the unified log so a failure can be traced after the
+        // fact (`log show --predicate 'subsystem == "com.flactastic.app"'`),
+        // not only while the debug pane is open.
+        if kind == .error {
+            lucidaLog.error("\(kind.rawValue, privacy: .public) \(message, privacy: .public)")
+        } else {
+            lucidaLog.log("\(kind.rawValue, privacy: .public) \(message, privacy: .public)")
+        }
         log.append(LogEntry(kind: kind, message: message))
         if log.count > 200 { log.removeFirst(log.count - 200) }
     }

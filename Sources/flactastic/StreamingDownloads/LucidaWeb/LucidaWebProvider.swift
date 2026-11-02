@@ -77,19 +77,32 @@ final class LucidaWebProvider: NSObject, StreamerProvider {
     }
 
     func resolve(_ url: URL) async throws -> RemoteResolveResponse {
-        try await controller.awaitReady()
-        let raw = try await controller.callBridge(
-            "window.__flac.metadata(\(jsString(url.absoluteString)))",
-            as: LucidaMetadata.self
-        )
-        // lucida.to wraps every endpoint in a `{success, ...}` envelope.
-        // Our bridge only flags transport-level failures; an explicit
-        // `success: false` (e.g. region-locked, removed, geo-blocked)
-        // would otherwise come back as a track with empty everything.
-        if raw.success == false {
-            throw StreamerError.unavailable(raw.error ?? "lucida metadata unavailable")
+        // Deezer's own API lists a Deezer release, so it opens even while
+        // Lucida can't reach Deezer. Downloads still go through Lucida.
+        if SourceService(url) == .deezer,
+           let release = try? await DeezerCatalogSearch.shared.release(url) {
+            return release
         }
-        return raw.toRemote(originalURL: url)
+        try await controller.awaitReady()
+        do {
+            return try await Self.retryingOnce {
+                let raw = try await self.controller.callBridge(
+                    "window.__flac.metadata(\(self.jsString(url.absoluteString)))",
+                    as: LucidaMetadata.self
+                )
+                // lucida.to wraps every endpoint in a `{success, ...}` envelope.
+                // Our bridge only flags transport-level failures; an explicit
+                // `success: false` (e.g. region-locked, removed, geo-blocked)
+                // would otherwise come back as a track with empty everything.
+                if raw.success == false {
+                    throw StreamerError.unavailable(raw.error ?? "lucida metadata unavailable")
+                }
+                return raw.toRemote(originalURL: url)
+            }
+        } catch where Self.isTransient(error) {
+            throw StreamerError.unavailable(
+                "Lucida couldn't reach \(SourceService(url).name) right now. Try again shortly, or use a link from another service.")
+        }
     }
 
     func getStream(for track: RemoteTrack) async throws -> DownloadStream {
@@ -143,52 +156,134 @@ final class LucidaWebProvider: NSObject, StreamerProvider {
     // MARK: - Internals
 
     private let controller: LucidaWebController
-    private let sourceMatcher: SourceMatchService
+    private let sources: ReleaseSources
 
     init(controller: LucidaWebController, sourceMatcher: SourceMatchService = SourceMatchService()) {
         self.controller = controller
-        self.sourceMatcher = sourceMatcher
+        self.sources = ReleaseSources(matcher: sourceMatcher)
         super.init()
     }
 
-    /// Run a Lucida job for `track` through to server-side completion.
-    /// Spotify links are Lucida's least reliable source — its own Spotify
-    /// downloader routinely fails server-side — so for a Spotify track we walk
-    /// each `SourceMatchService.Service` in order, and only hand Lucida the
-    /// Spotify link once every alternate is unmatched or has failed. If that
-    /// fails too, the error says every platform was tried and lists why each
-    /// one failed.
+    // MARK: - Source health
+
+    /// Services whose downloads keep failing are skipped for a while, so an
+    /// outage on one (Lucida's Tidal, say) costs each track nothing.
+    private var serviceFailures: [SourceService: (count: Int, since: Date)] = [:]
+    private static let tripAfter = 3
+    private static let restFor: TimeInterval = 10 * 60
+
+    private func isResting(_ service: SourceService) -> Bool {
+        guard let record = serviceFailures[service], record.count >= Self.tripAfter else { return false }
+        if Date().timeIntervalSince(record.since) > Self.restFor {
+            serviceFailures[service] = nil
+            return false
+        }
+        return true
+    }
+
+    private func recordFailure(_ service: SourceService) {
+        let record = serviceFailures[service]
+        serviceFailures[service] = ((record?.count ?? 0) + 1, record?.since ?? Date())
+    }
+
+    // MARK: - Album listings
+
+    /// Albums listed through Lucida, shared by every track of the release
+    /// and by tracks asking at the same time. A failed listing is
+    /// remembered for a few minutes rather than retried per track.
+    private var listings: [URL: Task<[RemoteTrack]?, Never>] = [:]
+    private var listingFailedAt: [URL: Date] = [:]
+
+    private func listAlbum(_ url: URL) async -> [RemoteTrack]? {
+        if let failed = listingFailedAt[url], Date().timeIntervalSince(failed) < Self.restFor { return nil }
+        if isResting(SourceService(url)) { return nil }
+        if let running = listings[url] { return await running.value }
+        let task = Task { () -> [RemoteTrack]? in
+            guard case .album(let album)? = try? await self.resolve(url) else { return nil }
+            return album.tracks
+        }
+        listings[url] = task
+        let tracks = await task.value
+        if tracks == nil {
+            listings[url] = nil
+            listingFailedAt[url] = Date()
+            controller.addLog(.info, "Couldn't list \(url.absoluteString) for a better source")
+        }
+        return tracks
+    }
+
+    // MARK: - Retrying
+
+    /// Lucida drops requests now and then ("Load failed", a 429 or 5xx, a
+    /// one-off server error); the same request usually works a moment later.
+    static func isTransient(_ error: Error) -> Bool {
+        let text: String
+        if case .unavailable(let message)? = error as? StreamerError { text = message } else { text = "\(error)" }
+        let lower = text.lowercased()
+        return ["load failed", "http 429", "http 5", "timed out", "network", "cannot read properties", "internal"]
+            .contains { lower.contains($0) }
+    }
+
+    private static func retryingOnce<T>(_ work: () async throws -> T) async throws -> T {
+        do {
+            return try await work()
+        } catch where !(error is CancellationError) && isTransient(error) {
+            try await Task.sleep(for: .seconds(1.5))
+            return try await work()
+        }
+    }
+
+    /// Run a Lucida job for `track` through to server-side completion, from
+    /// the best source that works. A Qobuz, Tidal or Amazon link is tried as
+    /// it is first. Otherwise, or when that fails, `ReleaseSources` finds the
+    /// same track elsewhere and each copy is tried best quality first: Hi-Res
+    /// services, then Deezer's CD-quality FLAC, then Apple Music, with a
+    /// Spotify link always last since Lucida's Spotify downloader is its
+    /// least reliable. If every source fails, the error lists why each did.
     private func runJob(
         track: RemoteTrack, sourceURL: URL, options: LucidaOptions
     ) async throws -> (handoff: String, server: String) {
-        guard Self.isSpotify(sourceURL) else {
-            return try await attempt(sourceURL, track: track, options: options)
-        }
+        var tried = Set<String>()
         var reasons: [String] = []
-        for service in SourceMatchService.Service.allCases {
-            guard let url = await sourceMatcher.url(for: track, on: service) else {
-                controller.addLog(.info, "No \(service.rawValue) match for \(track.title)")
-                // Worded to avoid PlaylistRebuildCoordinator.isPermanentFailure's
-                // "no match" keyword — one missing match shouldn't stop retries
-                // when the other platforms failed only transiently.
-                reasons.append("\(service.rawValue): track not in catalog search")
-                continue
+
+        func attemptFrom(_ url: URL) async throws -> (handoff: String, server: String)? {
+            tried.insert(url.absoluteString)
+            let service = SourceService(url)
+            if isResting(service) {
+                reasons.append("\(service.name): skipped after repeated failures")
+                return nil
             }
             do {
-                return try await attempt(url, track: track, options: options)
-            } catch where !(error is CancellationError) {
-                reasons.append("\(service.rawValue): \(Self.reason(error))")
+                let job = try await Self.retryingOnce { try await self.attempt(url, track: track, options: options) }
+                serviceFailures[service] = nil
+                controller.addLog(.ok, "\(track.title) from \(service.name)")
+                return job
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                recordFailure(service)
+                reasons.append("\(service.name): \(Self.reason(error))")
+                return nil
             }
         }
-        do {
-            return try await attempt(sourceURL, track: track, options: options)
-        } catch where !(error is CancellationError) {
-            reasons.append("Spotify: \(Self.reason(error))")
+
+        if SourceService(sourceURL).isHiRes, let job = try await attemptFrom(sourceURL) {
+            return job
         }
-        let platforms = (SourceMatchService.Service.allCases.map(\.rawValue) + ["Spotify"])
-            .joined(separator: ", ")
+        let ladder = await sources.candidates(for: track, original: sourceURL) { [weak self] url in
+            await self?.listAlbum(url)
+        }
+        controller.addLog(.info, "Sources for \(track.title): \(ladder.map { SourceService($0).name }.joined(separator: " → "))")
+        for url in ladder where !tried.contains(url.absoluteString) {
+            try Task.checkCancellation()
+            if let job = try await attemptFrom(url) { return job }
+        }
+        let services = ladder.map { SourceService($0).name }
+        // Worded to avoid PlaylistRebuildCoordinator.isPermanentFailure's
+        // "no match" keyword: a source that failed only transiently should
+        // still be retried in a later round.
         throw StreamerError.unavailable(
-            "Tried every platform (\(platforms)) and none could download this track. "
+            "Tried every source (\(services.joined(separator: ", "))) and none could download this track. "
             + reasons.joined(separator: " · "))
     }
 
@@ -212,11 +307,6 @@ final class LucidaWebProvider: NSObject, StreamerProvider {
     private static func reason(_ error: Error) -> String {
         if case .unavailable(let message)? = error as? StreamerError { return message }
         return error.localizedDescription
-    }
-
-    private static func isSpotify(_ url: URL) -> Bool {
-        let host = url.host?.lowercased()
-        return host == "open.spotify.com" || host == "spotify.com"
     }
 
     private func requestJob(
@@ -452,7 +542,8 @@ struct LucidaMetadata: Decodable {
             coverArt: (coverArtwork ?? []).compactMap(Self.toCover),
             url: URL(string: url ?? originalURL.absoluteString) ?? originalURL,
             serviceID: "lucida",
-            isLossless: true   // optimistic; lucida prefers lossless when available
+            isLossless: true,   // optimistic; lucida prefers lossless when available
+            isrc: isrc
         )
     }
 
@@ -487,7 +578,8 @@ struct LucidaMetadata: Decodable {
                 coverArt: albumArts,
                 url: URL(string: t.url ?? originalURL.absoluteString) ?? originalURL,
                 serviceID: "lucida",
-                isLossless: true
+                isLossless: true,
+                isrc: t.isrc
             )
         }
         return RemoteAlbum(

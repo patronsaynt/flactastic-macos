@@ -7,8 +7,9 @@ import Observation
 /// For each track, in playlist order:
 ///   1. Skip if it's already in the library (reuse the existing file).
 ///   2. Download via the shared `DownloadCoordinator`. `LucidaWebProvider`
-///      tries a matched non-Spotify equivalent first and only falls back to
-///      the Spotify link itself (see `SourceMatchService`).
+///      finds the same recording on other services (by ISRC when Spotify
+///      reports one) and tries them best quality first, Hi-Res before
+///      Deezer's FLAC, with the Spotify link itself last (see `ReleaseSources`).
 ///   3. Append the track to the local playlist (or record a failure).
 ///
 /// Progress and a final failure summary are published for the Download tab UI.
@@ -426,6 +427,13 @@ final class PlaylistRebuildCoordinator {
     /// Everything else — busy, rate-limited, timeouts, generic "couldn't start"
     /// — is treated as transient and retried with backoff.
     static func isPermanentFailure(_ reason: String) -> Bool {
+        // "Tried every source …" joins one reason per source with " · ": it's
+        // only permanent when every source's reason is, so one service's
+        // "not found" doesn't cancel retries another source still deserves.
+        if reason.hasPrefix("Tried every source"), let header = reason.range(of: "this track. ") {
+            let parts = reason[header.upperBound...].components(separatedBy: " · ")
+            return !parts.isEmpty && parts.allSatisfy(isPermanentFailure)
+        }
         let r = reason.lowercased()
         let permanent = [
             "no match", "no matching", "not found", "no results", "no result",
@@ -485,7 +493,8 @@ extension RemoteTrack {
             coverArt: coverArt,
             url: url,
             serviceID: serviceID,
-            isLossless: isLossless
+            isLossless: isLossless,
+            isrc: isrc
         )
     }
 }

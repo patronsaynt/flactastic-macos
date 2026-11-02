@@ -97,7 +97,7 @@ actor SpotifyPlaylistService {
         var offset = 0
         let limit = 50
         while true {
-            let fields = "next,items(track(name,duration_ms,is_local,external_urls(spotify),artists(name),album(images)))"
+            let fields = "next,items(track(name,duration_ms,is_local,external_urls(spotify),external_ids(isrc),artists(name),album(images)))"
             let page = try await apiGet(
                 "https://api.spotify.com/v1/me/tracks?offset=\(offset)&limit=\(limit)&fields=\(fields.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? fields)",
                 token: token, as: APISavedTracksPage.self)
@@ -152,7 +152,7 @@ actor SpotifyPlaylistService {
         var offset = 0
         let limit = 100
         while true {
-            let fields = "next,items(item(name,duration_ms,is_local,external_urls(spotify),artists(name)))"
+            let fields = "next,items(item(name,duration_ms,is_local,external_urls(spotify),external_ids(isrc),artists(name)))"
             let page = try await apiGet(
                 "https://api.spotify.com/v1/playlists/\(playlistID)/items?offset=\(offset)&limit=\(limit)&fields=\(fields.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? fields)",
                 token: token, as: APITrackPage.self)
@@ -231,7 +231,10 @@ actor SpotifyPlaylistService {
             coverArt: [],
             url: spotifyURL,
             serviceID: "lucida",
-            isLossless: true
+            isLossless: true,
+            // Finds the exact recording on other services, rather than a
+            // title match.
+            isrc: t.external_ids?.isrc
         )
     }
 
@@ -383,9 +386,11 @@ private struct APITrack: Decodable {
     let duration_ms: Double?
     let is_local: Bool?
     let external_urls: ExternalURLs?
+    let external_ids: ExternalIDs?
     let artists: [Artist]?
     let album: Album?
     struct ExternalURLs: Decodable { let spotify: String? }
+    struct ExternalIDs: Decodable { let isrc: String? }
     struct Artist: Decodable { let name: String? }
     struct Album: Decodable { let images: [Image]? }
     struct Image: Decodable { let url: String?; let width: Int?; let height: Int? }
