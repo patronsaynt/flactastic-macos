@@ -75,6 +75,8 @@ extension LibraryStore {
             var albums: [Album] = []
             var singles: [Album] = []
             var appearsOn: [Album] = []
+            /// Credited tracks per appears-on album ID.
+            var appearsOnTracks: [String: [Track]] = [:]
             var albumIDs = Set<String>()
             var appearsOnIDs = Set<String>()
             var trackCount: Int = 0
@@ -121,10 +123,12 @@ extension LibraryStore {
                         displayName: overrides[key]?.displayName?.nonEmpty
                             ?? resolver.displayName(forKey: key)
                     )
-                    if !bucket.albumIDs.contains(album.id),
-                       !bucket.appearsOnIDs.contains(album.id) {
-                        bucket.appearsOn.append(album)
-                        bucket.appearsOnIDs.insert(album.id)
+                    if !bucket.albumIDs.contains(album.id) {
+                        if !bucket.appearsOnIDs.contains(album.id) {
+                            bucket.appearsOn.append(album)
+                            bucket.appearsOnIDs.insert(album.id)
+                        }
+                        bucket.appearsOnTracks[album.id, default: []].append(track)
                     }
                     bucket.trackCount += 1
                     if bucket.artworkSample == nil { bucket.artworkSample = album.artwork }
@@ -134,12 +138,14 @@ extension LibraryStore {
         }
 
         let summaries = buckets.map { (key, bucket) in
-            ArtistSummary(
+            let appearsOn = bucket.appearsOn.sorted(by: Self.albumOrder)
+            return ArtistSummary(
                 id: key,
                 displayName: bucket.displayName,
                 albums: bucket.albums.sorted(by: Self.albumOrder),
                 singles: bucket.singles.sorted(by: Self.albumOrder),
-                appearsOn: bucket.appearsOn.sorted(by: Self.albumOrder),
+                appearsOn: appearsOn,
+                appearsOnTracks: appearsOn.flatMap { bucket.appearsOnTracks[$0.id] ?? [] },
                 trackCount: bucket.trackCount,
                 artworkSample: bucket.artworkSample
             )

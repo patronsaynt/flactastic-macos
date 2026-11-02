@@ -295,7 +295,7 @@ struct AlbumRackView: View {
             HStack(alignment: .lastTextBaseline, spacing: 24) {
                 VStack(alignment: .leading, spacing: 0) {
                     if full {
-                        Text(album.year.map { "Album · \($0)" } ?? "Album")
+                        Text(album.year.map { "Album · " + String($0) } ?? "Album")
                             .font(.system(size: 12, weight: .bold))
                             .foregroundStyle(Theme.textTertiary)
                             .padding(.bottom, 6)
@@ -523,7 +523,7 @@ struct AlbumRackView: View {
         let credit = credit(album)
 
         return VStack(alignment: .leading, spacing: 0) {
-            Text(album.year.map { "Album · \($0)" } ?? "Album")
+            Text(album.year.map { "Album · " + String($0) } ?? "Album")
                 .font(.system(size: 12.5, weight: .bold))
                 .foregroundStyle(Theme.textTertiary)
             Text(album.name)
@@ -534,11 +534,19 @@ struct AlbumRackView: View {
                 .minimumScaleFactor(0.6)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 10)
-            Text(credit)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-                .padding(.top, 12)
+            Group {
+                if album.isCompilation {
+                    Text(credit)
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.textSecondary)
+                } else {
+                    ArtistLink(credit: album.albumArtist ?? album.artist,
+                               font: .system(size: 17, weight: .semibold),
+                               color: Theme.textSecondary)
+                }
+            }
+            .lineLimit(1)
+            .padding(.top, 12)
             HStack(spacing: 12) {
                 Text(facts(album))
                     .font(.system(size: 13.5))

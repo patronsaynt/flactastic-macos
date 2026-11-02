@@ -358,7 +358,6 @@ struct ArtistDetailView: View {
 
         return HStack(alignment: .bottom, spacing: Theme.Spacing.xxl) {
             profileCircle(size: 200)
-                .overlay(Circle().strokeBorder(isLight ? .white : .white.opacity(0.9), lineWidth: 4))
                 .shadow(color: .black.opacity(isLight ? 0.22 : 0.5), radius: 22, y: 20)
                 .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
                 .opacity(hasEntered ? 1 : 0)
@@ -518,8 +517,7 @@ struct ArtistDetailView: View {
     // MARK: - Actions
 
     private func playAll(_ summary: ArtistSummary, shuffle: Bool) {
-        let tracks = (summary.albums + summary.singles + summary.appearsOn)
-            .flatMap(\.tracks)
+        let tracks = summary.playableTracks
         guard !tracks.isEmpty else { return }
         player.isShuffleEnabled = shuffle
         let startIndex = shuffle ? Int.random(in: 0..<tracks.count) : 0

@@ -196,7 +196,7 @@ struct ArtistsCollectionView: View {
     }
 
     private func play(_ summary: ArtistSummary) {
-        let tracks = (summary.albums + summary.singles + summary.appearsOn).flatMap(\.tracks)
+        let tracks = summary.playableTracks
         guard !tracks.isEmpty else { return }
         player.isShuffleEnabled = false
         player.startFreshQueue(tracks, startAt: 0, source: summary.displayName)
