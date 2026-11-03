@@ -249,6 +249,14 @@ private struct GeneralSettingsPane: View {
                     subtitle: "Show a compact player in the system menu bar.",
                     isOn: $settings.showMenuBarPlayer
                 )
+                if settings.showMenuBarPlayer {
+                    GroupDivider()
+                    ToggleRow(
+                        label: "Only While Playing",
+                        subtitle: "Hide the menu bar icon when nothing is playing.",
+                        isOn: $settings.menuBarPlayerOnlyWhilePlaying
+                    )
+                }
                 GroupDivider()
                 ToggleRow(
                     label: "Auto-Fetch Artist Images",

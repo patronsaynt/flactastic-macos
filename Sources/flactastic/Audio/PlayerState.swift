@@ -78,6 +78,14 @@ final class PlayerState {
     private(set) var queue: [Track] = []
     private(set) var currentIndex: Int = 0
 
+    /// Everything after the playing track, with each one's place in the
+    /// engine's queue (for jumping to, removing or moving it).
+    var upcoming: [(track: Track, engineIndex: Int)] {
+        let start = currentIndex + 1
+        guard start < queue.count else { return [] }
+        return (start..<queue.count).map { (queue[$0], $0) }
+    }
+
     func isUserQueued(_ track: Track) -> Bool {
         userQueuedTrackIDs.contains(track.id)
     }
@@ -394,7 +402,9 @@ final class PlayerState {
         // write properties that actually changed, or every view observing any
         // of them re-renders 20×/s for the whole duration of playback.
         // `currentTime` is the one field that genuinely changes per tick.
-        if currentTrack?.id != engine.currentTrack?.id { currentTrack = engine.currentTrack }
+        if currentTrack?.id != engine.currentTrack?.id || currentTrack?.url != engine.currentTrack?.url {
+            currentTrack = engine.currentTrack
+        }
         if isPlaying != engine.isPlaying { isPlaying = engine.isPlaying }
         currentTime = engine.currentTime
         if duration != engine.duration { duration = engine.duration }
@@ -403,7 +413,7 @@ final class PlayerState {
         // insert/remove), and comparing full `Track` values would hash/equate
         // multi-MB artwork `Data` blobs every tick.
         if queue.count != engine.queue.count
-            || !zip(queue, engine.queue).allSatisfy({ $0.id == $1.id }) {
+            || !zip(queue, engine.queue).allSatisfy({ $0.id == $1.id && $0.url == $1.url }) {
             queue = engine.queue
         }
         if currentIndex != engine.currentIndex { currentIndex = engine.currentIndex }

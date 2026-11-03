@@ -1,6 +1,6 @@
 import Foundation
 
-/// Home's sections below the banner, in their designed order. People can
+/// Home's sections below the top, in their designed order. People can
 /// switch "Arrange Automatically" off in Settings to hide or reorder them;
 /// a section with nothing to show stays hidden either way.
 enum HomeSection: String, CaseIterable, Codable, Identifiable, Sendable {
@@ -25,7 +25,7 @@ enum HomeSection: String, CaseIterable, Codable, Identifiable, Sendable {
 
     var detail: String {
         switch self {
-        case .recommended: "A fresh rotation each morning"
+        case .recommended: "A fresh rotation each day"
         case .recentlyPlayed: "Albums and playlists you played last"
         case .jumpBackIn: "Favourites you haven't played lately"
         case .onRepeat: "Most-played tracks, last 30 days"
@@ -48,7 +48,7 @@ struct TodayRotation: Codable, Equatable {
     var albums: [String]
 }
 
-/// Everything the shelves below the banner show, built in one pass from the
+/// Everything the shelves below the top show, built in one pass from the
 /// library and listening history whenever either changes.
 struct HomeFeed {
     struct AlbumPick: Identifiable {
@@ -127,6 +127,10 @@ extension HomeFeed {
         let storedRotation: TodayRotation?
         let resolver: ArtistResolver
         var now: Date = .now
+        /// False while the library is still loading its tags: albums aren't
+        /// grouped for good yet, so the day's picks wait rather than being
+        /// rolled from half a library.
+        var isLibraryLoaded = true
     }
 
     private struct AlbumStats {
@@ -197,6 +201,8 @@ extension HomeFeed {
             let albums = stored.albums.compactMap { albumsByID[$0] }
             return (Today(lead: lead, why: stored.why, albums: albums), stored)
         }
+        // Today's picks are rolled once, from the whole library.
+        guard input.isLibraryLoaded else { return (nil, nil) }
         let playable = input.albums.filter { $0.tracks.count >= 2 }
         guard !playable.isEmpty else { return (nil, nil) }
 

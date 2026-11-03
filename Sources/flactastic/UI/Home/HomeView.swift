@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// The library home: the lyric banner, then shelves built from the library
-/// and listening history, streaming-service style (see `HomeSection` for the
-/// list and `HomeFeed` for what fills them). Monochrome throughout, coloured
-/// only by the banner's palette and audio-quality tiers. A section with
+/// The library home: the day's lyric with its album's jewel case thrown in
+/// beside it (`HomeTop`), then shelves built from the library and listening
+/// history, streaming-service style (see `HomeSection` for the list and
+/// `HomeFeed` for what fills them). Monochrome throughout, coloured only by
+/// the palette sampled from the lyric's artist and audio-quality tiers. A section with
 /// nothing to show is left out, so the page never has an empty block.
 struct HomeView: View {
     @Environment(\.topBarInset) private var topBarInset
@@ -82,14 +83,10 @@ struct HomeView: View {
     /// the library. Resolving walks the whole library (and can migrate old
     /// entries), so it must not run inside a tile's body.
     @State private var playlistTracks: [UUID: [Track]] = [:]
-    /// The banner image, blurred once off the main thread.
-    @State private var bannerImage: NSImage?
+    /// The lyric's song as the top shows it: its album, for the case, and where it's from.
+    @State private var topSong: HomeTop.Song?
     @State private var hasEntered = false
 
-    /// Banner height below the top bar. The page's sections start this far
-    /// down, less `bannerOverlap`, so the first shelf sits in the fade.
-    private static let bannerHeight: CGFloat = 520
-    private static let bannerOverlap: CGFloat = 116
     private var calmMotion: Bool { reduceMotion || !settings.fadeAnimationsEnabled }
 
     /// A brand-new library: loaded, and nothing in it yet. Home becomes a
@@ -99,7 +96,7 @@ struct HomeView: View {
             || (library.hasCompletedInitialLoad && library.tracks.isEmpty)
     }
 
-    /// The banner's pick, unless Home is showing its empty-library welcome
+    /// The lyric pick, unless Home is showing its empty-library welcome
     /// (a real empty library has no pick anyway; the debug preview hides it).
     private var shownPick: HomeHighlight.Pick? {
         isLibraryEmpty ? nil : highlight.pick
@@ -127,7 +124,8 @@ struct HomeView: View {
         let built = HomeFeed.build(.init(
             albums: library.albums, tracks: library.tracks, events: listening.events,
             recentContexts: listening.recentContexts, onThisDay: m.onThisDay,
-            storedRotation: stored, resolver: library.makeArtistResolver()
+            storedRotation: stored, resolver: library.makeArtistResolver(),
+            isLibraryLoaded: library.hasCompletedInitialLoad
         ))
         if let rotation = built.rotation, rotation != stored { Self.store(rotation) }
         feed = built
@@ -166,7 +164,9 @@ struct HomeView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                hero
+                top
+                    .padding(.horizontal, 36)
+                    .padding(.top, topBarInset + 4)
                 VStack(alignment: .leading, spacing: 44) {
                     if isLibraryEmpty {
                         gettingStarted
@@ -177,8 +177,7 @@ struct HomeView: View {
                 }
                 .animation(.easeInOut(duration: 0.4), value: highlight.palette)
                 .padding(.horizontal, 36)
-                // Up into the banner's fade.
-                .padding(.top, -Self.bannerOverlap)
+                .padding(.top, 24)
             }
             .padding(.bottom, 120)   // clear the floating player bar
         }
@@ -189,17 +188,18 @@ struct HomeView: View {
         .removeFromLibraryConfirmation($removalRequest, library: library)
         .onAppear {
             recomputeMetrics()
+            topSong = resolveTopSong()
             playlistTracks = playlistStore.resolvedTracksForAll(in: library)
             withAnimation(calmMotion ? .easeOut(duration: 0.3) : .timingCurve(0.16, 1, 0.3, 1, duration: 1.1)) {
                 hasEntered = true
             }
         }
-        .task(id: bannerSource.map(ArtworkImageCache.contentID(for:))) {
-            // The colors come from exactly the image the banner shows.
-            highlight.updatePalette(from: bannerSource)
-            await loadBannerImage()
+        .task(id: paletteSource.map(ArtworkImageCache.contentID(for:))) {
+            // Home's colour comes from the artist's photo.
+            highlight.updatePalette(from: paletteSource)
         }
         .onChange(of: listening.events.count) { _, _ in recomputeMetrics() }
+        .onChange(of: highlight.pick) { _, _ in topSong = resolveTopSong() }
         .onChange(of: listening.recentContexts) { _, _ in recomputeMetrics() }
         .onChange(of: statsRange) { _, range in
             // Longer windows than a week read better as days than as today's hours.
@@ -214,8 +214,13 @@ struct HomeView: View {
         }
         .onChange(of: library.tracksRevision) { _, _ in
             recomputeMetrics()
+            // Plays don't change the top; only the pick and the library do.
+            topSong = resolveTopSong()
             playlistTracks = playlistStore.resolvedTracksForAll(in: library)
         }
+        // The day's picks are rolled (or found again) once the library has
+        // finished loading.
+        .onChange(of: library.hasCompletedInitialLoad) { _, _ in recomputeMetrics() }
         .onChange(of: playlistStore.revision) { _, _ in
             playlistTracks = playlistStore.resolvedTracksForAll(in: library)
         }
@@ -235,195 +240,60 @@ struct HomeView: View {
         }
     }
 
-    // MARK: - Hero
+    // MARK: - Top
 
-    /// The banner: the artist image fills the width, runs up under the top
-    /// bar, darkens toward the left for the words and melts into the page
-    /// below, where Recently Played starts. The logo, date, lyric and song
-    /// sit at its lower left; the pin follows the song.
-    private var hero: some View {
-        ZStack(alignment: .bottomLeading) {
-            bannerBackdrop
-            heroText
-                .padding(.horizontal, 40)
-                .padding(.bottom, Self.bannerOverlap + 34)
-        }
-        .frame(height: Self.bannerHeight + topBarInset)
-        .frame(maxWidth: .infinity)
-        .clipped()
+    /// The wordmark and date, the day's lyric, and its album's jewel case
+    /// in the air beside it (see `HomeTop`).
+    private var top: some View {
+        HomeTop(
+            lyric: shownPick?.lyric,
+            song: shownPick == nil ? nil : topSong,
+            welcome: shownPick != nil ? nil : (isLibraryEmpty
+                ? ("Welcome to FLACtastic.", "Your library is linked and ready. Add some music to hear it properly.")
+                : ("Welcome to your library.", nil)),
+            glow: highlight.palette?.accent,
+            isPinned: highlight.isPinned,
+            onPin: { highlight.togglePin() },
+            calmMotion: calmMotion
+        )
     }
 
-    private var heroText: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Wordmark(height: 44)
-                .rise(hasEntered, calm: calmMotion, delay: 0.2)
-
-            Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()).uppercased())
-                .font(.system(size: 11, weight: .semibold))
-                .tracking(2.2)
-                .foregroundStyle(Theme.textSecondary)
-                .padding(.top, 26)
-                .rise(hasEntered, calm: calmMotion, delay: 0.45)
-
-            if let pick = shownPick {
-                Text("“\(pick.lyric)”")
-                    .font(.system(size: 54, weight: .heavy).italic())
-                    .tracking(-1.3)
-                    .foregroundStyle(Theme.textPrimary)
-                    .lineLimit(2)
-                    .minimumScaleFactor(0.55)
-                    .frame(maxWidth: 980, alignment: .leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 12)
-                    .rise(hasEntered, calm: calmMotion, delay: 0.2)
-                heroAttribution(pick)
-                    .padding(.top, 18)
-                    .rise(hasEntered, calm: calmMotion, delay: 0.45)
-            } else if isLibraryEmpty {
-                Text("Welcome to FLACtastic.")
-                    .font(.system(size: 54, weight: .heavy))
-                    .tracking(-1.3)
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.top, 12)
-                    .rise(hasEntered, calm: calmMotion, delay: 0.2)
-                Text("Your library is linked and ready. Add some music to hear it properly.")
-                    .font(.system(size: 16))
-                    .foregroundStyle(Theme.textSecondary)
-                    .padding(.top, 14)
-                    .rise(hasEntered, calm: calmMotion, delay: 0.45)
-            } else {
-                Text("Welcome to your library.")
-                    .font(.system(size: 54, weight: .heavy))
-                    .tracking(-1.3)
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.top, 12)
-                    .rise(hasEntered, calm: calmMotion, delay: 0.2)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    /// `♪ Title — Artist`, the artist a link to their page, then the pin.
-    private func heroAttribution(_ pick: HomeHighlight.Pick) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "music.note")
-                .font(.system(size: 12))
-                .foregroundStyle(Theme.textSecondary)
-            Text(pick.songTitle)
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Theme.textPrimary)
-            if let artist = pick.artistDisplay {
-                Text("—")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.textSecondary)
-                ArtistLink(credit: artist, font: .system(size: 14), color: Theme.textSecondary)
-            }
-            heroPinButton
-        }
-        .lineLimit(1)
-    }
-
-    private var heroPinButton: some View {
-        Button { highlight.togglePin() } label: {
-            Image(systemName: highlight.isPinned ? "pin.fill" : "pin")
-                .font(.system(size: 12))
-                .foregroundStyle(highlight.isPinned ? homeAccent : Theme.textSecondary)
-                .frame(width: 30, height: 30)
-                .contentShape(Circle())
-        }
-        .buttonStyle(HeroIconButtonStyle())
-        .help(highlight.isPinned ? "Unpin lyric" : "Keep this lyric on Home")
-        .accessibilityLabel(highlight.isPinned ? "Unpin lyric" : "Pin lyric")
-    }
-
-    /// The artist image (or a soft grey glow when there isn't one), settling
-    /// from a slight zoom, under two washes: one darkening the left for the
-    /// words, one fading the bottom into the page.
-    private var bannerBackdrop: some View {
-        Color.clear
-            .overlay {
-                Group {
-                    if let bannerImage {
-                        Image(nsImage: bannerImage)
-                            .resizable()
-                            .interpolation(.medium)
-                            .aspectRatio(contentMode: .fill)
-                            .saturation(1.15)
-                            .transition(.opacity)
-                    } else {
-                        RadialGradient(
-                            colors: [Theme.surfaceElevated, .clear],
-                            center: .init(x: 0.8, y: 0.4),
-                            startRadius: 0,
-                            endRadius: 520
-                        )
-                    }
-                }
-                .scaleEffect(hasEntered || calmMotion ? 1 : 1.1)
-                .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 1.6), value: hasEntered)
-                .animation(.easeOut(duration: 0.4), value: bannerImage != nil)
-            }
-            .clipped()
-            .overlay {
-                LinearGradient(
-                    stops: [
-                        .init(color: Theme.background.opacity(0.8), location: 0),
-                        .init(color: Theme.background.opacity(0.45), location: 0.42),
-                        .init(color: Theme.background.opacity(0.05), location: 0.75),
-                    ],
-                    startPoint: .leading, endPoint: .trailing
-                )
-            }
-            .overlay {
-                LinearGradient(
-                    stops: [
-                        .init(color: Theme.background.opacity(colorScheme == .light ? 0.15 : 0.35), location: 0),
-                        .init(color: .clear, location: 0.22),
-                        .init(color: .clear, location: 0.46),
-                        .init(color: Theme.background, location: 1),
-                    ],
-                    startPoint: .top, endPoint: .bottom
-                )
-            }
-            .allowsHitTesting(false)
-    }
-
-    /// The artist's banner, looked up live so one set after the pick (or
-    /// after it was pinned) shows; otherwise the pick's own image, which is
-    /// the banner, profile picture or album art it was made with.
-    private var bannerSource: Data? {
+    /// The artist's photo Home takes its colour from: their own profile
+    /// picture first, then a fetched one, then their banner, then whatever
+    /// image the lyric was picked with.
+    private var paletteSource: Data? {
         guard let pick = shownPick else { return nil }
         // Pins saved before picks carried the artist resolve it from the name.
         let key = pick.artistKey
             ?? library.makeArtistResolver().keys(forCredit: pick.artistDisplay).first
-        if let key, let banner = artistStore.override(forKey: key)?.bannerImage {
-            return banner
+        if let key {
+            let override = artistStore.override(forKey: key)
+            if let data = override?.profileImage ?? artistRemoteCache.entry(forKey: key)?.profileImage ?? override?.bannerImage {
+                return data
+            }
         }
         return pick.imageData
     }
 
-    /// Blurs the banner once, off the main thread, into a small bitmap that's
-    /// drawn scaled up: no live blur runs while the page scrolls, and the
-    /// result is kept for the session, so coming back to Home is instant.
-    private func loadBannerImage() async {
-        guard let data = bannerSource, !data.isEmpty else {
-            bannerImage = nil
-            return
+    /// The lyric's song in the library: the album it's on, for the case,
+    /// and "From Burning Out (2026)". Only a confident match: a same-titled
+    /// song by someone else would put the wrong album in the air.
+    private func resolveTopSong() -> HomeTop.Song? {
+        guard let pick = highlight.pick else { return nil }
+        let resolver = library.makeArtistResolver()
+        let wanted = Set(resolver.keys(forCredit: pick.artistDisplay))
+        let track = wanted.isEmpty ? nil : library.tracks.first { t in
+            t.title == pick.songTitle
+                && !wanted.isDisjoint(with: resolver.keys(forCredit: t.artist ?? t.albumArtist))
         }
-        let maxPixel = 640
-        let id = "home-banner:\(ArtworkImageCache.contentID(for: data))"
-        if let cached = BlurredArtworkCache.shared.cached(id: id) {
-            bannerImage = cached
-            return
-        }
-        let box = await BlurredArtworkCache.shared.image(
-            for: data,
-            id: id,
-            maxPixel: maxPixel,
-            radius: PrerenderedImage.pixelRadius(points: 22, maxPixel: maxPixel)
+        let album = track.flatMap(library.album(for:))
+        return HomeTop.Song(
+            title: pick.songTitle,
+            artist: pick.artistDisplay,
+            album: album,
+            albumArtists: album.map { RackLayout.artists(of: $0, resolver: resolver) } ?? [],
+            story: album.map { "From \($0.name)" + ($0.year.map { " (\($0))" } ?? "") }
         )
-        guard !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 0.4)) { bannerImage = box.image }
     }
 
     // MARK: - Getting started
@@ -517,7 +387,7 @@ struct HomeView: View {
     private var recommendedSection: some View {
         if let today = feed.today {
             VStack(alignment: .leading, spacing: 14) {
-                HomeSectionHeader(title: "Recommended for today", subtitle: "Picked fresh this morning from your library")
+                HomeSectionHeader(title: "Recommended for today", subtitle: "Picked fresh from your library")
                 HomeTodayGrid(albums: today.albums) { width, height in
                     HomeTodayFeature(
                         album: today.lead, why: today.why, width: width, height: height,
@@ -900,7 +770,7 @@ struct HomeView: View {
         )
     }
 
-    /// "Artist", or "Artist · note" with the note in the banner's colour when
+    /// "Artist", or "Artist · note" with the note in the Home palette's colour when
     /// it's a highlight (how long since, now playing).
     private func artistCaption(_ album: Album, note: String? = nil, accent: Bool = false) -> Text {
         let artist = album.isMixCompilation ? "Mix Compilation" : (ArtistResolver.displayString(album.artist) ?? "Unknown Artist")
@@ -967,7 +837,7 @@ struct HomeView: View {
 
     // MARK: - Helpers
 
-    /// The banner's dominant color, or the monochrome accent when the banner
+    /// The Home palette's dominant color, or the monochrome accent when the artist's photo
     /// has none to give.
     private var homeAccent: Color {
         highlight.palette?.accent ?? Theme.textPrimary
@@ -999,13 +869,13 @@ enum ListeningChartMode: String, CaseIterable {
 }
 
 /// Screen Time–style chart of listening, stacked by genre: today by hour, or
-/// seven days by day. Genres take the banner palette's colors (most listened =
-/// dominant color), or gray shades when the banner has none, with a legend of
+/// seven days by day. Genres take the Home palette's colors (most listened =
+/// dominant color), or gray shades when there's no palette, with a legend of
 /// each genre's total. A quiet Day / Week switch sits in the header; in Week
 /// mode, arrows step back through earlier weeks.
 struct ListeningChart: View {
     let breakdown: GenreBreakdown
-    /// Banner colors for the genre series; gray shades when nil.
+    /// Home palette colors for the genre series; gray shades when nil.
     var palette: HomePalette? = nil
     @Binding var mode: ListeningChartMode
     /// 0 = the seven days ending today; 1 = the seven before that, and so on.
@@ -1269,7 +1139,7 @@ struct ListeningChart: View {
         return "Minutes listened \(span), by genre: " + parts.joined(separator: ", ")
     }
 
-    /// Series color for a genre, most listened first: the banner palette when
+    /// Series color for a genre, most listened first: the Home palette when
     /// there is one, otherwise a gray ladder.
     private func shade(_ idx: Int) -> Color {
         let i = min(max(idx, 0), 3)
@@ -1355,30 +1225,8 @@ private extension Int {
     }
 }
 
-/// A quiet round icon button for the banner: a faint fill on hover, a
-/// press scale.
-private struct HeroIconButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HeroIconButton(configuration: configuration)
-    }
-
-    private struct HeroIconButton: View {
-        let configuration: ButtonStyle.Configuration
-        @State private var isHovering = false
-
-        var body: some View {
-            configuration.label
-                .background(Circle().fill(Theme.textPrimary.opacity(isHovering ? 0.1 : 0)))
-                .scaleEffect(configuration.isPressed ? 0.9 : 1)
-                .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-                .animation(.easeOut(duration: 0.15), value: isHovering)
-                .onHover { isHovering = $0 }
-        }
-    }
-}
-
 private extension View {
-    /// The banner's words rising into place after the image settles.
+    /// Rising into place as Home first shows.
     func rise(_ active: Bool, calm: Bool, delay: Double) -> some View {
         self
             .opacity(active ? 1 : 0)

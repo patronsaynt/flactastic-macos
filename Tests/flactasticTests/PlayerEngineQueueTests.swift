@@ -104,3 +104,74 @@ private func play(_ engine: PlayerEngine, _ graph: ClockGraph, seconds: Double) 
     #expect(engine.duration == 120)
     engine.pause()
 }
+
+/// Copies a fixture into its own folder so a test can move it like the
+/// Organizer does without disturbing the shared fixture.
+@MainActor
+private func movableTrack(_ name: String, _ seconds: Double) throws -> Track {
+    // Fixture names are cached by title, so key this one by its length too.
+    let source = try track("\(name)-\(Int(seconds))s", seconds)
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("flactastic-relocate-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let url = dir.appendingPathComponent("01 \(name).wav")
+    try FileManager.default.copyItem(at: source.url, to: url)
+    return Track(url: url, title: name, duration: seconds, fileFormat: .wav)
+}
+
+/// Organizer-style rename on disk; returns the old-path → new-URL map.
+private func organize(_ tracks: [Track]) throws -> [String: URL] {
+    var map: [String: URL] = [:]
+    for t in tracks {
+        let dest = t.url.deletingLastPathComponent().appendingPathComponent("01. Artist - \(t.title).wav")
+        try FileManager.default.moveItem(at: t.url, to: dest)
+        map[t.url.path] = dest
+    }
+    return map
+}
+
+/// The reported bug: files reorganized mid-album. The decoder reaches the
+/// next tracks at their old paths, fails, and goes idle — playback stopped
+/// at the end of the current song. Relocating must resume it.
+@MainActor
+@Test func organizingMidPlaybackResumesAfterDecoderGaveUp() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try movableTrack("A", 20), b = try movableTrack("B", 20), c = try movableTrack("C", 20)
+    engine.setQueue([a, b, c], startAt: 0)
+    engine.play()
+    try? await Task.sleep(for: .milliseconds(200))
+
+    let moves = try organize([a, b, c])
+    // Into A's last 10 s: the decoder has tried B and C at their old paths.
+    await play(engine, graph, seconds: 15)
+    try? await Task.sleep(for: .milliseconds(300))
+
+    engine.relocate(moves)
+    try? await Task.sleep(for: .milliseconds(300))
+    await play(engine, graph, seconds: 10)
+
+    #expect(engine.currentTrack?.title == "B")
+    #expect(engine.currentTrack?.url == moves[b.url.path])
+    #expect(engine.queue.map(\.url) == [a, b, c].map { moves[$0.url.path] })
+    await play(engine, graph, seconds: 20)
+    #expect(engine.currentTrack?.title == "C")
+    engine.pause()
+}
+
+/// Relocated before the decoder gets there: it simply opens the new paths.
+@MainActor
+@Test func organizingMidPlaybackBeforeNextTrackKeepsGoing() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try movableTrack("A", 30), b = try movableTrack("B", 20)
+    engine.setQueue([a, b], startAt: 0)
+    engine.play()
+    try? await Task.sleep(for: .milliseconds(200))
+    await play(engine, graph, seconds: 5)
+
+    engine.relocate(try organize([a, b]))
+    await play(engine, graph, seconds: 30)
+    #expect(engine.currentTrack?.title == "B")
+    engine.pause()
+}

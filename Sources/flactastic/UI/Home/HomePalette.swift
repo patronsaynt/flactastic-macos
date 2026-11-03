@@ -2,8 +2,8 @@ import AppKit
 import ImageIO
 import SwiftUI
 
-/// Colors sampled from the Home hero banner, so the page takes its accent and
-/// chart series from whichever artist image is showing. Holds up to four
+/// Colors sampled from the lyric's artist image, so Home takes its accent and
+/// chart series from whoever today's song is by. Holds up to four
 /// distinct hues, most dominant first. `nil` (no image, or a black-and-white
 /// one) means Home stays monochrome.
 ///
@@ -19,11 +19,11 @@ struct HomePalette: Equatable, Sendable {
 
     let swatches: [Swatch]
 
-    /// The banner's most dominant color: used for highlighted figures, the
+    /// The palette's most dominant color: used for highlighted figures, the
     /// number-one rank and the Fidelidex score.
     var accent: Color { color(swatches[0]) }
 
-    /// `count` series colors. Distinct hues come first; when the banner has
+    /// `count` series colors. Distinct hues come first; when the image has
     /// fewer than `count`, the rest are darker steps of those hues.
     func series(_ count: Int) -> [Color] {
         (0..<count).map { idx in

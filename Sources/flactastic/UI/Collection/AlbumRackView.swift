@@ -493,9 +493,7 @@ struct AlbumRackView: View {
         .frame(width: available.width, height: available.height, alignment: .topLeading)
     }
 
-    private func credit(_ album: Album) -> String {
-        album.isCompilation ? "Compilation" : (ArtistResolver.displayString(album.albumArtist ?? album.artist) ?? "Unknown Artist")
-    }
+    private func credit(_ album: Album) -> String { RackLayout.credit(of: album) }
 
     /// Tracks, running time and genre, as one line.
     private func facts(_ album: Album) -> String {
@@ -634,17 +632,24 @@ struct RackLayout {
 
     init() {}
 
+    /// The album's artists, one name apiece, for spines that set them apart
+    /// with their own separator. A compilation is just that.
+    static func artists(of album: Album, resolver: ArtistResolver?) -> [String] {
+        if album.isCompilation { return ["Compilation"] }
+        let raw = album.albumArtist ?? album.artist
+        let names = resolver?.split(raw) ?? (raw.flatMap(ArtistResolver.explicitlySeparated) ?? [raw].compactMap { $0 })
+        return names.isEmpty ? ["Unknown Artist"] : names
+    }
+
+    /// The name a spine and the case's details credit the album to.
+    static func credit(of album: Album) -> String {
+        album.isCompilation ? "Compilation" : (ArtistResolver.displayString(album.albumArtist ?? album.artist) ?? "Unknown Artist")
+    }
+
     init(albums: [Album], revision: Int, sort: CollectionSortOption, metrics: RackMetrics, resolver: ArtistResolver? = nil) {
         key = Key(revision: revision, sort: sort, metrics: metrics)
         self.albums = albums
-        // Each album's artists, one name apiece, for spines that set them
-        // apart with their own separator. A compilation is just that.
-        artists = albums.map { album in
-            if album.isCompilation { return ["Compilation"] }
-            let raw = album.albumArtist ?? album.artist
-            let names = resolver?.split(raw) ?? (raw.flatMap(ArtistResolver.explicitlySeparated) ?? [raw].compactMap { $0 })
-            return names.isEmpty ? ["Unknown Artist"] : names
-        }
+        artists = albums.map { Self.artists(of: $0, resolver: resolver) }
         indexByID = Dictionary(albums.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
         for (index, album) in albums.enumerated() {
             for track in album.tracks where indexByTrack[track.id] == nil { indexByTrack[track.id] = index }
@@ -1891,6 +1896,10 @@ struct RackBox: View, Animatable {
     var blurArt: Bool = false
     var style: SpineStyle = .designed
     var scanFolder: URL?
+    /// The front's drop shadow. Off while something moves the box every
+    /// frame (Home's thrown case): a blurred shadow under a changing
+    /// projection is re-rendered offscreen on each frame.
+    var castsShadow: Bool = true
     var angle: Double
 
     nonisolated var animatableData: Double {
@@ -1995,7 +2004,7 @@ struct RackBox: View, Animatable {
                 .overlay(Rectangle().strokeBorder(.white.opacity(0.14), lineWidth: 1))
             }
         }
-        .shadow(color: .black.opacity(0.5), radius: 22, y: 20)
+        .shadow(color: .black.opacity(castsShadow ? 0.5 : 0), radius: castsShadow ? 22 : 0, y: castsShadow ? 20 : 0)
     }
 
     /// The cover under a clear lid: the booklet set just inside the plastic,
@@ -2047,8 +2056,8 @@ struct RackBox: View, Animatable {
 
 /// The CD: silver with a rainbow sheen, printed with a soft, bubbly field of
 /// three colours taken from the album's cover around a clear hub. The print
-/// turns slowly while its album plays.
-private struct RackDisc: View {
+/// turns slowly while its album plays. Also thrown onto the top of Home.
+struct RackDisc: View {
     let album: Album
     /// Passed in rather than read here, so the disc redraws once they're
     /// sampled.

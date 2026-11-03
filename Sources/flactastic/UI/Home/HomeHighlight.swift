@@ -1,12 +1,12 @@
 import Foundation
 import Observation
 
-/// Session-scoped pick for the Home hero: a random lyric drawn from a song the
-/// user already has in their library, plus the artist image used as a blurred
-/// banner behind it. Created once at app launch and injected via `.environment`
+/// Session-scoped pick for the top of Home: a random lyric drawn from a song
+/// the user already has in their library, plus the artist image Home takes
+/// its colour from. Created once at app launch and injected via `.environment`
 /// so the same lyric persists across Home-tab revisits within a session and is
 /// re-rolled on the next launch — unless the user pins it, in which case the
-/// pick (lyric, credit and banner image) is saved to disk and restored on every
+/// pick (lyric, credit and artist image) is saved to disk and restored on every
 /// launch until unpinned.
 @Observable
 @MainActor
@@ -15,17 +15,17 @@ final class HomeHighlight {
         let lyric: String
         let songTitle: String
         let artistDisplay: String?
-        /// Resolved banner image: the artist's custom banner, else their
-        /// profile picture, else the track's artwork. `nil` → the hero shows
-        /// a generic gray glow instead of a photo.
+        /// Resolved artist image: the artist's custom banner, else their
+        /// profile picture, else the track's artwork. `nil` → Home stays
+        /// monochrome.
         let imageData: Data?
-        /// The artist, so Home can show a banner set after the pick (or
+        /// The artist, so Home can use a picture set after the pick (or
         /// after it was pinned). Absent from pins saved before it existed.
         var artistKey: String? = nil
     }
 
     private(set) var pick: Pick?
-    /// Colors sampled from the image the Home banner is showing (see
+    /// Colors sampled from the artist image Home takes its colour from (see
     /// `updatePalette(from:)`); nil while sampling, when there's no image, or
     /// when the image is essentially gray. Home falls back to monochrome in
     /// those cases.
@@ -154,10 +154,10 @@ final class HomeHighlight {
     /// sampled twice.
     private var paletteSourceID: String?
 
-    /// Sample the palette from `data`, the image the banner is showing. Home
-    /// calls this with its banner source, which can differ from the pick's
-    /// own image (an artist banner set after the pick, or a pin saved before
-    /// banners were used), so the colors always match what's on screen. Runs
+    /// Sample the palette from `data`, the artist image Home is using. Home
+    /// calls this with its own source, which can differ from the pick's own
+    /// image (a picture set after the pick, or a pin saved before artist
+    /// images were used), so the colors always match the artist. Runs
     /// off the main actor; a generation counter drops results for an image
     /// that has since been replaced.
     func updatePalette(from data: Data?) {
@@ -217,7 +217,7 @@ final class HomeHighlight {
         return good.randomElement().map(sanitizeQuotes)
     }
 
-    /// The hero wraps the lyric in curly double quotes, so any double quotes
+    /// Home wraps the lyric in curly double quotes, so any double quotes
     /// *inside* the lyric (straight or typographic) are collapsed to single
     /// quotes to avoid nested-double-quote clutter.
     private static func sanitizeQuotes(_ text: String) -> String {

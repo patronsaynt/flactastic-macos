@@ -34,6 +34,8 @@ let package = Package(
             resources: [
                 .process("Assets.xcassets"),
                 .copy("Resources/Wordmark.png"),
+                // The menu bar player's icon, drawn as a template image.
+                .copy("Resources/MenuBarIcon.png"),
                 // The rack's spine title faces and their licences.
                 .copy("Resources/SpineFonts"),
             ],

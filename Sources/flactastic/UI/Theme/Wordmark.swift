@@ -23,7 +23,7 @@ struct Wordmark: View {
     /// app survives only on the build machine, where the `.build` path still
     /// exists. Probe the real locations ourselves, and degrade to no artwork
     /// rather than trapping.
-    private static let resourceBundle: Bundle? = {
+    static let resourceBundle: Bundle? = {
         let name = "flactastic_flactastic.bundle"
         let candidates = [
             Bundle.main.resourceURL?.appendingPathComponent(name),

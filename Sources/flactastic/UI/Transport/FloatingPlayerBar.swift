@@ -8,8 +8,6 @@ struct FloatingPlayerBar: View {
     @Environment(NavigationRouter.self)  private var router
     @Environment(CastManager.self)       private var cast
 
-    @Environment(\.colorScheme) private var colorScheme
-    @State private var wash: NSImage?
     @State private var contentWidth: CGFloat = 0
 
     /// Half the transport row (five buttons and their gaps), which sits
@@ -31,73 +29,15 @@ struct FloatingPlayerBar: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
                 .padding(.bottom, 10)
-                .background { glass(for: track) }
-                .task(id: track.id) { await loadWash(for: track) }
+                .background { PlayerGlass(track: track, cornerRadius: 18) }
         }
-    }
-
-    // MARK: - Glass
-
-    private static let shape = RoundedRectangle(cornerRadius: 18, style: .continuous)
-
-    /// Frosted glass over the page, with a faint wash of the playing cover
-    /// behind the track info, a lit top edge and a soft drop shadow.
-    private func glass(for track: Track) -> some View {
-        let light = colorScheme == .light
-        return Self.shape
-            .fill(.ultraThinMaterial)
-            .overlay(Self.shape.fill(light ? Color(white: 1).opacity(0.5) : Color(white: 0.08).opacity(0.46)))
-            .overlay {
-                // Sized and placed inside the bar's own bounds, then clipped
-                // to its shape, so the glow can't spill onto the page.
-                GeometryReader { geo in
-                    if let wash {
-                        Image(nsImage: wash)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: 420, height: max(geo.size.height * 2, 220))
-                            .saturation(1.6)
-                            .opacity(light ? 0.22 : 0.38)
-                            .mask(LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing))
-                            .position(x: 170, y: geo.size.height / 2)
-                            .transition(.opacity)
-                    }
-                }
-                .clipShape(Self.shape)
-                .allowsHitTesting(false)
-            }
-            .overlay(
-                Self.shape.strokeBorder(
-                    LinearGradient(
-                        colors: [Color.white.opacity(light ? 0.8 : 0.16), Theme.textPrimary.opacity(light ? 0.08 : 0.1)],
-                        startPoint: .top, endPoint: .bottom
-                    ),
-                    lineWidth: 1
-                )
-            )
-            .shadow(color: .black.opacity(light ? 0.16 : 0.55), radius: 30, y: 16)
-    }
-
-    private func loadWash(for track: Track) async {
-        guard let data = track.artwork, !data.isEmpty else {
-            wash = nil
-            return
-        }
-        let id = "queue-hero:\(ArtworkImageCache.contentID(for: data))"
-        if let hit = BlurredArtworkCache.shared.cached(id: id) {
-            wash = hit
-            return
-        }
-        let box = await BlurredArtworkCache.shared.image(for: data, id: id)
-        guard !Task.isCancelled else { return }
-        withAnimation(.easeOut(duration: 0.35)) { wash = box.image }
     }
 
     private var playerContent: some View {
         VStack(spacing: 4) {
             ZStack {
                 // Center: transport controls (centered to full bar width)
-                transportControls
+                PlayerTransportControls()
 
                 // Left: track info / Right: queue toggle + volume pinned to edges
                 HStack(spacing: Theme.Spacing.sm) {
@@ -198,37 +138,30 @@ struct FloatingPlayerBar: View {
     }
 
     private func buildAddToPlaylistItems() -> [FLContextMenuItem] {
+        guard let track = player.currentTrack else { return [] }
+        return Self.addToPlaylistItems(for: track, playlistStore: playlistStore, coordinator: playlistAddCoordinator, rootURL: library.rootURL)
+    }
+
+    /// Every playlist, then a field for a new one: the player's + menu.
+    /// Shared with the docked mini player.
+    static func addToPlaylistItems(for track: Track, playlistStore: PlaylistStore,
+                                   coordinator: PlaylistAddCoordinator, rootURL: URL?) -> [FLContextMenuItem] {
         var items: [FLContextMenuItem] = []
         if playlistStore.playlists.isEmpty {
             items.append(.label("No playlists yet"))
         } else {
             for playlist in playlistStore.playlists {
-                items.append(.button(playlist.name) { addCurrentTrack(to: playlist.id) })
+                items.append(.button(playlist.name) {
+                    coordinator.request(tracks: [track], playlistID: playlist.id, playlistName: playlist.name,
+                                        rootURL: rootURL, store: playlistStore)
+                })
             }
             items.append(.divider)
         }
         items.append(.textField("New playlist name…", systemImage: "plus") { name in
-            guard let track = player.currentTrack else { return }
-            playlistAddCoordinator.createPlaylistAndAdd(
-                name: name,
-                tracks: [track],
-                rootURL: library.rootURL,
-                store: playlistStore
-            )
+            coordinator.createPlaylistAndAdd(name: name, tracks: [track], rootURL: rootURL, store: playlistStore)
         })
         return items
-    }
-
-    private func addCurrentTrack(to playlistID: UUID) {
-        guard let track = player.currentTrack,
-              let playlist = playlistStore.playlists.first(where: { $0.id == playlistID }) else { return }
-        playlistAddCoordinator.request(
-            tracks: [track],
-            playlistID: playlistID,
-            playlistName: playlist.name,
-            rootURL: library.rootURL,
-            store: playlistStore
-        )
     }
 
     // MARK: - Queue Toggle
@@ -247,40 +180,53 @@ struct FloatingPlayerBar: View {
         .help(player.isQueueVisible ? "Hide queue" : "Show queue")
     }
 
-    // MARK: - Transport Controls
+}
 
-    private var transportControls: some View {
-        HStack(spacing: Theme.Spacing.md) {
+// MARK: - Pieces
+
+/// The five transport buttons: shuffle, previous, play/pause, next, repeat.
+/// Shared by the floating player bar and the menu bar player.
+struct PlayerTransportControls: View {
+    /// Smaller buttons, closer together, for the docked mini player.
+    var compact = false
+
+    @Environment(PlayerState.self) private var player
+
+    var body: some View {
+        HStack(spacing: compact ? 4 : Theme.Spacing.md) {
             Button {
                 player.toggleShuffle()
             } label: {
                 Image(systemName: "shuffle")
-                    .font(.system(size: 13))
-                    .frame(width: 30, height: 30)
+                    .font(.system(size: compact ? 12 : 13))
+                    .frame(width: compact ? 28 : 30, height: compact ? 28 : 30)
             }
             .buttonStyle(GlassIconButtonStyle(isOn: player.isShuffleEnabled, showsDot: true))
             .help(player.isShuffleEnabled ? "Shuffle on" : "Shuffle off")
 
             Button { player.engine.previous() } label: {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 19, weight: .medium))
-                    .frame(width: 36, height: 36)
+                    .font(.system(size: compact ? 15 : 19, weight: .medium))
+                    .frame(width: compact ? 32 : 36, height: compact ? 32 : 36)
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
+            .help("Previous")
 
             Button { player.engine.togglePlayPause() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 26, weight: .medium))
-                    .frame(width: 50, height: 50)
+                    .font(.system(size: compact ? 20 : 26, weight: .medium))
+                    .frame(width: compact ? 40 : 50, height: compact ? 40 : 50)
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
+            .help(player.isPlaying ? "Pause" : "Play")
 
             Button { player.next() } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 19, weight: .medium))
-                    .frame(width: 36, height: 36)
+                    .font(.system(size: compact ? 15 : 19, weight: .medium))
+                    .frame(width: compact ? 32 : 36, height: compact ? 32 : 36)
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
+            .help("Next")
 
             Button {
                 switch player.repeatMode {
@@ -290,8 +236,8 @@ struct FloatingPlayerBar: View {
                 }
             } label: {
                 Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                    .font(.system(size: 13))
-                    .frame(width: 30, height: 30)
+                    .font(.system(size: compact ? 12 : 13))
+                    .frame(width: compact ? 28 : 30, height: compact ? 28 : 30)
             }
             .buttonStyle(GlassIconButtonStyle(isOn: player.repeatMode != .off, showsDot: true))
             .help(repeatHelp)
@@ -307,7 +253,74 @@ struct FloatingPlayerBar: View {
     }
 }
 
-// MARK: - Pieces
+/// The player's frosted glass, with a faint wash of the playing cover behind
+/// the track info and, on the floating bar, a lit edge and a soft drop
+/// shadow. Shared by the floating player bar and the menu bar player.
+struct PlayerGlass: View {
+    let track: Track?
+    var cornerRadius: CGFloat = 18
+    /// The floating bar sits on the page with its own edge and shadow; the
+    /// menu bar popover is a window that draws its own.
+    var isFloating = true
+
+    @Environment(\.colorScheme) private var colorScheme
+    @State private var wash: NSImage?
+
+    var body: some View {
+        let light = colorScheme == .light
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        shape
+            .fill(.ultraThinMaterial)
+            .overlay(shape.fill(light ? Color(white: 1).opacity(0.5) : Color(white: 0.08).opacity(0.46)))
+            .overlay {
+                // Sized and placed inside the glass's own bounds, then
+                // clipped to its shape, so the glow can't spill out.
+                GeometryReader { geo in
+                    if let wash {
+                        Image(nsImage: wash)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(width: 420, height: max(geo.size.height * 2, 220))
+                            .saturation(1.6)
+                            .opacity(light ? 0.22 : 0.38)
+                            .mask(LinearGradient(colors: [.black, .clear], startPoint: .leading, endPoint: .trailing))
+                            .position(x: 170, y: min(geo.size.height / 2, 110))
+                            .transition(.opacity)
+                    }
+                }
+                .clipShape(shape)
+                .allowsHitTesting(false)
+            }
+            .overlay {
+                if isFloating {
+                    shape.strokeBorder(
+                        LinearGradient(
+                            colors: [Color.white.opacity(light ? 0.8 : 0.16), Theme.textPrimary.opacity(light ? 0.08 : 0.1)],
+                            startPoint: .top, endPoint: .bottom
+                        ),
+                        lineWidth: 1
+                    )
+                }
+            }
+            .shadow(color: .black.opacity(isFloating ? (light ? 0.16 : 0.55) : 0), radius: 30, y: 16)
+            .task(id: track?.id) { await loadWash() }
+    }
+
+    private func loadWash() async {
+        guard let data = track?.artwork, !data.isEmpty else {
+            wash = nil
+            return
+        }
+        let id = "queue-hero:\(ArtworkImageCache.contentID(for: data))"
+        if let hit = BlurredArtworkCache.shared.cached(id: id) {
+            wash = hit
+            return
+        }
+        let box = await BlurredArtworkCache.shared.image(for: data, id: id)
+        guard !Task.isCancelled else { return }
+        withAnimation(.easeOut(duration: 0.35)) { wash = box.image }
+    }
+}
 
 /// The player bar's icon buttons: tertiary at rest, primary on hover, a
 /// faint circle under the pointer, and a small press. `isOn` lights a toggle

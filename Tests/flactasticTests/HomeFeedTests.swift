@@ -27,9 +27,11 @@ struct HomeFeedTests {
         }
     }
 
-    private func build(_ store: LibraryStore, events: [PlayEvent] = [], rotation: TodayRotation? = nil, now: Date = .now) -> HomeFeed {
+    private func build(_ store: LibraryStore, events: [PlayEvent] = [], rotation: TodayRotation? = nil, now: Date = .now,
+                       loaded: Bool = true) -> HomeFeed {
         HomeFeed.build(.init(albums: store.albums, tracks: store.tracks, events: events, recentContexts: [],
-                             onThisDay: nil, storedRotation: rotation, resolver: store.makeArtistResolver(), now: now))
+                             onThisDay: nil, storedRotation: rotation, resolver: store.makeArtistResolver(), now: now,
+                             isLibraryLoaded: loaded))
     }
 
     @Test func bestSoundingRanksBitDepthThenSampleRate() {
@@ -54,6 +56,18 @@ struct HomeFeedTests {
         // A new day picks again.
         let tomorrow = build(store, rotation: rotation, now: .now.addingTimeInterval(86_400))
         #expect(tomorrow.rotation?.day != rotation.day)
+    }
+
+    @Test func todaysRotationWaitsForTheWholeLibrary() throws {
+        let store = library((1...14).map { ("Album \($0)", "Artist \($0)", 16, 44_100, "Pop") })
+        let rotation = try #require(build(store).rotation)
+        // Mid-launch, before the albums are grouped, the stored picks can't be
+        // found: nothing is rolled in their place, so the day's picks survive.
+        let loading = library((1...3).map { ("Untagged \($0)", "", 16, 44_100, "") })
+        let early = build(loading, rotation: rotation, loaded: false)
+        #expect(early.today == nil && early.rotation == nil)
+        // Once loaded, the same day's picks come back.
+        #expect(build(store, rotation: rotation).rotation == rotation)
     }
 
     @Test func jumpBackInWantsFavouritesThatWentQuiet() {

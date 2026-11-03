@@ -5,7 +5,7 @@ import SwiftUI
 /// tiers, and its formats at a glance. Details opens the full spec sheet
 /// (format, bit-depth and sample-rate breakdowns) in place. Recomputes from
 /// `library.tracks` on every change, so each breakdown only ever shows values
-/// present in the current library. Colored from the Home banner palette when
+/// present in the current library. Colored from the Home palette when
 /// there is one; otherwise series are told apart by gray shade.
 struct FidelidexView: View {
     @Environment(LibraryStore.self) private var library
@@ -219,7 +219,7 @@ struct FidelidexView: View {
         "\(Int((fraction * 100).rounded()))%"
     }
 
-    /// Series color for a breakdown, most common first: the banner palette
+    /// Series color for a breakdown, most common first: the Home palette
     /// when there is one, otherwise a gray ladder.
     private func shade(_ idx: Int) -> Color {
         let steps = [0.85, 0.55, 0.38, 0.26, 0.18, 0.12]

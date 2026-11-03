@@ -111,6 +111,8 @@ struct FlactasticApp: App {
     @State private var lucidaController: LucidaWebController
     /// Backs Settings → General → Enable Debugging and the Debug tab.
     @State private var debugState = DebugState()
+    /// The menu bar icon and its mini-player popover.
+    @State private var menuBarPlayer = MenuBarPlayerController()
     /// Settings → Debug → "Show onboarding at every launch": decided once at
     /// launch, and cleared when that run of onboarding is finished.
     @State private var replayingOnboarding = DebugState.onboardingEveryLaunchAtStartup
@@ -277,30 +279,6 @@ struct FlactasticApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-
-        // Menu bar mini-player. The `isInserted` binding reflects the Settings
-        // toggle live (Settings is @Observable), so flipping the option in
-        // Settings adds/removes the menu bar icon without needing a restart.
-        MenuBarExtra(isInserted: menuBarBinding) {
-            MenuBarPlayerView()
-                .environment(library)
-                .environment(player)
-                .environment(settings)
-                .environment(playlistStore)
-                .environment(playlistAddCoordinator)
-        } label: {
-            Image(systemName: "music.note")
-        }
-        .menuBarExtraStyle(.window)
-    }
-
-    /// A `Binding<Bool>` over `settings.showMenuBarPlayer` for `MenuBarExtra`'s
-    /// `isInserted` parameter. Built inline so we don't need `@Bindable` here.
-    private var menuBarBinding: Binding<Bool> {
-        Binding(
-            get: { settings.showMenuBarPlayer && player.isPlaying },
-            set: { _ in }
-        )
     }
 
     /// Intercept the spacebar at the app level so it always triggers play/pause,
@@ -327,7 +305,7 @@ struct FlactasticApp: App {
         }
     }
 
-    /// Force the app-wide NSAppearance so AppKit-backed surfaces (MenuBarExtra,
+    /// Force the app-wide NSAppearance so AppKit-backed surfaces (the menu bar popover,
     /// Picker menus, NSColor dynamic providers) flip alongside SwiftUI's
     /// `.preferredColorScheme`.
     private func applyAppearance(useLight: Bool) {
@@ -346,6 +324,7 @@ struct FlactasticApp: App {
         // Route to the saved output device / format before anything plays,
         // so the choice never interrupts audio at launch.
         audioOutput.start()
+        menuBarPlayer.attach(player: player, settings: settings, cast: castManager)
         discordPresence.attach(player: player, settings: settings)
         // Network round-trips (profile + playlists) — never hold the library
         // scan, and with it the loading cover, behind them.
@@ -361,5 +340,6 @@ struct FlactasticApp: App {
         }
         // Nothing to scan — reveal the UI immediately so the empty state shows.
         library.hasCompletedInitialLoad = true
+        library.hasFinishedLaunchWork = true
     }
 }

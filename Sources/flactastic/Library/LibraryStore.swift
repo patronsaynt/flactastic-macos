@@ -43,6 +43,11 @@ final class LibraryStore {
     /// visibly populate during startup. Only the *first* resolution sets it;
     /// later manual refreshes do not reset it.
     var hasCompletedInitialLoad: Bool = false
+    /// Flips to `true` once the whole-library passes that follow the initial
+    /// load (tag normalisation, artwork dedupe and cache seeding) have run.
+    /// They run on the main actor and reassign `tracks`, so anything that
+    /// animates at launch — Home's thrown case — waits for this to stay smooth.
+    var hasFinishedLaunchWork: Bool = false
 
     /// Ids that have already played their Collection album-grid or track-list
     /// entrance (`riseFadeIn`) animation at least once this run. Deliberately
@@ -393,6 +398,7 @@ final class LibraryStore {
                 if Task.isCancelled { return }
                 self.scanState = .failed(String(describing: error))
                 self.hasCompletedInitialLoad = true
+                self.hasFinishedLaunchWork = true
             }
         }
     }
@@ -640,6 +646,7 @@ final class LibraryStore {
                         self.seedAlbumArtworkCache()
                         self.prewarmArtworkCache()
                         self.persistMetadataCache()
+                        if !self.hasFinishedLaunchWork { self.hasFinishedLaunchWork = true }
                     }
                 }
             }

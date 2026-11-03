@@ -42,51 +42,7 @@ struct MiniPlayerView: View {
                 SeekBarView()
 
                 HStack(spacing: 4) {
-                    Button { player.toggleShuffle() } label: {
-                        Image(systemName: "shuffle")
-                            .font(.system(size: 12))
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(GlassIconButtonStyle(isOn: player.isShuffleEnabled, showsDot: true))
-                    .help(player.isShuffleEnabled ? "Shuffle on" : "Shuffle off")
-
-                    Button { player.engine.previous() } label: {
-                        Image(systemName: "backward.fill")
-                            .font(.system(size: 15, weight: .medium))
-                            .frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(GlassIconButtonStyle(isProminent: true))
-                    .help("Previous")
-
-                    Button { player.engine.togglePlayPause() } label: {
-                        Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 20, weight: .medium))
-                            .frame(width: 40, height: 40)
-                    }
-                    .buttonStyle(GlassIconButtonStyle(isProminent: true))
-                    .help(player.isPlaying ? "Pause" : "Play")
-
-                    Button { player.next() } label: {
-                        Image(systemName: "forward.fill")
-                            .font(.system(size: 15, weight: .medium))
-                            .frame(width: 32, height: 32)
-                    }
-                    .buttonStyle(GlassIconButtonStyle(isProminent: true))
-                    .help("Next")
-
-                    Button {
-                        switch player.repeatMode {
-                        case .off: player.repeatMode = .all
-                        case .all: player.repeatMode = .one
-                        case .one: player.repeatMode = .off
-                        }
-                    } label: {
-                        Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                            .font(.system(size: 12))
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(GlassIconButtonStyle(isOn: player.repeatMode != .off, showsDot: true))
-                    .help(repeatHelp)
+                    PlayerTransportControls(compact: true)
 
                     Spacer(minLength: 6)
                     SpeakerPickerButton()
@@ -146,42 +102,9 @@ struct MiniPlayerView: View {
         }
     }
 
-    private var repeatHelp: String {
-        switch player.repeatMode {
-        case .off: return "Repeat off"
-        case .all: return "Repeat all"
-        case .one: return "Repeat one"
-        }
-    }
-
-    /// Every playlist, then a field for a new one — the same menu as the
-    /// floating bar's + button.
+    /// The same menu as the floating bar's + button.
     private func addToPlaylistItems(_ track: Track) -> [FLContextMenuItem] {
-        var items: [FLContextMenuItem] = []
-        if playlistStore.playlists.isEmpty {
-            items.append(.label("No playlists yet"))
-        } else {
-            for playlist in playlistStore.playlists {
-                items.append(.button(playlist.name) {
-                    playlistAddCoordinator.request(
-                        tracks: [track],
-                        playlistID: playlist.id,
-                        playlistName: playlist.name,
-                        rootURL: library.rootURL,
-                        store: playlistStore
-                    )
-                })
-            }
-            items.append(.divider)
-        }
-        items.append(.textField("New playlist name…", systemImage: "plus") { name in
-            playlistAddCoordinator.createPlaylistAndAdd(
-                name: name,
-                tracks: [track],
-                rootURL: library.rootURL,
-                store: playlistStore
-            )
-        })
-        return items
+        FloatingPlayerBar.addToPlaylistItems(for: track, playlistStore: playlistStore,
+                                             coordinator: playlistAddCoordinator, rootURL: library.rootURL)
     }
 }

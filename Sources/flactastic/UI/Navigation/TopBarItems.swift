@@ -223,10 +223,44 @@ private struct MenuAnchorView: NSViewRepresentable {
 /// Also nudges the traffic lights inward and down so they line up vertically
 /// with the pills in the custom top bar.
 struct TitleBarConfigurator: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSView { ConfiguratorView() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    /// False keeps the traffic lights hidden (behind the launch cover); true
+    /// fades them in with the cover's own fade.
+    var showsWindowButtons = true
+
+    func makeNSView(context: Context) -> NSView {
+        let view = ConfiguratorView()
+        view.showsButtons = showsWindowButtons
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? ConfiguratorView)?.setShowsButtons(showsWindowButtons)
+    }
 
     private final class ConfiguratorView: NSView {
+        var showsButtons = true
+
+        private var windowButtons: [NSButton] {
+            [.closeButton, .miniaturizeButton, .zoomButton].compactMap { window?.standardWindowButton($0) }
+        }
+
+        /// Fades the traffic lights in or out over the launch cover's 0.5s ease-out.
+        func setShowsButtons(_ shows: Bool) {
+            guard shows != showsButtons else { return }
+            showsButtons = shows
+            let buttons = windowButtons
+            if shows { buttons.forEach { $0.isHidden = false } }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.5
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                buttons.forEach { $0.animator().alphaValue = shows ? 1 : 0 }
+            } completionHandler: { [weak self] in
+                // Hidden too, so an invisible button can't be clicked.
+                guard let self, !self.showsButtons else { return }
+                buttons.forEach { $0.isHidden = true }
+            }
+        }
+
         /// Offsets applied to the standard window buttons. Tweak to taste:
         /// `dx` moves the group inward (right); `dy` moves it down.
         private let dx: CGFloat = 8
@@ -252,6 +286,10 @@ struct TitleBarConfigurator: NSViewRepresentable {
             NotificationCenter.default.removeObserver(self)
             guard let window else { return }
             configure(window)
+            for button in windowButtons {
+                button.alphaValue = showsButtons ? 1 : 0
+                button.isHidden = !showsButtons
+            }
 
             let center = NotificationCenter.default
             // Re-assert the custom title bar after exiting native fullscreen

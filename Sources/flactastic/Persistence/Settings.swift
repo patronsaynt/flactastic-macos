@@ -21,10 +21,16 @@ final class Settings {
         didSet { UserDefaults.standard.set(uiScale, forKey: "flactastic.uiScale") }
     }
 
-    /// Whether the menu bar mini-player is shown. When false, the `MenuBarExtra`
-    /// scene is omitted entirely so no icon appears in the system menu bar.
+    /// Whether the menu bar mini-player is shown. When false, the status item
+    /// is removed, so no icon appears in the system menu bar.
     var showMenuBarPlayer: Bool {
         didSet { UserDefaults.standard.set(showMenuBarPlayer, forKey: "flactastic.showMenuBarPlayer") }
+    }
+
+    /// Hides the menu bar icon whenever nothing is playing. Off by default:
+    /// the icon stays for as long as the app is open.
+    var menuBarPlayerOnlyWhilePlaying: Bool {
+        didSet { UserDefaults.standard.set(menuBarPlayerOnlyWhilePlaying, forKey: "flactastic.menuBarPlayerOnlyWhilePlaying") }
     }
 
     var roundedArtwork: Bool {
@@ -293,6 +299,7 @@ final class Settings {
         uiScale = (storedScale as? Double) ?? 1.0
         let storedMBP = UserDefaults.standard.object(forKey: "flactastic.showMenuBarPlayer")
         showMenuBarPlayer = (storedMBP as? Bool) ?? true
+        menuBarPlayerOnlyWhilePlaying = UserDefaults.standard.bool(forKey: "flactastic.menuBarPlayerOnlyWhilePlaying")
         let storedRA = UserDefaults.standard.object(forKey: "flactastic.roundedArtwork")
         roundedArtwork = (storedRA as? Bool) ?? true
         let storedShadow = UserDefaults.standard.object(forKey: "flactastic.showArtworkShadow")

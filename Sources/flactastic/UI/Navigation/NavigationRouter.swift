@@ -12,6 +12,10 @@ final class NavigationRouter {
         }
     }
     var collectionPath: [String] = []
+    /// Flips once the launch cover has faded away and the app underneath is
+    /// on screen. Launch-only motion (Home's thrown case) waits for it, so it
+    /// plays where it can be seen rather than behind the cover.
+    var isLaunchRevealed = false
     /// Navigation stack for the Playlists tab, driven so the Home page can deep-
     /// link straight to a playlist's detail view.
     var playlistsPath: [UUID] = []

@@ -13,6 +13,7 @@ import SwiftUI
 struct OrganizerView: View {
     @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self) private var library
+    @Environment(PlayerState.self) private var player
     @State private var store = OrganizerProfilesStore()
     @State private var model = OrganizerModel()
     @State private var showApplyConfirm = false
@@ -74,7 +75,7 @@ struct OrganizerView: View {
         ) {
             Button("Move Files", role: .destructive) {
                 Task {
-                    await model.apply(library: library, profile: store.selected)
+                    await model.apply(library: library, player: player.engine, profile: store.selected)
                     refreshPreview()
                 }
             }

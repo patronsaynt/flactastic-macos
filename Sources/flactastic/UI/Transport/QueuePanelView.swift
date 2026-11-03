@@ -15,20 +15,10 @@ struct QueuePanelView: View {
     static let width: CGFloat = 400
 
     @State private var editingTrack: Track? = nil
-    @State private var draggingTrackID: UUID? = nil
-    @State private var dropTargetTrackID: UUID? = nil
 
     private var menus: LibraryMenus {
         LibraryMenus(player: player, library: library, playlistStore: playlistStore,
                      playlistAdd: playlistAddCoordinator, router: router)
-    }
-
-    /// All upcoming entries (engine indices > currentIndex).
-    private var upcoming: [(track: Track, engineIndex: Int)] {
-        let q = player.queue
-        let start = player.currentIndex + 1
-        guard start < q.count else { return [] }
-        return (start..<q.count).map { (q[$0], $0) }
     }
 
     var body: some View {
@@ -40,7 +30,7 @@ struct QueuePanelView: View {
                 player.currentTrack.map { nowPlayingMenu(for: $0) } ?? []
             }
 
-            if upcoming.isEmpty {
+            if player.upcoming.isEmpty {
                 emptyState
             } else {
                 queueList
@@ -98,45 +88,86 @@ struct QueuePanelView: View {
     // MARK: - List
 
     private var queueList: some View {
-        let items = upcoming
-        let remaining = items.reduce(0) { $0 + ($1.track.duration ?? 0) }
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Next up")
-                        .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Theme.textSecondary)
-                    Spacer()
-                    Text("\(FormatUtils.coarseDuration(remaining)) left")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textTertiary)
-                        .monospacedDigit()
-                    Button("Clear") { player.clearUpcoming() }
-                        .buttonStyle(QuietTextButtonStyle())
-                        .help("Remove everything after the current track")
-                }
-                .padding(.horizontal, 10)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
-
-                // Tracks you queued sit together at the top under "Queued by
-                // you". One dragged further down, among the source's tracks,
-                // keeps an "Added" tag instead, the way Spotify marks them.
-                let queuedRun = items.prefix { player.isUserQueued($0.track) }.count
-                ForEach(Array(items.enumerated()), id: \.element.track.id) { offset, item in
-                    if offset == 0 && queuedRun > 0 {
-                        groupLabel(userQueued: true)
-                    }
-                    if offset == queuedRun {
-                        groupLabel(userQueued: false)
-                    }
-                    draggableRow(item: item, isAdded: offset >= queuedRun && player.isUserQueued(item.track))
-                }
+        ScrollView {
+            QueueUpNextList(rowWidth: Self.width - 40) { track, engineIndex in
+                upcomingMenu(track: track, engineIndex: engineIndex)
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 24)
         }
         .scrollContentBackground(.hidden)
+    }
+
+    // MARK: - Empty state
+
+    private var emptyState: some View {
+        VStack(spacing: 6) {
+            Text("Nothing up next")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(Theme.textPrimary)
+            Text("Right-click an album or track and choose Play Next or Add to Queue.")
+                .font(.system(size: 13))
+                .foregroundStyle(Theme.textTertiary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 40)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Next up
+
+/// Next Up: its header (time left, Clear), then the upcoming tracks grouped by
+/// where each run came from (queued by you, or the album or playlist playback
+/// started from). Drag a row to reorder, ✕ to remove, double-click to play.
+/// Shared by the queue panel and the menu bar player's drawer; the caller
+/// supplies the scroll view and each row's context menu.
+struct QueueUpNextList: View {
+    /// The drag preview's width.
+    let rowWidth: CGFloat
+    var compact = false
+    let menu: (Track, Int) -> [FLContextMenuItem]
+
+    @Environment(PlayerState.self) private var player
+    @State private var draggingTrackID: UUID? = nil
+    @State private var dropTargetTrackID: UUID? = nil
+
+    var body: some View {
+        let items = player.upcoming
+        let remaining = items.reduce(0) { $0 + ($1.track.duration ?? 0) }
+        LazyVStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Next up")
+                    .font(.system(size: compact ? 12 : 13, weight: .bold))
+                    .foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Text("\(FormatUtils.coarseDuration(remaining)) left")
+                    .font(.system(size: compact ? 11.5 : 12))
+                    .foregroundStyle(Theme.textTertiary)
+                    .monospacedDigit()
+                Button("Clear") { player.clearUpcoming() }
+                    .buttonStyle(QuietTextButtonStyle())
+                    .help("Remove everything after the current track")
+            }
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 4)
+
+            // Tracks you queued sit together at the top under "Queued by
+            // you". One dragged further down, among the source's tracks,
+            // keeps an "Added" tag instead, the way Spotify marks them.
+            let queuedRun = items.prefix { player.isUserQueued($0.track) }.count
+            ForEach(Array(items.enumerated()), id: \.element.track.id) { offset, item in
+                if offset == 0 && queuedRun > 0 {
+                    groupLabel(userQueued: true)
+                }
+                if offset == queuedRun {
+                    groupLabel(userQueued: false)
+                }
+                draggableRow(item: item, isAdded: offset >= queuedRun && player.isUserQueued(item.track))
+            }
+        }
     }
 
     /// Where the following run of tracks came from.
@@ -161,7 +192,7 @@ struct QueuePanelView: View {
         let trackID = item.track.id
         let isDropTarget = dropTargetTrackID == trackID && draggingTrackID != trackID
 
-        QueueTrackRow(track: item.track, isAdded: isAdded) {
+        QueueTrackRow(track: item.track, isAdded: isAdded, compact: compact) {
             player.removeFromQueue(at: item.engineIndex)
         }
         .opacity(draggingTrackID == trackID ? 0.35 : 1.0)
@@ -175,10 +206,10 @@ struct QueuePanelView: View {
         .onTapGesture(count: 2) {
             player.jumpTo(index: item.engineIndex)
         }
-        .flContextMenu(priority: 1) { upcomingMenu(track: item.track, engineIndex: item.engineIndex) }
+        .flContextMenu(priority: 1) { menu(item.track, item.engineIndex) }
         .draggable(trackID.uuidString) {
-            QueueTrackRow(track: item.track, isAdded: isAdded, onRemove: nil)
-                .frame(width: Self.width - 40)
+            QueueTrackRow(track: item.track, isAdded: isAdded, compact: compact, onRemove: nil)
+                .frame(width: rowWidth)
                 .background(Theme.surfaceElevated, in: RoundedRectangle(cornerRadius: 12))
                 .onAppear { draggingTrackID = trackID }
                 .onDisappear {
@@ -197,23 +228,6 @@ struct QueuePanelView: View {
         } isTargeted: { hovering in
             dropTargetTrackID = hovering ? trackID : (dropTargetTrackID == trackID ? nil : dropTargetTrackID)
         }
-    }
-
-    // MARK: - Empty state
-
-    private var emptyState: some View {
-        VStack(spacing: 6) {
-            Text("Nothing up next")
-                .font(.system(size: 15, weight: .bold))
-                .foregroundStyle(Theme.textPrimary)
-            Text("Right-click an album or track and choose Play Next or Add to Queue.")
-                .font(.system(size: 13))
-                .foregroundStyle(Theme.textTertiary)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -375,18 +389,20 @@ private struct QueueTrackRow: View {
     /// Shown as an ✕ on hover; nil for the drag preview.
     /// Queued by the user but sitting among the source's tracks.
     var isAdded = false
+    /// Smaller art and type, for the menu bar player's drawer.
+    var compact = false
     let onRemove: (() -> Void)?
 
     @State private var isHovered = false
 
     var body: some View {
         HStack(spacing: 12) {
-            ArtworkView(data: track.artwork, size: 44, id: "track:\(track.id)")
+            ArtworkView(data: track.artwork, size: compact ? 34 : 44, id: "track:\(track.id)")
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(track.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: compact ? 12.5 : 14, weight: .semibold))
                         .foregroundStyle(Theme.textPrimary)
                         .lineLimit(1)
                     if isAdded {
@@ -402,7 +418,7 @@ private struct QueueTrackRow: View {
                 }
                 if let artist = ArtistResolver.displayString(track.artist) {
                     Text(artist)
-                        .font(.system(size: 12.5))
+                        .font(.system(size: compact ? 11.5 : 12.5))
                         .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                 }
@@ -435,9 +451,9 @@ private struct QueueTrackRow: View {
                 .frame(width: 18)
                 .opacity(isHovered ? 1 : 0)
         }
-        .padding(.leading, 12)
-        .padding(.trailing, 10)
-        .frame(height: 58)
+        .padding(.leading, compact ? 8 : 12)
+        .padding(.trailing, compact ? 6 : 10)
+        .frame(height: compact ? 46 : 58)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Theme.textPrimary.opacity(isHovered ? 0.06 : 0))

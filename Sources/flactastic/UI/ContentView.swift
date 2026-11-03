@@ -22,6 +22,12 @@ struct ContentView: View {
     @State private var coverDismissed = false
     /// Drives the cover's fade-out, ahead of `coverDismissed` unmounting it.
     @State private var coverFading = false
+    /// The cover dips to black once loading is done, and holds there while
+    /// the library finishes its launch work, before fading into the app.
+    @State private var coverBlackout = false
+
+    /// Longest the cover holds on black waiting for that launch work.
+    private static let maxBlackoutHold: Duration = .seconds(3)
 
     /// Longest the loading cover may stay up, however big the library is.
     /// Past this the UI is revealed while metadata keeps streaming in.
@@ -41,10 +47,11 @@ struct ContentView: View {
             .environment(\.topBarInset, inset)
             // Each tab's one-time tips, over the page but under the top bar
             // so the tabs stay reachable.
-            .overlay { TabTutorialOverlay() }
+            .overlay { if isChromeRevealed { TabTutorialOverlay() } }
             .overlay(alignment: .top) {
-                if !hidesTopBar(router: router) {
+                if isChromeRevealed && !hidesTopBar(router: router) {
                     TopBarView(selectedTab: $router.selectedTab)
+                        .transition(.opacity)
                 }
             }
             // The queue runs the full height of the window, over the top bar's
@@ -53,7 +60,7 @@ struct ContentView: View {
                 if player.isQueueVisible {
                     QueuePanelView()
                         .transition(.move(edge: .trailing))
-                } else if player.currentTrack != nil && router.selectedTab != .visualizer {
+                } else if isChromeRevealed && player.currentTrack != nil && router.selectedTab != .visualizer {
                     QueuePullTab(count: max(0, player.queue.count - player.currentIndex - 1)) {
                         withAnimation(QueuePanelView.motion) { player.isQueueVisible = true }
                     }
@@ -71,7 +78,7 @@ struct ContentView: View {
         // the traffic lights (the NSWindow is configured for a full-size,
         // transparent title bar — see TitleBarConfigurator).
         .ignoresSafeArea(.container, edges: .top)
-        .background(TitleBarConfigurator())
+        .background(TitleBarConfigurator(showsWindowButtons: isChromeRevealed))
         .background(Theme.background)
         .sheet(isPresented: $router.showSettings) {
             SettingsView()
@@ -139,8 +146,13 @@ struct ContentView: View {
         }
     }
 
+    /// The window's chrome (traffic lights, top bar, player bar, queue tab,
+    /// tips) waits behind the loading cover and comes in as it fades, each
+    /// with its own entrance, in the cover fade's transaction.
+    private var isChromeRevealed: Bool { coverFading || coverDismissed }
+
     private func showsPlayerBar(router: NavigationRouter) -> Bool {
-        router.selectedTab != .visualizer && router.selectedTab != .download && !router.hidesPlayerBar
+        isChromeRevealed && router.selectedTab != .visualizer && router.selectedTab != .download && !router.hidesPlayerBar
             // The Playlists page docks its own mini player under its list.
             && !(router.selectedTab == .playlists && router.playlistsPath.isEmpty)
     }
@@ -180,6 +192,7 @@ struct ContentView: View {
             // even if an observation update is missed.
             if !coverDismissed {
                 LoadingCoverView()
+                    .overlay(Color.black.opacity(coverBlackout ? 1 : 0).ignoresSafeArea())
                     .opacity(coverFading ? 0 : 1)
                     .allowsHitTesting(!coverFading)
                     .transition(.identity)
@@ -243,12 +256,28 @@ struct ContentView: View {
             try? await Task.sleep(for: .milliseconds(100))
             if Task.isCancelled { return }
         }
-        withAnimation(.easeOut(duration: 0.35)) { coverFading = true }
+        if library.hasCompletedInitialLoad {
+            // Dip to black, and hold there while the library runs its
+            // whole-library launch passes on the main thread. Revealing the app
+            // during them made the first thing on screen — Home's thrown case —
+            // stutter and hang; behind black they cost nothing visible.
+            withAnimation(.easeInOut(duration: 0.3)) { coverBlackout = true }
+            try? await Task.sleep(for: .milliseconds(300))
+            let hold = ContinuousClock.now + Self.maxBlackoutHold
+            while !library.hasFinishedLaunchWork && ContinuousClock.now < hold {
+                try? await Task.sleep(for: .milliseconds(50))
+                if Task.isCancelled { return }
+            }
+            // A beat for SwiftUI to commit the re-render that work caused.
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        withAnimation(.easeOut(duration: 0.5)) { coverFading = true }
         // Outlast the fade, then unmount without animation.
-        try? await Task.sleep(for: .milliseconds(400))
+        try? await Task.sleep(for: .milliseconds(550))
         var t = Transaction()
         t.disablesAnimations = true
         withTransaction(t) { coverDismissed = true }
+        router.isLaunchRevealed = true
     }
 
     @ViewBuilder

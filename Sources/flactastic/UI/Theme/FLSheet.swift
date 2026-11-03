@@ -12,7 +12,7 @@ import SwiftUI
 /// which may need to clean up before dismissing.
 ///
 /// Use this for `.sheet`-presented modal editors. **Do not** use it for
-/// popovers, menus, alerts, the queue panel, or `MenuBarExtra` content —
+/// popovers, menus, alerts, the queue panel, or the menu bar popover —
 /// those have legitimately different layout needs.
 ///
 /// ```swift

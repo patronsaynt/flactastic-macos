@@ -59,7 +59,7 @@ final class OrganizerModel {
         }
     }
 
-    func apply(library: LibraryStore, profile: OrganizerProfile) async {
+    func apply(library: LibraryStore, player: PlayerEngine? = nil, profile: OrganizerProfile) async {
         guard !isApplying else { return }
         guard let rootURL = library.rootURL else { return }
         isApplying = true
@@ -113,6 +113,15 @@ final class OrganizerModel {
                 pathMap[oldRel] = newRel
             }
             library.trackIDStore.renamePaths(pathMap)
+
+            // The player's queue keeps its own copies of tracks — move those
+            // too, or playback stops at the end of the current song.
+            var newURLByOldPath: [String: URL] = [:]
+            for moved in result.moved {
+                guard let op = opByTrackID[moved.trackID] else { continue }
+                newURLByOldPath[op.sourceURL.path] = moved.newURL
+            }
+            player?.relocate(newURLByOldPath)
         }
 
         let movedCount = result.moved.count

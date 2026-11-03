@@ -1,6 +1,9 @@
 import SwiftUI
 
 struct VolumeSliderView: View {
+    /// The slider's own width, between the two speaker icons.
+    var width: CGFloat = 64
+
     @Environment(PlayerState.self) private var player
     @Environment(Settings.self) private var settings
     @Environment(CastManager.self) private var cast
@@ -19,7 +22,7 @@ struct VolumeSliderView: View {
             }
             .tint(Theme.accent)
             .disabled(!cast.isVolumeControllable)
-            .frame(width: 64)
+            .frame(width: width)
             .onChange(of: player.volume) { _, newValue in
                 player.engine.setVolume(newValue)
             }

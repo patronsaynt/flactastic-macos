@@ -333,6 +333,39 @@ final class PlayerEngine {
         if wasPlaying { play() }
     }
 
+    /// Point queued tracks at files that moved on disk (an Organizer run),
+    /// keyed by old absolute path. The queue holds its own copies of each
+    /// track — queued ones even get fresh IDs — so without this every
+    /// upcoming track still names a path that no longer exists: the playing
+    /// song finishes (its file is already open), then each next track fails
+    /// to open and playback stops, and skipping fails the same way.
+    func relocate(_ newURLByOldPath: [String: URL]) {
+        guard !newURLByOldPath.isEmpty else { return }
+        func moved(_ track: Track) -> Track {
+            newURLByOldPath[track.url.path].map { track.withURL($0) } ?? track
+        }
+        _queue = _queue.map(moved)
+        currentTrack = currentTrack.map(moved)
+        scheduledEntries = scheduledEntries.map {
+            ScheduledEntry(track: moved($0.track), startFrame: $0.startFrame, endFrame: $0.endFrame)
+        }
+        notifyStateUpdate()
+
+        if remote != nil {
+            remoteQueueDidChange()
+            return
+        }
+        // The decoder reads each track's URL from the queue as it reaches it,
+        // so a running pass picks the new paths up by itself. One that already
+        // hit the old paths gave up and went idle: restart it after the last
+        // track it did get into the player.
+        guard !isDecoding,
+              let last = scheduledEntries.last, last.endFrame != .max,
+              let lastIndex = _queue.firstIndex(where: { $0.id == last.track.id }),
+              lastIndex + 1 < _queue.count else { return }
+        startDecoding(from: lastIndex + 1)
+    }
+
     /// Remove a single upcoming track from the queue without interrupting playback
     /// when possible. If the removed track and no other future track has been
     /// pre-buffered, the decode task is cancelled and restarted from the current
