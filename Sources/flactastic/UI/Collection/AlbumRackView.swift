@@ -680,9 +680,7 @@ struct RackLayout {
         for (index, album) in albums.enumerated() {
             for track in album.tracks where indexByTrack[track.id] == nil { indexByTrack[track.id] = index }
         }
-        credits = albums.map {
-            $0.isCompilation ? "Compilation" : (ArtistResolver.displayString($0.albumArtist ?? $0.artist) ?? "Unknown Artist")
-        }
+        credits = albums.map(Self.credit(of:))
         pitch = metrics.pitch
         let groupOf: (Album) -> String
         switch sort {
