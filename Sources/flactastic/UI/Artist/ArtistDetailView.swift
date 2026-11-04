@@ -543,12 +543,4 @@ private extension View {
             .overlay(Capsule().strokeBorder(Theme.textPrimary.opacity(0.08), lineWidth: 1))
             .shadow(color: .black.opacity(0.28), radius: 18, y: 8)
     }
-
-    /// Fades and lifts into place when `active` flips, after the hero zoom.
-    func arrival(_ active: Bool, calm: Bool, animation: Animation) -> some View {
-        self
-            .opacity(active ? 1 : 0)
-            .offset(y: active || calm ? 0 : 16)
-            .animation(calm ? .easeOut(duration: 0.3) : animation, value: active)
-    }
 }

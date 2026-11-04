@@ -526,13 +526,3 @@ private struct AlbumTrackRow: View {
         .onTapGesture(count: 2, perform: play)
     }
 }
-
-private extension View {
-    /// Fades and lifts into place when `active` flips, after the zoom.
-    func arrival(_ active: Bool, calm: Bool, animation: Animation) -> some View {
-        self
-            .opacity(active ? 1 : 0)
-            .offset(y: active || calm ? 0 : 16)
-            .animation(calm ? .easeOut(duration: 0.3) : animation, value: active)
-    }
-}
