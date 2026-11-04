@@ -522,19 +522,6 @@ struct AlbumMetadataEditorView: View {
 
     // MARK: - Helpers
 
-    /// Text binding for a track row's number field, backed directly by
-    /// `EditableTrack.trackNumber` rather than the row's array position —
-    /// edits here are independent of drag-reorder.
-    private func trackNumberText(_ index: Int) -> Binding<String> {
-        Binding(
-            get: { String(editableTracks[index].trackNumber) },
-            set: { newValue in
-                let filtered = newValue.filter(\.isNumber)
-                editableTracks[index].trackNumber = Int(filtered) ?? 0
-            }
-        )
-    }
-
     /// Adds or removes the disc break before `index`, then numbers every
     /// disc from 1: splitting or merging discs is a deliberate resequence.
     private func setDiscBreak(at index: Int, on: Bool) {
