@@ -60,28 +60,38 @@ actor LibraryScanner {
     /// and only the embedded picture is re-read (a single TagLib open — or
     /// none at all when the cache says the file has no artwork). A mismatch
     /// falls through to the full parse below.
-    func loadMetadata(for track: Track, cached: TrackMetadataCacheEntry? = nil) async -> Track {
+    ///
+    /// Cache hits run off the actor, so the store's eight-wide task group
+    /// reads covers in parallel; on the actor they queued one by one. A full
+    /// parse stays on it: TagLib's tag strings live in one global list
+    /// (`taglib_tag_free_strings`), which isn't safe to share across threads.
+    nonisolated func loadMetadata(for track: Track, cached: TrackMetadataCacheEntry? = nil) async -> Track {
         if let cached, cached.isValid(forFileAt: track.url.path), cached.hasFormat(forFileAt: track.url) {
             var updated = track
             cached.apply(to: &updated)
-            if cached.hasArtwork {
-                track.url.path.withCString { pathPtr in
-                    guard let file = taglib_file_new(pathPtr) else { return }
-                    defer {
-                        taglib_file_free(file)
-                        taglib_tag_free_strings()
-                    }
-                    guard taglib_file_is_valid(file) != 0 else { return }
-                    var picSize: UInt32 = 0
-                    if let picBytes = taglib_helper_read_picture(file, &picSize), picSize > 0 {
-                        updated.artwork = Data(bytes: picBytes, count: Int(picSize))
-                        free(picBytes)
-                    }
-                }
+            if cached.hasArtwork, let picture = Self.readPicture(at: track.url) {
+                updated.artwork = picture
             }
             return updated
         }
+        return await parse(track)
+    }
 
+    /// The embedded cover alone. Uses no tag strings (the picture comes back
+    /// in its own allocation), so it's safe to run on several threads at once.
+    private nonisolated static func readPicture(at url: URL) -> Data? {
+        url.path.withCString { pathPtr in
+            guard let file = taglib_file_new(pathPtr) else { return nil }
+            defer { taglib_file_free(file) }
+            guard taglib_file_is_valid(file) != 0 else { return nil }
+            var picSize: UInt32 = 0
+            guard let picBytes = taglib_helper_read_picture(file, &picSize) else { return nil }
+            defer { free(picBytes) }
+            return picSize > 0 ? Data(bytes: picBytes, count: Int(picSize)) : nil
+        }
+    }
+
+    private func parse(_ track: Track) async -> Track {
         var updated = track
 
         // --- Tag fields via TagLib (bypasses AVFoundation metadata cache) ---
