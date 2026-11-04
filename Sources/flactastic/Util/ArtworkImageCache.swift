@@ -224,8 +224,12 @@ final class ArtworkImageCache: @unchecked Sendable {
     }
 
     private func loadFromDisk(key: String) -> NSImage? {
-        guard let data = try? Data(contentsOf: diskURL(forKey: key)) else { return nil }
-        return NSImage(data: data)
+        // Decoded here, off the main thread: `NSImage(data:)` defers the JPEG
+        // decode to the first draw, on the main thread, mid-scroll.
+        guard let source = CGImageSourceCreateWithURL(diskURL(forKey: key) as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
+        else { return nil }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
 
     private static func saveToDisk(_ image: NSImage, key: String, directory: URL) {
