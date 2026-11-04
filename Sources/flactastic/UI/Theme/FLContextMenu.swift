@@ -78,26 +78,78 @@ final class FLContextMenuController {
     var rootWindow: FLContextMenuWindow?
     var childWindow: FLContextMenuWindow?
 
-    // Deduplication: when multiple RightClickCatchers overlap (e.g. queue panel
-    // over underlying track rows), collect all claims for a single event and
-    // show only the highest-priority menu.
-    private var pendingClaim: (eventNumber: Int, items: [FLContextMenuItem], point: NSPoint, priority: Int)?
+    // MARK: Choosing which menu a right-click opens
 
-    func claimRightClick(eventNumber: Int, items: [FLContextMenuItem], point: NSPoint, priority: Int) {
-        if let existing = pendingClaim, existing.eventNumber == eventNumber {
-            if priority > existing.priority {
-                pendingClaim = (eventNumber, items, point, priority)
-            }
-        } else {
-            pendingClaim = (eventNumber, items, point, priority)
-            Task { @MainActor [weak self] in
-                guard let self,
-                      let pending = self.pendingClaim,
-                      pending.eventNumber == eventNumber else { return }
-                self.pendingClaim = nil
-                FLContextMenuWindow.present(items: pending.items, at: pending.point)
-            }
+    /// Every right-click catcher on screen, and the one monitor that serves
+    /// them all. A right-click asks each whether it's under the pointer and
+    /// visible, then opens only the one that belongs to what's actually there
+    /// (see `pick`), so the menu never depends on which listener ran first.
+    private let catchers = NSHashTable<FLRightClickTarget>.weakObjects()
+    private var monitor: Any?
+
+    func register(_ catcher: FLRightClickTarget) {
+        catchers.add(catcher)
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
+            MainActor.assumeIsolated { FLContextMenuController.shared.route(event) } ? nil : event
         }
+    }
+
+    func unregister(_ catcher: FLRightClickTarget) { catchers.remove(catcher) }
+
+    /// Opens the right menu for this click; false if no menu claims it.
+    private func route(_ event: NSEvent) -> Bool {
+        guard let window = event.window else { return false }
+        let point = event.locationInWindow
+        let candidates = catchers.allObjects.filter { $0.window === window && $0.isUnder(point) }
+        guard let chosen = Self.pick(candidates, at: point) else { return false }
+        let items = chosen.items()
+        guard !items.isEmpty else { return false }
+        let screenPoint = NSEvent.mouseLocation
+        Task { @MainActor in FLContextMenuWindow.present(items: items, at: screenPoint) }
+        return true
+    }
+
+    /// The menu for what's really under the pointer:
+    /// 1. the highest `priority` (panels floating over the page, like the queue);
+    /// 2. the frontmost, so a page drawn over another (a mix page over Home)
+    ///    wins over what's hidden beneath it;
+    /// 3. then the innermost menu nested inside that one (a track row's menu
+    ///    rather than its list's), repeatedly.
+    static func pick(_ candidates: [FLRightClickTarget], at point: NSPoint) -> FLRightClickTarget? {
+        guard let top = candidates.map(\.menuPriority).max() else { return nil }
+        let ranked = candidates.filter { $0.menuPriority == top }
+            .sorted { isInFront($0, of: $1) }
+        guard var best = ranked.first else { return nil }
+        while let inner = ranked.first(where: { $0 !== best && encloses(best, $0) }) {
+            best = inner
+        }
+        return best
+    }
+
+    private static func frameInWindow(_ v: NSView) -> NSRect { v.convert(v.bounds, to: nil) }
+
+    /// `outer` fully contains `inner`, and is strictly bigger.
+    private static func encloses(_ outer: NSView, _ inner: NSView) -> Bool {
+        let o = frameInWindow(outer).insetBy(dx: -0.5, dy: -0.5), i = frameInWindow(inner)
+        return o.contains(i) && i.width * i.height < o.width * o.height - 1
+    }
+
+    /// Drawing order: a view later among its siblings (or a descendant of
+    /// one) is drawn over an earlier one.
+    static func isInFront(_ a: NSView, of b: NSView) -> Bool {
+        func path(_ v: NSView) -> [Int] {
+            var out: [Int] = []
+            var node = v
+            while let parent = node.superview {
+                out.append(parent.subviews.firstIndex(of: node) ?? 0)
+                node = parent
+            }
+            return out.reversed()
+        }
+        let pa = path(a), pb = path(b)
+        for (x, y) in zip(pa, pb) where x != y { return x > y }
+        return pa.count > pb.count
     }
 
     func dismissAll() {
@@ -588,68 +640,37 @@ private struct FLRightClickCatcher: NSViewRepresentable {
     /// NSView overlay that could be hit-tested breaks the table's drag-to-
     /// reorder machinery. Right-clicks are instead picked up via a local
     /// NSEvent monitor that checks whether the click falls inside our bounds.
-    final class RightClickView: NSView {
-        var itemsProvider: (() -> [FLContextMenuItem])?
-        var menuPriority: Int = 0
-        private var monitor: Any?
+    final class RightClickView: FLRightClickTarget {}
+}
 
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if window != nil {
-                installMonitorIfNeeded()
-            } else {
-                removeMonitor()
-            }
-        }
+/// An invisible stand-in for one `.flContextMenu`. Never takes part in
+/// hit-testing (always returns nil), which matters inside `List` rows, where
+/// any overlay that can be hit breaks drag-to-reorder. Right-clicks reach it
+/// through `FLContextMenuController`, which decides which menu opens.
+class FLRightClickTarget: NSView {
+    var itemsProvider: (() -> [FLContextMenuItem])?
+    var menuPriority: Int = 0
 
-        private func installMonitorIfNeeded() {
-            guard monitor == nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] event in
-                self?.handleRightClick(event) ?? event
-            }
-        }
+    func items() -> [FLContextMenuItem] { itemsProvider?() ?? [] }
 
-        private func removeMonitor() {
-            if let m = monitor {
-                NSEvent.removeMonitor(m)
-                monitor = nil
-            }
-        }
-
-        // Cleanup is handled by `viewDidMoveToWindow` when the view leaves its
-        // window. A deinit-based cleanup would need to access `monitor` from a
-        // nonisolated context, which Swift 6 rejects — and isn't needed since
-        // the view is always removed from its window before deallocation.
-
-        private func handleRightClick(_ event: NSEvent) -> NSEvent? {
-            // Only react to clicks in our own window.
-            guard let window = self.window, event.window === window else { return event }
-            // Convert to our coordinate space and bounds-test.
-            let inWindow = event.locationInWindow
-            let inSelf = convert(inWindow, from: nil)
-            guard bounds.contains(inSelf) else { return event }
-            guard let provider = itemsProvider else { return event }
-            let items = provider()
-            guard !items.isEmpty else { return event }
-            let screenPoint = NSEvent.mouseLocation
-            let eventNumber = event.eventNumber
-            let priority = menuPriority
-            Task { @MainActor in
-                FLContextMenuController.shared.claimRightClick(
-                    eventNumber: eventNumber,
-                    items: items,
-                    point: screenPoint,
-                    priority: priority
-                )
-            }
-            return nil // consume
-        }
-
-        // Never participate in hit-testing — makes this view invisible to
-        // every mouse event path (clicks, drags, tracking), so `List`'s
-        // drag-to-reorder and other AppKit gestures are unaffected.
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-
-        override var acceptsFirstResponder: Bool { false }
+    /// Under the pointer and actually showing there: in a window, not
+    /// hidden, and not scrolled or clipped out of view.
+    func isUnder(_ windowPoint: NSPoint) -> Bool {
+        guard window != nil, !isHiddenOrHasHiddenAncestor, alphaValue > 0 else { return false }
+        let p = convert(windowPoint, from: nil)
+        return bounds.contains(p) && visibleRect.contains(p)
     }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            FLContextMenuController.shared.register(self)
+        } else {
+            FLContextMenuController.shared.unregister(self)
+        }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override var acceptsFirstResponder: Bool { false }
 }

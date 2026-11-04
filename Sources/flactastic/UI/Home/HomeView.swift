@@ -71,9 +71,9 @@ struct HomeView: View {
     @State private var metrics = HomeMetrics()
     /// The shelves' contents, rebuilt with the metrics.
     @State private var feed = HomeFeed()
-    /// Mixes saved to the library this session, mix ID → playlist ID, so
-    /// the menu opens the saved copy instead of saving another.
-    @State private var savedMixes: [String: UUID] = [:]
+    /// The generated mix whose page is open over Home, and its cover.
+    @State private var openMixID: String?
+    @State private var openMixCover: Data?
     /// The "Playlist saved" notice, and the playlist it opens.
     @State private var savedNotice: (name: String, id: UUID)?
     @State private var noticeTask: Task<Void, Never>?
@@ -110,6 +110,7 @@ struct HomeView: View {
     private struct SnapshotKey: Equatable {
         let tracks: Int, events: Int, contexts: [RecentContext], range: StatsRange
         let day: String, hour: Int, loaded: Bool
+        let mixSignals: Int
     }
     private static var snapshot: (key: SnapshotKey, metrics: HomeMetrics, feed: HomeFeed)?
 
@@ -119,7 +120,8 @@ struct HomeView: View {
         let key = SnapshotKey(
             tracks: library.tracksRevision, events: listening.events.count, contexts: listening.recentContexts,
             range: statsRange, day: HomeFeed.dayKey(.now), hour: Calendar.current.component(.hour, from: .now),
-            loaded: library.hasCompletedInitialLoad
+            loaded: library.hasCompletedInitialLoad,
+            mixSignals: MixSignals.shared.revision
         )
         if let snapshot = Self.snapshot, snapshot.key == key {
             metrics = snapshot.metrics
@@ -145,22 +147,39 @@ struct HomeView: View {
         recomputeChart()
 
         let stored = Self.storedRotation()
+        let resolver = library.makeArtistResolver()
         let built = HomeFeed.build(.init(
             albums: library.albums, tracks: library.tracks, events: listening.events,
             recentContexts: listening.recentContexts, onThisDay: m.onThisDay,
-            storedRotation: stored, resolver: library.makeArtistResolver(),
-            isLibraryLoaded: library.hasCompletedInitialLoad
+            storedRotation: stored, resolver: resolver,
+            isLibraryLoaded: library.hasCompletedInitialLoad,
+            signals: MixSignals.shared.signals(resolver: resolver, groups: settings.genreGroups)
         ))
         if let rotation = built.rotation, rotation != stored { Self.store(rotation) }
+        // The day's mixes, kept as built so later rebuilds show them unchanged.
+        if library.hasCompletedInitialLoad {
+            MixSignals.shared.storeToday(built.mixes, day: HomeFeed.dayKey(.now))
+        }
         feed = built
         Self.snapshot = (key, m, built)
     }
 
     private func refreshFromLibrary() {
         recomputeMetrics()
+        if library.hasCompletedInitialLoad { refreshMixSignals() }
         // Plays don't change the top; only the pick and the library do.
         topSong = resolveTopSong()
         playlistTracks = playlistStore.resolvedTracksForAll(in: library)
+    }
+
+    /// Starts (or continues) fetching related artists and analysing sound
+    /// for the mixes: the library's 150 biggest artists, every mixable track.
+    private func refreshMixSignals() {
+        let pool = HomeFeed.mixPool(tracks: library.tracks, albums: library.albums)
+        var counts: [String: Int] = [:]
+        for t in pool { if let c = t.albumArtist ?? t.artist { counts[c, default: 0] += 1 } }
+        let top = counts.sorted { $0.value > $1.value }.prefix(150).map(\.key)
+        MixSignals.shared.refresh(tracks: pool, resolver: library.makeArtistResolver(), topArtists: top)
     }
 
     private static let rotationKey = "flactastic.home.todayRotation"
@@ -216,6 +235,8 @@ struct HomeView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.background)
+        .overlay { openMixPage }
+        .animation(.easeOut(duration: 0.25), value: openMixID)
         .overlay(alignment: .bottom) { savedNoticeView }
         .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.35), value: savedNotice?.id)
         .removeFromLibraryConfirmation($removalRequest, library: library)
@@ -254,6 +275,10 @@ struct HomeView: View {
         // The day's picks are rolled (or found again) once the library has
         // finished loading.
         .onChange(of: library.hasCompletedInitialLoad) { _, _ in refreshFromLibrary() }
+        // New related artists, sound fingerprints or mix feedback.
+        .onChange(of: MixSignals.shared.revision) { _, _ in
+            if library.hasCompletedInitialLoad { recomputeMetrics() }
+        }
         .onChange(of: playlistStore.revision) { _, _ in
             playlistTracks = playlistStore.resolvedTracksForAll(in: library)
         }
@@ -533,15 +558,16 @@ struct HomeView: View {
                     mix: mix,
                     image: photo,
                     size: size,
-                    onPlay: { play(mix.tracks, at: 0, source: mix.name) },
+                    onPlay: { openMixID = mix.id },
                     menu: {
                         var items: [FLContextMenuItem] = [
-                            .button("Play", systemImage: "play.fill") { play(mix.tracks, at: 0, source: mix.name) },
-                            .button("Shuffle", systemImage: "shuffle") { play(mix.tracks, at: 0, source: mix.name, shuffle: true) },
+                            .button("Open", systemImage: "music.note.list") { openMixID = mix.id },
+                            .button("Play", systemImage: "play.fill") { playMix(mix) },
+                            .button("Shuffle", systemImage: "shuffle") { playMix(mix, shuffle: true) },
                         ]
                         items += playbackContextMenuItems(for: mix.tracks, player: player)
                         items.append(.divider)
-                        if let saved = savedMixes[mix.id], playlistsByID[saved] != nil {
+                        if let saved = savedPlaylist(mix) {
                             items.append(.button("Open Saved Playlist", systemImage: "music.note.list") {
                                 router.navigateToPlaylist(id: saved)
                             })
@@ -566,12 +592,12 @@ struct HomeView: View {
         playlistStore.updatePlaylistMetadata(
             id: playlist.id,
             name: mix.name,
-            description: "Saved from Home on \(date). With \(mix.artists.joined(separator: ", ")).",
+            description: "\(mix.featuring). Saved from Home on \(date).",
             customArtwork: mix.coverJPEG(photo: photo)
         )
         // Only confirm once it's really there.
         guard playlistStore.playlists.contains(where: { $0.id == playlist.id }) else { return }
-        savedMixes[mix.id] = playlist.id
+        MixSignals.shared.recordSaved(playlist.id, for: mix.editionID)
         noticeTask?.cancel()
         savedNotice = (mix.name, playlist.id)
         noticeTask = Task {
@@ -832,11 +858,51 @@ struct HomeView: View {
         listening.recordPlaylistPlay(playlist)
     }
 
-    private func play(_ tracks: [Track], at index: Int, source: String, shuffle: Bool = false) {
+    private func playMix(_ mix: HomeFeed.Mix, at index: Int = 0, shuffle: Bool = false) {
+        play(mix.tracks, at: index, source: mix.name, sourceID: "mix:\(mix.editionID)", shuffle: shuffle)
+    }
+
+    /// Draws a new version of one of today's mixes, with its ratings intact.
+    private func rerollMix(_ mix: HomeFeed.Mix) {
+        let resolver = library.makeArtistResolver()
+        let input = HomeFeed.Inputs(
+            albums: library.albums, tracks: library.tracks, events: listening.events,
+            recentContexts: [], onThisDay: nil, storedRotation: nil, resolver: resolver,
+            signals: MixSignals.shared.signals(resolver: resolver, groups: settings.genreGroups)
+        )
+        guard let fresh = HomeFeed.reroll(mix.id, times: mix.rerolls + 1, input) else { return }
+        MixSignals.shared.replaceToday(with: fresh)
+    }
+
+    /// The playlist today's version of a mix was saved as, if it still exists.
+    private func savedPlaylist(_ mix: HomeFeed.Mix) -> UUID? {
+        MixSignals.shared.savedPlaylist(for: mix.editionID).flatMap { playlistsByID[$0] != nil ? $0 : nil }
+    }
+
+    /// The open mix's page, over Home, drawn like a playlist's.
+    @ViewBuilder
+    private var openMixPage: some View {
+        if let id = openMixID, let mix = feed.mixes.first(where: { $0.id == id }) {
+            let photo = artistImage(credit: mix.leadArtist, resolver: library.makeArtistResolver()) ?? mix.tracks.first?.artwork
+            MixDetailView(
+                mix: mix,
+                cover: openMixCover,
+                savedPlaylistID: savedPlaylist(mix),
+                onBack: { openMixID = nil },
+                onPlay: { index, shuffle in playMix(mix, at: index, shuffle: shuffle) },
+                onSave: { saveMix(mix, photo: photo) },
+                onReroll: { rerollMix(mix) }
+            )
+            .task(id: mix.id) { openMixCover = mix.coverJPEG(photo: photo, side: 600) }
+            .transition(.opacity)
+        }
+    }
+
+    private func play(_ tracks: [Track], at index: Int, source: String, sourceID: String? = nil, shuffle: Bool = false) {
         guard !tracks.isEmpty else { return }
         player.isShuffleEnabled = shuffle
         let start = shuffle ? Int.random(in: 0..<tracks.count) : index
-        player.startFreshQueue(tracks, startAt: start, source: source)
+        player.startFreshQueue(tracks, startAt: start, source: source, sourceID: sourceID)
         player.engine.play()
     }
 

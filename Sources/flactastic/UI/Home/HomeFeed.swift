@@ -80,6 +80,18 @@ struct HomeFeed {
         let leadArtist: String
         let artists: [String]
         let tracks: [Track]
+        /// The day this version was built ("2026-11-04").
+        var day: String = ""
+        /// Times this mix has been rerolled today.
+        var rerolls: Int = 0
+        /// This version of the mix: `id` stays the same day to day (it's what
+        /// ratings are remembered under); this names one day's tracks, and
+        /// each reroll's, for playback and for saving as a playlist.
+        var editionID: String { "\(id)@\(day)" + (rerolls > 0 ? "#\(rerolls)" : "") }
+        /// "Featuring A, B and C".
+        var featuring: String {
+            "Featuring " + ListFormatter.localizedString(byJoining: artists)
+        }
     }
 
     struct RepeatTrack: Identifiable {
@@ -131,6 +143,8 @@ extension HomeFeed {
         /// grouped for good yet, so the day's picks wait rather than being
         /// rolled from half a library.
         var isLibraryLoaded = true
+        /// Related artists, sound fingerprints and your mix feedback.
+        var signals: MixCurator.Signals = .empty
     }
 
     private struct AlbumStats {
@@ -268,31 +282,85 @@ extension HomeFeed {
 
     /// Up to four genre mixes, from the genres you listen to most (or that
     /// fill most of the library before there's history), then a radio for up
-    /// to two artists on heavy rotation: their tracks among others in their genre.
-    /// Tracks from DJ-mix compilations are left out: cut to blend into their
-    /// neighbours, they start and end mid-mix when shuffled into a playlist.
+    /// to two artists on heavy rotation: their tracks among the artists
+    /// closest to them. Tracks are chosen by `MixCurator`, by how well they
+    /// fit each mix rather than by sharing a genre tag alone.
+    /// Mix Compilations (the tag set in the metadata editors) are left out,
+    /// whole albums of them: cut to blend into their neighbours, they start
+    /// and end mid-mix when shuffled into a playlist.
     private static func mixes(_ input: Inputs, now: Date, rng: inout SeededRandom) -> [Mix] {
+        let day = dayKey(now)
+        // Built once a day: after that, today's are shown as they were made
+        // (edited only by ratings), so plays don't reshuffle them.
+        if let today = input.signals.today, today.day == day {
+            let byPath = Dictionary(input.tracks.map { ($0.url.path, $0) }, uniquingKeysWith: { a, _ in a })
+            return today.mixes.compactMap { s in
+                let tracks = s.paths.compactMap { byPath[$0] }
+                guard !tracks.isEmpty else { return nil }
+                return Mix(id: s.id, name: s.name, hue: s.hue, leadArtist: s.leadArtist,
+                           artists: s.artists, tracks: tracks, day: day, rerolls: s.rerolls ?? 0)
+            }
+        }
+        return distinctNames(generateMixes(input, now: now, rng: &rng)).map {
+            var m = $0; m.day = day; return m
+        }
+    }
+
+    /// A fresh draw of one mix: the same rules and ratings, a different roll
+    /// of the dice. Nil if the mix can't be built from the library any more.
+    static func reroll(_ mixID: String, times: Int, _ input: Inputs) -> Mix? {
+        let now = input.now
+        let day = dayKey(now)
+        var rng = SeededRandom(seed: dayNumber(now, .current) &+ UInt64(abs(mixID.hashValueStable)) &+ UInt64(times) &* 0x9E37_79B9)
+        var input = input
+        input.signals.today = nil
+        guard var mix = distinctNames(generateMixes(input, now: now, rng: &rng)).first(where: { $0.id == mixID }) else { return nil }
+        mix.day = day
+        mix.rerolls = times
+        return mix
+    }
+
+    /// Two mixes with one name get their lead artist added: "Hardcore Mix · Angerfist".
+    private static func distinctNames(_ mixes: [Mix]) -> [Mix] {
+        var counts: [String: Int] = [:]
+        for m in mixes { counts[m.name, default: 0] += 1 }
+        return mixes.map { m in
+            guard counts[m.name, default: 0] > 1 else { return m }
+            return Mix(id: m.id, name: "\(m.name) · \(m.leadArtist)", hue: m.hue, leadArtist: m.leadArtist,
+                       artists: m.artists, tracks: m.tracks, day: m.day)
+        }
+    }
+
+    private static func generateMixes(_ input: Inputs, now: Date, rng: inout SeededRandom) -> [Mix] {
         let resolver = input.resolver
-        let pool = input.tracks.filter { !isFromDJMix($0) }
-        func genres(_ t: Track) -> [String] { ([t.genre].compactMap { $0 } + t.secondaryGenres).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
+        let pool = mixPool(tracks: input.tracks, albums: input.albums)
         func credit(_ t: Track) -> String? { t.albumArtist ?? t.artist }
 
         var byGenre: [String: [Track]] = [:]
-        for t in pool { for g in genres(t) { byGenre[g.lowercased(), default: []].append(t) } }
         var display: [String: String] = [:]
-        for t in pool { for g in genres(t) where display[g.lowercased()] == nil { display[g.lowercased()] = g } }
+        for t in pool {
+            for g in ([t.genre].compactMap { $0 } + t.secondaryGenres) {
+                let name = g.trimmingCharacters(in: .whitespaces)
+                guard !name.isEmpty else { continue }
+                byGenre[name.lowercased(), default: []].append(t)
+                if display[name.lowercased()] == nil { display[name.lowercased()] = name }
+            }
+        }
 
         let recent = now.addingTimeInterval(-90 * 86_400)
         var genreMinutes: [String: Double] = [:]
         var artistMinutes: [String: Double] = [:]
         var artistPlays30: [String: Int] = [:]
         for e in input.events where e.date >= recent {
-            if let g = e.genre?.lowercased() { genreMinutes[g, default: 0] += e.secondsListened }
+            if let g = e.genre?.lowercased() { genreMinutes[g, default: 0] += e.secondsListened / 60 }
             if let a = e.artist, let key = resolver.keys(forCredit: a).first {
-                artistMinutes[key, default: 0] += e.secondsListened
+                artistMinutes[key, default: 0] += e.secondsListened / 60
                 if e.counted && e.date >= now.addingTimeInterval(-30 * 86_400) { artistPlays30[key, default: 0] += 1 }
             }
         }
+
+        let curator = MixCurator(resolver: resolver, signals: input.signals, events: input.events,
+                                 tracks: pool, artistMinutes: artistMinutes)
 
         let ranked = byGenre.keys.filter { (byGenre[$0]?.count ?? 0) >= 12 && $0 != "other" && $0 != "unknown" }
             .sorted { (genreMinutes[$0] ?? 0, byGenre[$0]?.count ?? 0) > (genreMinutes[$1] ?? 0, byGenre[$1]?.count ?? 0) }
@@ -305,56 +373,70 @@ extension HomeFeed {
             usedHues.insert(h)
             return h
         }
+        let byPath = Dictionary(pool.map { ($0.url.path, $0) }, uniquingKeysWith: { a, _ in a })
         func artistsByWeight(_ tracks: [Track]) -> [String] {
             var weight: [String: Double] = [:]
             var shown: [String: String] = [:]
             for t in tracks {
                 guard let c = credit(t), let key = resolver.keys(forCredit: c).first else { continue }
-                weight[key, default: 0] += 1 + (artistMinutes[key] ?? 0) / 60
+                weight[key, default: 0] += 1 + (artistMinutes[key] ?? 0)
                 if shown[key] == nil { shown[key] = resolver.split(c).first ?? c }
             }
             return weight.sorted { $0.value > $1.value }.compactMap { shown[$0.key] }
         }
 
         for g in ranked.prefix(4) {
-            let tracks = Array((byGenre[g] ?? []).shuffled(using: &rng).prefix(50))
+            let id = "genre:\(g)"
+            let candidates = byGenre[g] ?? []
+            // "More like this" seeds join the candidates even from other genres.
+            let seeds = (input.signals.seeds[id] ?? []).suffix(5)
+            let seedTracks = seeds.compactMap { byPath[$0] }
+            let core = curator.core(of: candidates, seedPaths: Array(seeds))
+            var extra: [Track] = []
+            for s in seedTracks { extra += curator.similar(to: s, in: pool, count: 8) }
+            var seen = Set<String>()
+            let all = (candidates + extra).filter { seen.insert($0.url.path).inserted }
+            let tracks = curator.pick(all, core: core, mixID: id, count: 50, rng: &rng)
+            guard tracks.count >= 8 else { continue }
             let artists = artistsByWeight(tracks)
             guard let lead = artists.first else { continue }
             let name = (display[g] ?? g.capitalized) + " Mix"
-            mixes.append(Mix(id: "genre:\(g)", name: name, hue: hue(for: name), leadArtist: lead,
+            mixes.append(Mix(id: id, name: name, hue: hue(for: name), leadArtist: lead,
                              artists: Array(artists.prefix(3)), tracks: tracks))
         }
 
-        // Radios for artists on heavy rotation.
+        // Radios for artists on heavy rotation: their own tracks, then the
+        // artists closest to them (sittings, Deezer, genres, family).
         let heavy = artistPlays30.filter { $0.value >= 15 }.sorted { $0.value > $1.value }.prefix(2)
         for (key, _) in heavy {
+            let id = "radio:\(key)"
             let own = pool.filter { t in credit(t).map { resolver.keys(forCredit: $0).contains(key) } ?? false }
             guard own.count >= 5, let name = own.first.flatMap(credit).flatMap({ resolver.split($0).first }) else { continue }
-            let theirGenres = Set(own.flatMap(genres).map { $0.lowercased() })
-            let neighbours = pool.filter { t in
-                !(credit(t).map { resolver.keys(forCredit: $0).contains(key) } ?? false)
-                    && genres(t).contains { theirGenres.contains($0.lowercased()) }
-            }
-            let tracks = (own.shuffled(using: &rng).prefix(20) + neighbours.shuffled(using: &rng).prefix(30)).shuffled(using: &rng)
-            let artists = [name] + artistsByWeight(Array(neighbours.prefix(200))).filter { $0 != name }.prefix(2)
+            let close = Set(curator.neighbours(of: key, own: own, pool: pool).prefix(10))
+            let neighbours = pool.filter { t in curator.artistKey(t).map(close.contains) ?? false }
+            let seeds = (input.signals.seeds[id] ?? []).suffix(5)
+            let core = curator.core(of: own + neighbours, anchors: [key], seedPaths: Array(seeds))
+            let rejected = input.signals.rejected[id] ?? []
+            let mine = own.filter { !rejected.contains($0.url.path) }.shuffled(using: &rng).prefix(20)
+            var extra: [Track] = []
+            for s in seeds.compactMap({ byPath[$0] }) { extra += curator.similar(to: s, in: pool, count: 8) }
+            let others = curator.pick(neighbours + extra, core: core, mixID: id, count: 30, rng: &rng)
+            let tracks = (Array(mine) + others).shuffled(using: &rng)
+            let artists = [name] + artistsByWeight(others).filter { $0 != name }.prefix(2)
             let title = "\(name) Radio"
-            mixes.append(Mix(id: "radio:\(key)", name: title, hue: hue(for: title), leadArtist: name,
-                             artists: Array(artists), tracks: Array(tracks)))
+            mixes.append(Mix(id: id, name: title, hue: hue(for: title), leadArtist: name,
+                             artists: Array(artists), tracks: tracks))
         }
         return Array(mixes.prefix(6))
     }
 
-    /// A track from a DJ mix, as its tags say: "(Mixed)" after its title, or
-    /// an album or title naming a DJ mix, a continuous mix or who mixed it.
-    /// Remixes and "Extended Mix" versions are ordinary tracks and stay in.
-    static func isFromDJMix(_ track: Track) -> Bool {
-        let title = track.title.lowercased()
-        let album = (track.album ?? "").lowercased()
-        return title.range(of: #"[\(\[]\s*mixed\s*[\)\]]"#, options: .regularExpression) != nil
-            || [title, album].contains { $0.range(of: djMixPattern, options: .regularExpression) != nil }
+    /// The tracks mixes may use: every track except Mix Compilations, by the
+    /// tag alone (not by titles). An album counts as one if any of its tracks
+    /// is tagged, so all of it stays out.
+    static func mixPool(tracks: [Track], albums: [Album]) -> [Track] {
+        let flagged = Set(albums.filter(\.isMixCompilation).flatMap { $0.tracks.map(\.id) })
+        return tracks.filter { !$0.isMixCompilation && !flagged.contains($0.id) }
     }
-
-    private static let djMixPattern = #"\b(dj[ -]?mix(es|ed)?|continuous mix|mixed by|mixed & compiled|mix compilation)\b"#
 
     // MARK: Recently added
 

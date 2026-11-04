@@ -257,7 +257,7 @@ struct PlaylistDetailView: View {
         guard !tracks.isEmpty else { return }
         player.isShuffleEnabled = shuffle
         let start = shuffle ? Int.random(in: 0..<tracks.count) : 0
-        player.startFreshQueue(tracks, startAt: start, source: playlist.name)
+        player.startFreshQueue(tracks, startAt: start, source: playlist.name, sourceID: "playlist:\(playlist.id)")
         player.engine.play()
         listening.recordPlaylistPlay(playlist)
     }
@@ -422,7 +422,7 @@ struct PlaylistDetailView: View {
         }
 
         guard resolvedIndex < tracks.count else { return }
-        player.startFreshQueue(tracks, startAt: resolvedIndex, source: playlist.name)
+        player.startFreshQueue(tracks, startAt: resolvedIndex, source: playlist.name, sourceID: "playlist:\(playlist.id)")
         player.engine.play()
         listening.recordPlaylistPlay(playlist)
     }

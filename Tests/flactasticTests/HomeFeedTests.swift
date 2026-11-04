@@ -100,21 +100,24 @@ struct HomeFeedTests {
         #expect([6, 11, 12, 16, 17, 21, 22, 2].map(HomeFeed.band) == [0, 0, 1, 1, 2, 2, 3, 3])
     }
 
-    @Test func djMixTracksStayOutOfMixes() {
-        func track(_ title: String, album: String) -> Track {
-            Track(url: URL(fileURLWithPath: "/m/\(title).flac"), title: title, album: album, fileFormat: .flac)
+    @Test func mixCompilationsStayOutOfMixes() {
+        func track(_ title: String, album: String, mix: Bool = false) -> Track {
+            var t = Track(url: URL(fileURLWithPath: "/m/\(title).flac"), title: title, album: album, fileFormat: .flac)
+            t.isMixCompilation = mix
+            return t
         }
-        #expect(HomeFeed.isFromDJMix(track("Strobe (Mixed)", album: "Fabric 50")))
-        #expect(HomeFeed.isFromDJMix(track("Ghosts", album: "Cream Ibiza (DJ Mix)")))
-        #expect(HomeFeed.isFromDJMix(track("Opus", album: "Global Underground: Mixed by Sasha")))
-        #expect(HomeFeed.isFromDJMix(track("Intro", album: "Essential Mix: Continuous Mix")))
-        #expect(!HomeFeed.isFromDJMix(track("Strobe (Extended Mix)", album: "For Lack of a Better Name")))
-        #expect(!HomeFeed.isFromDJMix(track("Ghosts (Remixed)", album: "Ghosts Remixed")))
-        #expect(!HomeFeed.isFromDJMix(track("Some Chords", album: "4x4=12")))
+        let tagged = track("Intro", album: "Fabric 50", mix: true)
+        let sibling = track("Outro", album: "Fabric 50")
+        let titled = track("Strobe (Mixed)", album: "Cream Ibiza (DJ Mix)")
+        let plain = track("Some Chords", album: "4x4=12")
+        let album = Album(id: "fabric", name: "Fabric 50", artist: nil, albumArtist: nil, year: nil, genre: nil, secondaryGenres: [], artwork: nil, tracks: [tagged, sibling])
+        let pool = HomeFeed.mixPool(tracks: [tagged, sibling, titled, plain], albums: [album])
+        // By the tag only: the tagged album goes, a title that merely says "mix" stays.
+        #expect(pool.map(\.id) == [titled.id, plain.id])
 
         // A genre with enough tracks only from a DJ mix gets no mix.
         let store = library((1...5).map { ("Bass \($0)", "Artist \($0)", 16, 44_100, "Dubstep") })
-        store.tracks = store.tracks.map { var t = $0; t.album = "Bass Nation (DJ Mix)"; return t }
+        store.tracks = store.tracks.map { var t = $0; t.isMixCompilation = true; return t }
         #expect(build(store).mixes.isEmpty)
     }
 
@@ -125,6 +128,50 @@ struct HomeFeedTests {
         #expect(mixes.map(\.name) == ["Dubstep Mix"])
         #expect(mixes.first?.tracks.count == 15)
     }
+    @Test func rerollDrawsAgainButKeepsRatings() {
+        let store = library((1...12).map { ("House \($0)", "Artist \($0)", 16, 44_100, "House") })
+        let banned = store.tracks[5]
+        var signals = MixCurator.Signals.empty
+        signals.rejected = ["genre:house": [banned.url.path]]
+        let input = HomeFeed.Inputs(albums: store.albums, tracks: store.tracks, events: [], recentContexts: [],
+                                    onThisDay: nil, storedRotation: nil, resolver: store.makeArtistResolver(),
+                                    signals: signals)
+        let first = HomeFeed.reroll("genre:house", times: 1, input)
+        let second = HomeFeed.reroll("genre:house", times: 2, input)
+        #expect(first != nil && second != nil)
+        #expect(first?.tracks.map(\.id) != second?.tracks.map(\.id))
+        #expect(first?.editionID.hasSuffix("#1") == true)
+        for mix in [first, second].compactMap({ $0 }) {
+            #expect(!mix.tracks.contains { $0.url.path == banned.url.path })
+        }
+    }
+
+    @Test func todaysMixesHoldStillUntilTomorrow() {
+        let store = library((1...6).map { ("House \($0)", "Artist \($0)", 16, 44_100, "House") })
+        let now = Date()
+        let day = HomeFeed.dayKey(now)
+        let kept = Array(store.tracks.prefix(4))
+        let today = MixDay(day: day, mixes: [StoredMix(HomeFeed.Mix(
+            id: "genre:house", name: "House Mix", hue: 2, leadArtist: "Artist 1",
+            artists: ["Artist 1"], tracks: kept))])
+        var signals = MixCurator.Signals.empty
+        signals.today = today
+        func feed(_ at: Date) -> HomeFeed {
+            HomeFeed.build(.init(albums: store.albums, tracks: store.tracks, events: [], recentContexts: [],
+                                 onThisDay: nil, storedRotation: nil, resolver: store.makeArtistResolver(),
+                                 now: at, signals: signals))
+        }
+        // Same day: exactly as stored, in order, with today's edition ID.
+        let same = feed(now)
+        #expect(same.mixes.map(\.id) == ["genre:house"])
+        #expect(same.mixes.first?.tracks.map(\.id) == kept.map(\.id))
+        #expect(same.mixes.first?.editionID == "genre:house@\(day)")
+        // Next day: built afresh, not from the stored list.
+        let tomorrow = feed(now.addingTimeInterval(86_400))
+        #expect(tomorrow.mixes.allSatisfy { $0.day == HomeFeed.dayKey(now.addingTimeInterval(86_400)) })
+        #expect(tomorrow.mixes.first?.tracks.map(\.id) != kept.map(\.id))
+    }
+
 }
 
 @MainActor
@@ -145,4 +192,5 @@ struct MixCoverTests {
         // Without a photo it's the mix's colour and name.
         #expect(mix.coverJPEG(photo: nil) != nil)
     }
+
 }

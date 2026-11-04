@@ -567,7 +567,7 @@ private struct PlaylistStage: View {
         guard !tracks.isEmpty else { return }
         player.isShuffleEnabled = shuffle
         let start = shuffle ? Int.random(in: 0..<tracks.count) : index
-        player.startFreshQueue(tracks, startAt: start, source: playlist.name)
+        player.startFreshQueue(tracks, startAt: start, source: playlist.name, sourceID: "playlist:\(playlist.id)")
         player.engine.play()
         listening.recordPlaylistPlay(playlist)
     }

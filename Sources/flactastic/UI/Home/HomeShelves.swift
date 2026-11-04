@@ -279,7 +279,7 @@ struct HomeMixTile: View {
                 }
                 .shadow(color: .black.opacity(isHovering ? 0.45 : 0.28), radius: isHovering ? 14 : 6, y: isHovering ? 10 : 4)
                 .offset(y: isHovering ? -3 : 0)
-                Text(mix.artists.joined(separator: ", "))
+                Text(mix.featuring)
                     .font(.system(size: 12))
                     .foregroundStyle(Theme.textTertiary)
                     .lineLimit(1)

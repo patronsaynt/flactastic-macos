@@ -62,6 +62,20 @@ actor DeezerClient {
         return DeezerArtist(id: match.id, name: match.name, pictureURL: pictureURL)
     }
 
+    /// The names of up to 50 artists Deezer lists as related to this one.
+    func relatedArtists(id: Int) async throws -> [String] {
+        guard let url = URL(string: "https://api.deezer.com/artist/\(id)/related?limit=50") else {
+            throw DeezerClientError.invalidQuery
+        }
+        await semaphore.wait()
+        defer { Task { await semaphore.signal() } }
+        let (data, response) = try await session.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw DeezerClientError.badResponse
+        }
+        return try JSONDecoder().decode(RelatedResponse.self, from: data).data.map(\.name)
+    }
+
     /// Download raw image bytes for a known URL.
     func downloadImage(url: URL) async throws -> Data {
         await semaphore.wait()
@@ -78,6 +92,11 @@ actor DeezerClient {
 
     private struct SearchResponse: Decodable {
         let data: [Hit]
+    }
+
+    private struct RelatedResponse: Decodable {
+        struct Artist: Decodable { let name: String }
+        let data: [Artist]
     }
 
     private struct Hit: Decodable {

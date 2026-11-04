@@ -695,6 +695,31 @@ private struct DebugSettingsPane: View {
                 )
             }
 
+            SettingsGroup(title: "Generated mixes") {
+                let counts = MixSignals.shared.ratingCounts
+                actionRow(
+                    "Mix ratings",
+                    detail: cleared.contains("ratings")
+                        ? "Reset. Mixes are built without them from now on."
+                        : "\(counts.moreLike) More Like This · \(counts.doesntFit) Doesn't Fit, across all mixes",
+                    button: "Reset"
+                ) {
+                    MixSignals.shared.resetAllRatings()
+                    cleared.insert("ratings")
+                }
+                GroupDivider()
+                actionRow(
+                    "Today's mixes",
+                    detail: cleared.contains("mixes")
+                        ? "Rebuilt. Home has a fresh set."
+                        : "Held all day once built. Rebuild to draw a new set now.",
+                    button: "Rebuild"
+                ) {
+                    MixSignals.shared.rebuildToday()
+                    cleared.insert("mixes")
+                }
+            }
+
             SettingsGroup(title: "Performance") {
                 ToggleRow(
                     label: "Performance overlay",

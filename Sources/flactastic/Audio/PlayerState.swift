@@ -64,6 +64,10 @@ final class PlayerState {
     /// album name or playlist name. The queue panel labels the source's tracks
     /// "Playing from <source>".
     var playbackSource: String? = nil
+    /// Which source that is, by identity rather than name, so two sources
+    /// sharing a name can't be confused: "playlist:<UUID>", "mix:<mixID>@<day>".
+    /// Nil when the source has no identity worth tracking (an album, a list).
+    var playbackSourceID: String? = nil
 
     /// Whether the queue panel is currently visible.
     var isQueueVisible: Bool = false
@@ -189,9 +193,10 @@ final class PlayerState {
     /// before `index`) are shuffled behind it, matching Spotify-style behaviour.
     /// The original unshuffled order is snapshot into `originalQueue` so that
     /// toggling shuffle off later can restore it.
-    func startFreshQueue(_ tracks: [Track], startAt index: Int = 0, source: String? = nil) {
+    func startFreshQueue(_ tracks: [Track], startAt index: Int = 0, source: String? = nil, sourceID: String? = nil) {
         userQueuedTrackIDs.removeAll()
         playbackSource = source
+        playbackSourceID = sourceID
 
         if isShuffleEnabled && tracks.count > 1 {
             // Snapshot the ordered source for later shuffle-off restoration.
@@ -219,6 +224,7 @@ final class PlayerState {
         if engine.queue.isEmpty {
             userQueuedTrackIDs = Set(ids)
             playbackSource = nil
+            playbackSourceID = nil
             engine.setQueue(fresh, startAt: 0)
             engine.play()
         } else {
@@ -238,6 +244,7 @@ final class PlayerState {
         if engine.queue.isEmpty {
             userQueuedTrackIDs = Set(ids)
             playbackSource = nil
+            playbackSourceID = nil
             engine.setQueue(fresh, startAt: 0)
             engine.play()
             return
