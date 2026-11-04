@@ -102,9 +102,31 @@ struct HomeView: View {
         isLibraryEmpty ? nil : highlight.pick
     }
 
+    /// What the metrics and feed are built from. The page is rebuilt on
+    /// every tab switch; when none of this has changed since the last visit,
+    /// the last build is reused rather than walking the library and history
+    /// again (~50 ms on the first frame of the switch). The feed's dates are
+    /// by day and its time-of-day shelf by hour, so those are in it too.
+    private struct SnapshotKey: Equatable {
+        let tracks: Int, events: Int, contexts: [RecentContext], range: StatsRange
+        let day: String, hour: Int, loaded: Bool
+    }
+    private static var snapshot: (key: SnapshotKey, metrics: HomeMetrics, feed: HomeFeed)?
+
     private func recomputeMetrics() {
         let signpost = Perf.begin("Home recompute")
         defer { Perf.end("Home recompute", signpost) }
+        let key = SnapshotKey(
+            tracks: library.tracksRevision, events: listening.events.count, contexts: listening.recentContexts,
+            range: statsRange, day: HomeFeed.dayKey(.now), hour: Calendar.current.component(.hour, from: .now),
+            loaded: library.hasCompletedInitialLoad
+        )
+        if let snapshot = Self.snapshot, snapshot.key == key {
+            metrics = snapshot.metrics
+            feed = snapshot.feed
+            recomputeChart()
+            return
+        }
         var m = HomeMetrics()
         let albums = albumsByID
         m.onThisDay = listening.onThisDay { albums[$0] != nil }
@@ -131,6 +153,7 @@ struct HomeView: View {
         ))
         if let rotation = built.rotation, rotation != stored { Self.store(rotation) }
         feed = built
+        Self.snapshot = (key, m, built)
     }
 
     private func refreshFromLibrary() {
