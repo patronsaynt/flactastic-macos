@@ -133,6 +133,13 @@ struct HomeView: View {
         feed = built
     }
 
+    private func refreshFromLibrary() {
+        recomputeMetrics()
+        // Plays don't change the top; only the pick and the library do.
+        topSong = resolveTopSong()
+        playlistTracks = playlistStore.resolvedTracksForAll(in: library)
+    }
+
     private static let rotationKey = "flactastic.home.todayRotation"
 
     private static func storedRotation() -> TodayRotation? {
@@ -215,15 +222,15 @@ struct HomeView: View {
         .onChange(of: chartWeekOffset) { _, _ in
             withAnimation(.easeInOut(duration: 0.25)) { recomputeChart() }
         }
+        // Not while the first load streams tracks in batches: each rebuild
+        // walks the whole library, so doing it per batch blocked the main
+        // thread for most of the load. The load's end rebuilds once.
         .onChange(of: library.tracksRevision) { _, _ in
-            recomputeMetrics()
-            // Plays don't change the top; only the pick and the library do.
-            topSong = resolveTopSong()
-            playlistTracks = playlistStore.resolvedTracksForAll(in: library)
+            if library.hasCompletedInitialLoad { refreshFromLibrary() }
         }
         // The day's picks are rolled (or found again) once the library has
         // finished loading.
-        .onChange(of: library.hasCompletedInitialLoad) { _, _ in recomputeMetrics() }
+        .onChange(of: library.hasCompletedInitialLoad) { _, _ in refreshFromLibrary() }
         .onChange(of: playlistStore.revision) { _, _ in
             playlistTracks = playlistStore.resolvedTracksForAll(in: library)
         }
