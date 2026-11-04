@@ -70,6 +70,10 @@ if [[ $SKIP_BUILD -eq 0 ]]; then
     # pre-Tahoe controls (e.g. a flat round slider knob instead of the glass
     # pill).
     SDK_VERSION="$(xcrun --sdk macosx --show-sdk-version)"
+    # Link a TagLib built for the deployment target, not Homebrew's (built
+    # for the Mac it's on). See build-taglib.sh.
+    "$SCRIPT_DIR/build-taglib.sh" "$DEPLOYMENT_TARGET"
+    export PKG_CONFIG_PATH="$PROJECT_ROOT/.deps/taglib/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
     swift build -c release \
         -Xlinker -platform_version -Xlinker macos \
         -Xlinker "$DEPLOYMENT_TARGET" -Xlinker "$SDK_VERSION"
@@ -122,12 +126,17 @@ printf 'APPL????' > "$CONTENTS_DIR/PkgInfo"
 echo
 echo "▶ Embedding dynamic library dependencies..."
 
+# The load paths `otool -L` lists, whole: paths may contain spaces (this
+# project lives under "computer stuff"), so they're cut at the version
+# note rather than at the first space.
+load_paths() {
+    otool -L "$1" | tail -n +2 | sed -E 's/^[[:space:]]+//; s/ \(compatibility version.*$//'
+}
+
 # Returns non-system dylib paths the binary depends on.
 list_external_dylibs() {
     local target="$1"
-    otool -L "$target" \
-        | tail -n +2 \
-        | awk '{print $1}' \
+    load_paths "$target" \
         | grep -v "^/usr/lib/" \
         | grep -v "^/System/" \
         | grep -v "^@" \
@@ -173,7 +182,7 @@ done < <(list_external_dylibs "$MACOS_DIR/flactastic")
 chmod u+w "$MACOS_DIR/flactastic"
 while IFS= read -r name; do
     [[ -z "$name" ]] && continue
-    original="$(otool -L "$MACOS_DIR/flactastic" | awk '{print $1}' | grep "/$name$" || true)"
+    original="$(load_paths "$MACOS_DIR/flactastic" | grep "/$name$" || true)"
     if [[ -n "$original" ]]; then
         install_name_tool -change "$original" "@rpath/$name" "$MACOS_DIR/flactastic"
     fi
@@ -188,7 +197,7 @@ for dylib in "$FRAMEWORKS_DIR"/*.dylib; do
     chmod u+w "$dylib"
     while IFS= read -r name; do
         [[ -z "$name" ]] && continue
-        original="$(otool -L "$dylib" | awk '{print $1}' | grep "/$name$" | grep -v "^@rpath" || true)"
+        original="$(load_paths "$dylib" | grep "/$name$" | grep -v "^@rpath" || true)"
         if [[ -n "$original" ]]; then
             install_name_tool -change "$original" "@rpath/$name" "$dylib"
         fi
@@ -207,10 +216,9 @@ trap - EXIT
 # on first use: if its minos exceeds the OS actually running, the app can
 # fail before a single line of our code executes, surfacing to the user as
 # an instant, silent crash on launch. `vtool` rewrites that declared
-# minimum after the fact — safe here because TagLib's actual API surface
-# (file I/O, no OS-version-gated frameworks) doesn't change across these
-# macOS versions, so the dylib still runs correctly; it was just
-# over-declaring what it required.
+# minimum after the fact. TagLib is now built for the deployment target
+# (build-taglib.sh), so this is a no-op for it; it stays as a safety net
+# for any other Homebrew dylib, whose code it can't actually retarget.
 echo
 echo "▶ Pinning embedded dylibs to deployment target $DEPLOYMENT_TARGET..."
 for dylib in "$FRAMEWORKS_DIR"/*.dylib; do

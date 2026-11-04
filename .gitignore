@@ -9,3 +9,4 @@ DerivedData/
 /build/
 /dist/
 design_handoffs
+/.deps/
