@@ -273,16 +273,25 @@ final class LibraryStore {
         var updated = tracks
         var changed = false
         for i in updated.indices {
-            guard let art = updated[i].artwork else { continue }
-            let key = ArtworkImageCache.contentID(for: art)
-            if let canon = canonicalByContent[key] {
-                updated[i].artwork = canon
-                changed = true
-            } else {
-                canonicalByContent[key] = art
-            }
+            let before = updated[i].artwork
+            Self.share(&updated[i].artwork, in: &canonicalByContent)
+            if let before, let after = updated[i].artwork, !Self.sameBuffer(before, after) { changed = true }
         }
         if changed { tracks = updated }
+    }
+
+    /// Points `artwork` at the first identical cover already in `canonical`
+    /// (by `contentID`), or records it there.
+    private static func share(_ artwork: inout Data?, in canonical: inout [String: Data]) {
+        guard let art = artwork else { return }
+        let key = ArtworkImageCache.contentID(for: art)
+        if let canon = canonical[key] { artwork = canon } else { canonical[key] = art }
+    }
+
+    /// Whether two covers are one allocation: comparing those is instant,
+    /// where comparing copies reads every byte.
+    private static func sameBuffer(_ a: Data, _ b: Data) -> Bool {
+        a.count == b.count && a.withUnsafeBytes { pa in b.withUnsafeBytes { pb in pa.baseAddress == pb.baseAddress } }
     }
 
     /// Snapshot the fully-parsed library and rewrite the metadata sidecar,
@@ -578,12 +587,17 @@ final class LibraryStore {
                 // UI populating progressively at a fraction of the cost.
                 var pending: [(Int, Track)] = []
                 var lastFlush = ContinuousClock.now
+                // Identical covers share one buffer from the start. Sharing
+                // them later swapped every track's storage, and SwiftUI then
+                // compared old and new albums byte by byte (hundreds of ms).
+                var canonicalArtwork: [String: Data] = [:]
                 // Explicit @MainActor: local funcs don't inherit the enclosing
                 // closure's actor isolation. Called only from this main-actor task.
                 @MainActor func flush() {
                     guard !pending.isEmpty else { return }
                     var current = self.tracks
-                    for (i, updated) in pending {
+                    for (i, var updated) in pending {
+                        Self.share(&updated.artwork, in: &canonicalArtwork)
                         if i < current.count, current[i].id == updated.id {
                             current[i] = updated
                         }
