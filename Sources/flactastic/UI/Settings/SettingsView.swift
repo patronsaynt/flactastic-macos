@@ -34,7 +34,7 @@ struct SettingsView: View {
             .padding(.trailing, 18)
             .padding(.top, 18)
 
-            ScrollView(.vertical, showsIndicators: true) {
+            ScrollView(.vertical, showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 30) {
                     Text(selectedTab.rawValue)
                         .font(.system(size: 40, weight: .heavy))
@@ -43,17 +43,15 @@ struct SettingsView: View {
                     Group {
                         switch selectedTab {
                         case .general:
-                            GeneralSettingsPane(openFolder: openFolder)
+                            GeneralSettingsPane()
+                        case .library:
+                            LibrarySettingsPane(openFolder: openFolder)
                         case .audio:
                             AudioSettingsPane()
                         case .connections:
                             ConnectionsSettingsPane()
                         case .devices:
                             DevicesSettingsPane()
-                        case .appearance:
-                            AppearanceSettingsPane()
-                        case .visualizer:
-                            VisualizerSettingsPane()
                         case .debug:
                             DebugSettingsPane()
                         }
@@ -105,11 +103,10 @@ struct SettingsView: View {
 
 private enum SettingsTab: String, CaseIterable, Identifiable {
     case general     = "General"
+    case library     = "Library"
     case audio       = "Audio"
     case connections = "Connections"
     case devices     = "Devices"
-    case appearance  = "Appearance"
-    case visualizer  = "Visualizer"
     case debug       = "Debug"
     var id: String { rawValue }
 }
@@ -196,10 +193,75 @@ private struct ToggleRow: View {
 
 // MARK: - General pane
 
+/// How the app looks and sits on the Mac: its theme, the menu bar player,
+/// which tabs show, and the developer switch.
 private struct GeneralSettingsPane: View {
-    @Environment(LibraryStore.self) private var library
     @Environment(Settings.self) private var settings
     @Environment(DebugState.self) private var debugState
+
+    var body: some View {
+        @Bindable var settings = settings
+
+        VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
+
+            // Appearance ───────────────────────────────────────────────────
+            SettingsGroup(title: "Appearance") {
+                PickerRow(
+                    label: "Theme",
+                    subtitle: "System follows your Mac's light or dark appearance."
+                ) {
+                    FLPillToggle(selection: $settings.theme, segments: AppTheme.allCases.map { .text($0, $0.label) })
+                }
+            }
+
+            // Menu Bar ─────────────────────────────────────────────────────
+            SettingsGroup(title: "Menu Bar") {
+                ToggleRow(
+                    label: "Menu Bar Mini-Player",
+                    subtitle: "Show a compact player in the system menu bar.",
+                    isOn: $settings.showMenuBarPlayer
+                )
+                if settings.showMenuBarPlayer {
+                    GroupDivider()
+                    ToggleRow(
+                        label: "Only While Playing",
+                        subtitle: "Hide the menu bar icon when nothing is playing.",
+                        isOn: $settings.menuBarPlayerOnlyWhilePlaying
+                    )
+                }
+            }
+
+            // Navigation ───────────────────────────────────────────────────
+            SettingsGroup(title: "Navigation") {
+                ToggleRow(
+                    label: "Show Download Tab",
+                    subtitle: "Show the Download tab in the top navigation bar.",
+                    isOn: $settings.showDownloadTab
+                )
+            }
+
+            // Developer ────────────────────────────────────────────────────
+            SettingsGroup(title: "Developer") {
+                ToggleRow(
+                    label: "Enable Debugging",
+                    subtitle: "Shows the Debug tab, with switches for testing FLACtastic.",
+                    isOn: Binding(
+                        get: { debugState.debuggingEnabled },
+                        set: { debugState.debuggingEnabled = $0 }
+                    )
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Library pane
+
+/// The music itself: where it lives, what the Collection lists, what's
+/// fetched for it (artist images, lyrics), and what counts as a play.
+private struct LibrarySettingsPane: View {
+    @Environment(LibraryStore.self) private var library
+    @Environment(Settings.self) private var settings
     let openFolder: () -> Void
 
     var body: some View {
@@ -207,8 +269,8 @@ private struct GeneralSettingsPane: View {
 
         VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
 
-            // Library ──────────────────────────────────────────────────────
-            SettingsGroup(title: "Library") {
+            // Music Folder ─────────────────────────────────────────────────
+            SettingsGroup(title: "Music Folder") {
                 HStack(spacing: Theme.Spacing.md) {
                     if let rootURL = library.rootURL {
                         Image(systemName: "folder.fill")
@@ -233,35 +295,45 @@ private struct GeneralSettingsPane: View {
                 .padding(.vertical, Theme.Spacing.md)
             }
 
-            // Navigation ───────────────────────────────────────────────────
-            SettingsGroup(title: "Navigation") {
+            // Collection ───────────────────────────────────────────────────
+            // Grid/list layout is chosen in-page on the Collection and
+            // Playlists tabs, so it doesn't appear here.
+            SettingsGroup(title: "Collection") {
                 ToggleRow(
-                    label: "Show Download Tab",
-                    subtitle: "Show the Download tab in the top navigation bar.",
-                    isOn: $settings.showDownloadTab
+                    label: "Show All Artists",
+                    subtitle: "Also list artists who only appear as features on other artists' releases.",
+                    isOn: $settings.showAllArtists
+                )
+                GroupDivider()
+                ToggleRow(
+                    label: "Hide Singles in Albums",
+                    subtitle: "Leave releases with fewer than three tracks out of the Albums view. They still show on artist pages and in search.",
+                    isOn: $settings.hideSinglesInAlbums
                 )
             }
 
-            // Playback ─────────────────────────────────────────────────────
-            SettingsGroup(title: "Playback") {
-                ToggleRow(
-                    label: "Menu Bar Mini-Player",
-                    subtitle: "Show a compact player in the system menu bar.",
-                    isOn: $settings.showMenuBarPlayer
-                )
-                if settings.showMenuBarPlayer {
-                    GroupDivider()
-                    ToggleRow(
-                        label: "Only While Playing",
-                        subtitle: "Hide the menu bar icon when nothing is playing.",
-                        isOn: $settings.menuBarPlayerOnlyWhilePlaying
-                    )
-                }
-                GroupDivider()
+            // Artist Images ────────────────────────────────────────────────
+            SettingsGroup(title: "Artist Images") {
                 ToggleRow(
                     label: "Auto-Fetch Artist Images",
                     subtitle: "Automatically download artist artwork from Deezer when missing.",
                     isOn: $settings.autoFetchArtistImages
+                )
+            }
+
+            // Lyrics ───────────────────────────────────────────────────────
+            SettingsGroup(title: "Lyrics") {
+                ToggleRow(
+                    label: "Fetch Lyrics from lrclib.net",
+                    subtitle: "Powers the Lyrics visualizer and Home's daily lyric. Lookups are cached on disk; disable to stay fully offline.",
+                    isOn: $settings.lyricsLookupEnabled
+                )
+                GroupDivider()
+                ToggleRow(
+                    label: "Save Lyrics to Audio Files",
+                    subtitle: "Embed fetched lyrics into the LYRICS tag on each file (Vorbis, ID3v2 USLT, MP4). Other players will pick them up automatically.",
+                    isOn: $settings.saveLyricsToFiles,
+                    isEnabled: settings.lyricsLookupEnabled
                 )
             }
 
@@ -270,18 +342,6 @@ private struct GeneralSettingsPane: View {
                 CountedPlayThresholdRow()
                     .padding(.horizontal, Theme.Spacing.lg)
                     .padding(.vertical, Theme.Spacing.md)
-            }
-
-            // Developer ────────────────────────────────────────────────────
-            SettingsGroup(title: "Developer") {
-                ToggleRow(
-                    label: "Enable Debugging",
-                    subtitle: "Shows the Debug tab, with switches for testing FLACtastic.",
-                    isOn: Binding(
-                        get: { debugState.debuggingEnabled },
-                        set: { debugState.debuggingEnabled = $0 }
-                    )
-                )
             }
         }
     }
@@ -588,201 +648,6 @@ private struct ConnectionsSettingsPane: View {
     }
 }
 
-// MARK: - Appearance pane
-
-private struct AppearanceSettingsPane: View {
-    @Environment(Settings.self) private var settings
-    @State private var showsGenreGroups = false
-    @State private var showsHomeSections = false
-
-    private let scaleRange: ClosedRange<Double> = 0.9...1.35
-
-    var body: some View {
-        @Bindable var settings = settings
-
-        VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
-
-            // Theme ────────────────────────────────────────────────────────
-            SettingsGroup(title: "Theme") {
-                ToggleRow(
-                    label: "Light Mode",
-                    subtitle: "Switch to a light background throughout the app.",
-                    isOn: $settings.useLightMode
-                )
-            }
-
-            // Home ─────────────────────────────────────────────────────────
-            SettingsGroup(title: "Home") {
-                ToggleRow(
-                    label: "Arrange Automatically",
-                    subtitle: "Show Home's sections in their designed order. Turn off to choose which appear, and where.",
-                    isOn: $settings.homeArrangesAutomatically
-                )
-                GroupDivider()
-                PickerRow(
-                    label: "Home Sections",
-                    subtitle: "Reorder or hide Recommended for today, Recently played, Mixes and the rest."
-                ) {
-                    Button("Customize…") { showsHomeSections = true }
-                        .buttonStyle(PillButtonStyle())
-                }
-                .disabled(settings.homeArrangesAutomatically)
-                .opacity(settings.homeArrangesAutomatically ? 0.4 : 1)
-            }
-            .sheet(isPresented: $showsHomeSections) { HomeSectionsSheet() }
-
-            // Library View ─────────────────────────────────────────────────
-            // Grid/list layout is chosen in-page on the Collection and
-            // Playlists tabs now, so it no longer appears here.
-            SettingsGroup(title: "Library View") {
-                ToggleRow(
-                    label: "Show All Artists",
-                    subtitle: "Also list artists who only appear as features on other artists' releases.",
-                    isOn: $settings.showAllArtists
-                )
-                GroupDivider()
-                ToggleRow(
-                    label: "Hide Singles in Albums",
-                    subtitle: "Leave releases with fewer than three tracks out of the Albums view. They still show on artist pages and in search.",
-                    isOn: $settings.hideSinglesInAlbums
-                )
-                GroupDivider()
-                ToggleRow(
-                    label: "Clear Case Look",
-                    subtitle: "Draw the Albums rack's CDs in clear plastic cases that catch the light as you move over them.",
-                    isOn: $settings.clearCaseLook
-                )
-            }
-
-            // Album Spines ─────────────────────────────────────────────────
-            // The rack's spines. Everything after Blur Spine Art shapes the
-            // designed inserts, so it rests while another style is on.
-            SettingsGroup(title: "Album Spines") {
-                PickerRow(
-                    label: "Spine Style",
-                    subtitle: "Designed gives every album its own printed insert, in a face picked by genre. Art + Title and Art Only show the cover's art down the spine."
-                ) {
-                    Picker("", selection: $settings.spineStyle) {
-                        ForEach(SpineStyle.allCases) { Text($0.label).tag($0) }
-                    }
-                }
-                GroupDivider()
-                ToggleRow(
-                    label: "Use Spine Scans",
-                    subtitle: "When an album's folder has a spine image (spine.jpg or similar), show that real printed spine instead.",
-                    isOn: $settings.useSpineScans
-                )
-                GroupDivider()
-                ToggleRow(
-                    label: "Blur Spine Art",
-                    subtitle: "Soften the album art on each spine. Off shows the art as printed.",
-                    isOn: $settings.blurSpineArt
-                )
-                designedRows
-            }
-            .sheet(isPresented: $showsGenreGroups) { GenreGroupsSheet() }
-
-            // Artwork ──────────────────────────────────────────────────────
-            SettingsGroup(title: "Artwork") {
-                ToggleRow(label: "Rounded Album Art", isOn: $settings.roundedArtwork)
-                GroupDivider()
-                ToggleRow(label: "Drop Shadow", isOn: $settings.showArtworkShadow)
-            }
-
-            // Animations ───────────────────────────────────────────────────
-            SettingsGroup(title: "Animations") {
-                ToggleRow(label: "Fade Animations", isOn: $settings.fadeAnimationsEnabled)
-                GroupDivider()
-                HStack {
-                    Text("Fade Direction")
-                        .font(Theme.Font.body)
-                        .foregroundStyle(settings.fadeAnimationsEnabled ? Theme.textPrimary : Theme.textTertiary)
-                    Spacer()
-                    Picker("", selection: $settings.fadeAnimationDirection) {
-                        ForEach(FadeAnimationDirection.allCases) { dir in
-                            Text(dir.label).tag(dir)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .disabled(!settings.fadeAnimationsEnabled)
-                }
-                .padding(.horizontal, Theme.Spacing.lg)
-                .padding(.vertical, Theme.Spacing.md)
-                .opacity(settings.fadeAnimationsEnabled ? 1 : 0.4)
-            }
-
-            // Interface ────────────────────────────────────────────────────
-            SettingsGroup(title: "Interface") {
-                VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                    HStack {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("UI Scale")
-                                .font(Theme.Font.body)
-                                .foregroundStyle(Theme.textPrimary)
-                            Text("Scales text and controls throughout the app.")
-                                .font(Theme.Font.caption)
-                                .foregroundStyle(Theme.textTertiary)
-                        }
-                        Spacer()
-                        Text("\(Int((settings.uiScale * 100).rounded()))%")
-                            .font(Theme.Font.caption)
-                            .foregroundStyle(Theme.textTertiary)
-                            .monospacedDigit()
-                    }
-                    HStack(spacing: Theme.Spacing.sm) {
-                        Image(systemName: "textformat.size.smaller")
-                            .foregroundStyle(Theme.textTertiary)
-                        Slider(value: $settings.uiScale, in: scaleRange, step: 0.05)
-                            .tint(Theme.accent)
-                        Image(systemName: "textformat.size.larger")
-                            .foregroundStyle(Theme.textTertiary)
-                        Button {
-                            settings.uiScale = 1.0
-                        } label: {
-                            Text("Reset")
-                                .font(Theme.Font.caption)
-                        }
-                        .buttonStyle(PillButtonStyle())
-                        .disabled(abs(settings.uiScale - 1.0) < 0.001)
-                    }
-                }
-                .padding(.horizontal, Theme.Spacing.lg)
-                .padding(.vertical, Theme.Spacing.md)
-            }
-        }
-    }
-}
-
-// MARK: - Visualizer pane
-
-private struct VisualizerSettingsPane: View {
-    @Environment(Settings.self) private var settings
-
-    var body: some View {
-        @Bindable var settings = settings
-
-        VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
-
-            // Lyrics ───────────────────────────────────────────────────────
-            SettingsGroup(title: "Lyrics") {
-                ToggleRow(
-                    label: "Fetch Lyrics from lrclib.net",
-                    subtitle: "Enables the Lyrics visualizer mode. Lookups are cached on disk; disable to stay fully offline.",
-                    isOn: $settings.lyricsLookupEnabled
-                )
-                GroupDivider()
-                ToggleRow(
-                    label: "Save Lyrics to Audio Files",
-                    subtitle: "Embed fetched lyrics into the LYRICS tag on each file (Vorbis, ID3v2 USLT, MP4). Other players will pick them up automatically.",
-                    isOn: $settings.saveLyricsToFiles,
-                    isEnabled: settings.lyricsLookupEnabled
-                )
-            }
-        }
-    }
-}
-
 // MARK: - Debug pane
 
 /// Switches for testing the app. Only shown while Settings → General →
@@ -917,60 +782,5 @@ private struct DebugSettingsPane: View {
 
     private static func size(_ bytes: Int) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
-    }
-}
-
-private extension AppearanceSettingsPane {
-    /// Rows that shape designed spines, resting (dimmed, inactive) while
-    /// another spine style is on.
-    @ViewBuilder
-    var designedRows: some View {
-        @Bindable var settings = settings
-        let designed = settings.spineStyle == .designed
-        Group {
-            GroupDivider()
-            PickerRow(
-                label: "Spine Variety",
-                subtitle: "Uniform gives every album the same tidy insert. Wild widens the ranges, sets inserts a little askew and borrows faces from neighbouring genres."
-            ) {
-                Picker("", selection: $settings.spineVariety) {
-                    ForEach(SpineVariety.allCases) { Text($0.label).tag($0) }
-                }
-            }
-            GroupDivider()
-            PickerRow(
-                label: "Shelf Theme",
-                subtitle: "Artist Series gives each artist one design, in each album's cover colour. Label House Style gives each record label one design."
-            ) {
-                Picker("", selection: $settings.shelfTheme) {
-                    ForEach(ShelfTheme.allCases) { Text($0.label).tag($0) }
-                }
-            }
-            GroupDivider()
-            PickerRow(
-                label: "Label Mark",
-                subtitle: "The record label at the top or foot of the spine: its logo if you've added one, its initials otherwise."
-            ) {
-                Picker("", selection: $settings.spineLabelMark) {
-                    ForEach(LabelMarkStyle.allCases) { Text($0.label).tag($0) }
-                }
-            }
-            GroupDivider()
-            ToggleRow(
-                label: "Age Spines With Release Year",
-                subtitle: "Older albums' inserts yellow and fade, and their cases pick up fine scuffs.",
-                isOn: $settings.ageSpinesWithYear
-            )
-            GroupDivider()
-            PickerRow(
-                label: "Genre Groups",
-                subtitle: "Which genres share a title face, and which faces each group may use."
-            ) {
-                Button("Edit Groups…") { showsGenreGroups = true }
-                    .buttonStyle(PillButtonStyle())
-            }
-        }
-        .disabled(!designed)
-        .opacity(designed ? 1 : 0.4)
     }
 }

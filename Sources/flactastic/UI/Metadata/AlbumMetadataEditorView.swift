@@ -385,7 +385,7 @@ struct AlbumMetadataEditorView: View {
                 .padding(.horizontal, 16)
                 .padding(.bottom, 16)
             }
-            .scrollIndicators(.automatic)
+            .scrollIndicators(.hidden)
         }
         .padding(.top, 12)
     }

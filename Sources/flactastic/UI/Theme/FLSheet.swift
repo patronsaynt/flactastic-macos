@@ -60,7 +60,7 @@ struct FLSheet<Content: View, Footer: View>: View {
                 ScrollView {
                     content()
                 }
-                .scrollIndicators(.automatic)
+                .scrollIndicators(.hidden)
             } else {
                 ViewThatFits(in: .vertical) {
                     content()
@@ -68,7 +68,7 @@ struct FLSheet<Content: View, Footer: View>: View {
                     ScrollView {
                         content()
                     }
-                    .scrollIndicators(.automatic)
+                    .scrollIndicators(.hidden)
                 }
             }
             Rectangle()

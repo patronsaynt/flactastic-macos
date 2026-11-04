@@ -82,6 +82,7 @@ struct AlbumDetailView: View {
             .opacity(hasEntered ? 1 : 0)
             .background(Theme.background)
             .onAppear {
+                Perf.event("Album page open", album.name)
                 knownTrackIDs = Set(album.tracks.map(\.id))
                 withAnimation(calmMotion
                               ? .easeOut(duration: 0.3)

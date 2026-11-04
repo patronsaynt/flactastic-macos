@@ -186,7 +186,7 @@ struct PlaylistsTabView: View {
                 Spacer(minLength: 0)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 2) {
+                    LazyVStack(spacing: UIStyle.shared.playlistRowSpacing) {
                         ForEach(playlists) { playlist in
                             let cover = cover(for: playlist)
                             PlaylistIndexRow(
@@ -205,7 +205,8 @@ struct PlaylistsTabView: View {
                     }
                     .padding(.bottom, 16)
                 }
-                .scrollIndicators(.automatic)
+                .scrollIndicators(.hidden)
+                .nerdPart(.playlistsList)
                 // Rows fade out as they reach the mini player instead of
                 // being cut off at its edge.
                 .mask {
@@ -533,7 +534,7 @@ private struct PlaylistStage: View {
                 .padding(.horizontal, 18)
                 .padding(.bottom, 100)
             }
-            .scrollIndicators(.automatic)
+            .scrollIndicators(.hidden)
         }
     }
 

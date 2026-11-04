@@ -6,6 +6,7 @@ import Observation
 final class NavigationRouter {
     var selectedTab: AppTab = .home {
         didSet {
+            if selectedTab != oldValue { Perf.event("Tab switch", "\(selectedTab)") }
             // A manual tab switch abandons any "return to where I came from"
             // context; programmatic jumps set `isJumping` to keep it.
             if !isJumping, selectedTab != oldValue { returnStack.removeAll() }
@@ -16,6 +17,11 @@ final class NavigationRouter {
     /// on screen. Launch-only motion (Home's thrown case) waits for it, so it
     /// plays where it can be seen rather than behind the cover.
     var isLaunchRevealed = false
+    /// How far up from the window's bottom edge the floating player bar
+    /// reaches (its measured height plus its margin), or 0 while it's hidden
+    /// or has nothing to show. Transient notices sit above this: the bar is
+    /// drawn over every page, so anything below this line is behind it.
+    var playerBarClearance: CGFloat = 0
     /// Navigation stack for the Playlists tab, driven so the Home page can deep-
     /// link straight to a playlist's detail view.
     var playlistsPath: [UUID] = []

@@ -59,3 +59,30 @@ struct Wordmark: View {
         }
     }
 }
+
+/// The FLACtastic mark on its own (the menu bar icon's glyph), drawn in one
+/// ink. Nothing if the resource is missing.
+struct BrandMark: View {
+    var height: CGFloat = 40
+    var color: Color = Theme.textPrimary
+
+    static let image: NSImage? = {
+        guard let url = Wordmark.resourceBundle?.url(forResource: "MenuBarIcon", withExtension: "png"),
+              let image = NSImage(contentsOf: url)
+        else { return nil }
+        image.isTemplate = true
+        return image
+    }()
+
+    var body: some View {
+        if let image = Self.image {
+            Image(nsImage: image)
+                .resizable()
+                .renderingMode(.template)
+                .scaledToFit()
+                .frame(height: height)
+                .foregroundStyle(color)
+                .accessibilityLabel("FLACtastic")
+        }
+    }
+}

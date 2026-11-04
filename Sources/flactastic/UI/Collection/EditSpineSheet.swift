@@ -251,7 +251,7 @@ struct EditSpineSheet: View {
                         .padding(.bottom, 20)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .scrollIndicators(.automatic)
+                    .scrollIndicators(.hidden)
                 }
             }
             // A new panel for each part, so each opens scrolled to its top.

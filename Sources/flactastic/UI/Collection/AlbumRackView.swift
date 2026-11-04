@@ -69,7 +69,11 @@ struct AlbumRackView: View {
 
     private var isOut: Bool { stage == .open }
 
-    private var metrics: RackMetrics { RackMetrics(available: available) }
+    private var metrics: RackMetrics {
+        var metrics = RackMetrics(available: available)
+        metrics.liftsOnHover = UIStyle.shared.rackLiftOnHover
+        return metrics
+    }
 
     private var layoutKey: RackLayout.Key {
         RackLayout.Key(revision: revision, sort: sort, metrics: metrics)
@@ -87,8 +91,10 @@ struct AlbumRackView: View {
                 rack(metrics, layout: layout)
                 readout(metrics, layout: layout)
             }
-                .blur(radius: shelfReceded && !reduceMotion ? 10 : 0)
-                .opacity(shelfReceded ? 0.16 : 1)
+                // No blur: a blur over the whole shelf (every visible spine)
+                // re-rendered offscreen on each frame the case moved over it.
+                // Fading further and shrinking a touch reads as just as far back.
+                .opacity(shelfReceded ? 0.12 : 1)
                 .scaleEffect(shelfReceded ? 0.96 : 1, anchor: .center)
                 // Falls back as the case comes out; comes forward again as
                 // the case reaches its slot, so it slides into a sharp shelf.
@@ -104,7 +110,7 @@ struct AlbumRackView: View {
             EditSpineSheet(album: album, credit: credit(album), artists: artists(album))
         }
         .onChange(of: layoutKey, initial: true) {
-            cachedLayout = RackLayout(albums: albums, revision: revision, sort: sort, metrics: metrics, resolver: library.makeArtistResolver())
+            cachedLayout = Perf.measure("Rack layout") { RackLayout(albums: albums, revision: revision, sort: sort, metrics: metrics, resolver: library.makeArtistResolver()) }
             scrollX = clampedScroll(scrollX, layout: cachedLayout)
         }
     }
@@ -342,6 +348,7 @@ struct AlbumRackView: View {
     // MARK: - Taking a case out
 
     private func takeOut(_ album: Album, at spine: CGRect) {
+        Perf.event("Rack take out", album.name)
         sequence?.cancel()
         takenLift = hoveredID == album.id ? metrics.hoverLift : 0
         hoveredID = nil
@@ -376,6 +383,7 @@ struct AlbumRackView: View {
     }
 
     private func putBack() {
+        Perf.event("Rack put back")
         sequence?.cancel()
         isClosing = true
         shelfReceded = false
@@ -446,7 +454,7 @@ struct AlbumRackView: View {
         case .open:
             caseScale = 1
             caseCentre = CGPoint(x: front.midX, y: front.midY)
-            caseMotion = reduceMotion ? .easeOut(duration: 0.25) : .timingCurve(0.16, 1, 0.3, 1, duration: 0.9)
+            caseMotion = reduceMotion ? .easeOut(duration: 0.25) : openMotion
         }
 
         return ZStack(alignment: .topLeading) {
@@ -458,13 +466,14 @@ struct AlbumRackView: View {
                 )
                 .opacity(isOut ? 1 : 0)
                 .animation(isOut
-                    ? .timingCurve(0.16, 1, 0.3, 1, duration: 0.8).delay(reduceMotion ? 0 : 0.5)
+                    ? discMotion.delay(reduceMotion ? 0 : 0.5 * openStretch)
                     : .timingCurve(0.4, 0, 0.6, 1, duration: 0.35), value: isOut)
 
-            RackBox(album: album, credit: credit(album), design: design(album, credit: credit(album)), size: size, depth: depth, shelfScale: restScale, clearCase: settings.clearCaseLook, blurArt: settings.blurSpineArt, style: settings.spineStyle, scanFolder: scanFolder(album), angle: isOut ? RackBox.restingAngle : 90)
+            RackBox(album: album, credit: credit(album), design: design(album, credit: credit(album)), size: size, depth: depth, shelfScale: restScale, clearCase: settings.clearCaseLook, blurArt: settings.blurSpineArt, style: settings.spineStyle, scanFolder: scanFolder(album), castsShadow: false, angle: isOut ? RackBox.restingAngle : 90)
                 .scaleEffect(caseScale)
                 // Already shadowed as the hovered spine was, so nothing pops on the
                 // click; the shadow goes only as it settles back into its slot.
+                // The box's only shadow (it draws none of its own here).
                 .shadow(color: .black.opacity(stage == .shelf && (isClosing || takenLift == 0) ? 0 : 0.45), radius: 14, y: 10)
                 .position(caseCentre)
                 .animation(caseMotion, value: stage)
@@ -492,6 +501,21 @@ struct AlbumRackView: View {
         }
         .frame(width: available.width, height: available.height, alignment: .topLeading)
     }
+
+    /// The case turning to its front, and its disc sliding out: the app's
+    /// ease-out over 0.9s and 0.8s by default, or UI for nerds' curve and length.
+    private var openMotion: Animation {
+        let style = UIStyle.shared
+        return .timingCurve(style.rackOpenCurve.unitCurve(standard: MotionCurve.flactastic), duration: style.rackOpenDuration)
+    }
+
+    private var discMotion: Animation {
+        let style = UIStyle.shared
+        return .timingCurve(style.rackOpenCurve.unitCurve(standard: MotionCurve.flactastic), duration: style.rackOpenDuration * 0.8 / 0.9)
+    }
+
+    /// How much longer (or shorter) the open is than designed, for the delays around it.
+    private var openStretch: Double { UIStyle.shared.rackOpenDuration / 0.9 }
 
     private func credit(_ album: Album) -> String { RackLayout.credit(of: album) }
 
@@ -598,7 +622,9 @@ struct RackMetrics: Hashable {
     var pitch: CGFloat { spineWidth + gap }
     /// Room above the spines for the group tabs and the hover lift.
     var top: CGFloat { 64 }
-    var hoverLift: CGFloat { 18 }
+    var hoverLift: CGFloat { liftsOnHover ? 18 : 0 }
+    /// From UI for nerds; part of the metrics so a change rebuilds the rack.
+    var liftsOnHover = true
     var caseSize: CGFloat { spineHeight }
 }
 
@@ -1912,7 +1938,7 @@ struct RackBox: View, Animatable {
             if let spine = face(width: depth, turnedBy: -90, out: size / 2) {
                 RackSpine(album: album, credit: credit, width: depth, height: size, isHovered: false, design: design, clearCase: clearCase, blurArt: blurArt, unit: 1 / max(shelfScale, 0.01), style: style, scanFolder: scanFolder)
                     .equatable()
-                    .overlay { if clearCase { turnSheen(width: depth, reversed: true) } }
+                    .overlay { if clearCase, isSheenShowing { turnSheen(width: depth, reversed: true) } }
                     .overlay(Color.black.opacity(spine.shade))
                     .projectionEffect(spine.transform)
             }
@@ -1958,6 +1984,10 @@ struct RackBox: View, Animatable {
         return (ProjectionTransform(t), (1 - cos(total)) * 0.45)
     }
 
+    /// The sweep shows only mid-turn. At rest it's gone from the tree: its
+    /// blend mode costs an offscreen pass every frame even at zero strength.
+    private var isSheenShowing: Bool { sin(.pi * Double(turnProgress)) > 0.02 }
+
     /// How far through its turn the case is: 0 edge-on, 1 at rest front-on.
     private var turnProgress: CGFloat {
         CGFloat(min(1, max(0, (90 - angle) / (90 - Self.restingAngle))))
@@ -2002,6 +2032,8 @@ struct RackBox: View, Animatable {
                 .frame(width: size, height: size)
                 .clipped()
                 .overlay(Rectangle().strokeBorder(.white.opacity(0.14), lineWidth: 1))
+                // One flat image: the projection then only moves a texture.
+                .drawingGroup()
             }
         }
         .shadow(color: .black.opacity(castsShadow ? 0.5 : 0), radius: castsShadow ? 22 : 0, y: castsShadow ? 20 : 0)
@@ -2033,12 +2065,15 @@ struct RackBox: View, Animatable {
             )
             .frame(width: hinge, height: size)
             lidGloss
-            turnSheen(width: size)
         }
         .frame(width: size, height: size)
         .clipped()
         .overlay(Rectangle().strokeBorder(.white.opacity(0.22), lineWidth: 1))
         .overlay(alignment: .top) { Rectangle().fill(.white.opacity(0.35)).frame(height: 1) }
+        // One flat image, so the projection only moves a texture; the
+        // sweep (which changes every frame of the turn) sits on top of it.
+        .drawingGroup()
+        .overlay { if isSheenShowing { turnSheen(width: size) } }
     }
 
     private var lidGloss: some View {
@@ -2064,12 +2099,19 @@ struct RackDisc: View {
     let colors: [Color]
     let diameter: CGFloat
     let isSpinning: Bool
+    /// Off while something moves the disc every frame under a projection
+    /// (Home's thrown case); its shadow is otherwise drawn once with it.
+    var castsShadow = true
 
     @State private var angle: Double = 0
 
     var body: some View {
         let print = (diameter * 0.64).rounded()
+        let shadowRoom = castsShadow ? 48.0 : 0
         ZStack {
+            // The silver and its shadow, drawn once into one image (with room
+            // for the shadow), so sliding or turning the disc moves a texture
+            // instead of re-blurring the shadow each frame.
             Circle()
                 .fill(AngularGradient(
                     colors: [
@@ -2081,12 +2123,19 @@ struct RackDisc: View {
                     center: .center,
                     angle: .degrees(30)
                 ))
-            // The print, as a ring around the hub.
+                .frame(width: diameter, height: diameter)
+                .shadow(color: .black.opacity(castsShadow ? 0.5 : 0), radius: castsShadow ? 24 : 0, y: castsShadow ? 16 : 0)
+                .padding(shadowRoom)
+                .drawingGroup()
+                .padding(-shadowRoom)
+            // The print, as a ring around the hub: flattened, then spun as
+            // an image while its album plays.
             RackDiscPrint(colors: colors, seed: seed, size: print)
                 .mask {
                     Circle().strokeBorder(lineWidth: (print - diameter * 0.2) / 2)
                 }
                 .overlay(Circle().strokeBorder(.black.opacity(0.2), lineWidth: 0.5).frame(width: print, height: print))
+                .drawingGroup()
                 .rotationEffect(.degrees(angle))
             // The hub: a clear ring and the centre hole.
             Circle()
@@ -2098,7 +2147,6 @@ struct RackDisc: View {
             Circle().strokeBorder(.white.opacity(0.4), lineWidth: 1)
         }
         .frame(width: diameter, height: diameter)
-        .shadow(color: .black.opacity(0.5), radius: 24, y: 16)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .onChange(of: isSpinning, initial: true) { _, spinning in

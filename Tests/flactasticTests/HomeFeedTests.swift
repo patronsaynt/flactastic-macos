@@ -100,6 +100,24 @@ struct HomeFeedTests {
         #expect([6, 11, 12, 16, 17, 21, 22, 2].map(HomeFeed.band) == [0, 0, 1, 1, 2, 2, 3, 3])
     }
 
+    @Test func djMixTracksStayOutOfMixes() {
+        func track(_ title: String, album: String) -> Track {
+            Track(url: URL(fileURLWithPath: "/m/\(title).flac"), title: title, album: album, fileFormat: .flac)
+        }
+        #expect(HomeFeed.isFromDJMix(track("Strobe (Mixed)", album: "Fabric 50")))
+        #expect(HomeFeed.isFromDJMix(track("Ghosts", album: "Cream Ibiza (DJ Mix)")))
+        #expect(HomeFeed.isFromDJMix(track("Opus", album: "Global Underground: Mixed by Sasha")))
+        #expect(HomeFeed.isFromDJMix(track("Intro", album: "Essential Mix: Continuous Mix")))
+        #expect(!HomeFeed.isFromDJMix(track("Strobe (Extended Mix)", album: "For Lack of a Better Name")))
+        #expect(!HomeFeed.isFromDJMix(track("Ghosts (Remixed)", album: "Ghosts Remixed")))
+        #expect(!HomeFeed.isFromDJMix(track("Some Chords", album: "4x4=12")))
+
+        // A genre with enough tracks only from a DJ mix gets no mix.
+        let store = library((1...5).map { ("Bass \($0)", "Artist \($0)", 16, 44_100, "Dubstep") })
+        store.tracks = store.tracks.map { var t = $0; t.album = "Bass Nation (DJ Mix)"; return t }
+        #expect(build(store).mixes.isEmpty)
+    }
+
     @Test func genreMixesNeedEnoughTracks() {
         let store = library((1...5).map { ("Bass \($0)", "Artist \($0)", 16, 44_100, "Dubstep") }
                             + [("Lonely", "Z", 16, 44_100, "Polka")])

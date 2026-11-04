@@ -33,9 +33,6 @@ struct ContentView: View {
     /// Past this the UI is revealed while metadata keeps streaming in.
     private static let maxCoverDuration: Duration = .seconds(8)
 
-    /// Widest the corner puck opens into the full player bar.
-    private static let playerBarMaxWidth: CGFloat = 700
-
     var body: some View {
         @Bindable var router = router
         // The top bar floats over the page. Pages run to the top of the
@@ -43,6 +40,12 @@ struct ContentView: View {
         // `topBarInset` down.
         let inset = hidesTopBar(router: router) ? 0 : TopBarView.height
         mainContent(router: router)
+            // UI for nerds' animation speed: every animation in the window
+            // runs faster (above 1) or slower.
+            .transaction { t in
+                let speed = UIStyle.shared.animationSpeed
+                if speed != 1, let animation = t.animation { t.animation = animation.speed(speed) }
+            }
             .ignoresSafeArea(.container, edges: .top)
             .environment(\.topBarInset, inset)
             // Each tab's one-time tips, over the page but under the top bar
@@ -149,7 +152,7 @@ struct ContentView: View {
     /// The window's chrome (traffic lights, top bar, player bar, queue tab,
     /// tips) waits behind the loading cover and comes in as it fades, each
     /// with its own entrance, in the cover fade's transaction.
-    private var isChromeRevealed: Bool { coverFading || coverDismissed }
+    private var isChromeRevealed: Bool { coverFading || coverDismissed || !UIStyle.shared.launchFade }
 
     private func showsPlayerBar(router: NavigationRouter) -> Bool {
         isChromeRevealed && router.selectedTab != .visualizer && router.selectedTab != .download && !router.hidesPlayerBar
@@ -211,25 +214,29 @@ struct ContentView: View {
         }
         .overlay(alignment: .bottom) {
             if showsPlayerBar(router: router) {
-                // The corner puck, bottom-right; while the queue is open it
-                // slides left to sit beside the panel. It opens into the full
-                // bar at up to 700pt. Concrete numbers so the moves animate.
+                // The corner puck, bottom-right (or bottom-left, by UI for
+                // nerds); on the right, while the queue is open it slides left
+                // to sit beside the panel. It opens toward the middle into the
+                // full bar. Concrete numbers so the moves animate.
                 GeometryReader { geo in
                     let margin = Theme.Spacing.lg
+                    let side = UIStyle.shared.playerSide
                     let open = player.isQueueVisible
                     let queue = open ? QueuePanelView.width : 0
                     let room = geo.size.width - margin * 2 - queue
-                    CornerPlayerPuck(expandedWidth: max(0, min(Self.playerBarMaxWidth, room)))
+                    CornerPlayerPuck(expandedWidth: max(0, min(UIStyle.shared.playerBarWidth, room)))
                         .onGeometryChange(for: Bool.self) { $0.size.height > 0 } action: { shown in
                             // Clear only the puck, not the bar it opens into.
                             // Empty (nothing playing) measures 0: no clearance.
                             router.playerBarClearance = shown ? CornerPlayerPuck.collapsedHeight + 16 : 0
                         }
                         .onDisappear { router.playerBarClearance = 0 }
-                        .padding(.trailing, margin + queue)
+                        .padding(.leading, side == .left ? margin : 0)
+                        .padding(.trailing, side == .right ? margin + queue : 0)
                         .padding(.bottom, 16)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side.bottomCorner)
                 }
+                .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.5), value: UIStyle.shared.playerSide)
                 .transition(.opacity.combined(with: .offset(y: 24)))
             }
         }
@@ -265,6 +272,7 @@ struct ContentView: View {
             // whole-library launch passes on the main thread. Revealing the app
             // during them made the first thing on screen — Home's thrown case —
             // stutter and hang; behind black they cost nothing visible.
+            Perf.event("Cover blackout")
             withAnimation(.easeInOut(duration: 0.3)) { coverBlackout = true }
             try? await Task.sleep(for: .milliseconds(300))
             let hold = ContinuousClock.now + Self.maxBlackoutHold
@@ -275,6 +283,7 @@ struct ContentView: View {
             // A beat for SwiftUI to commit the re-render that work caused.
             try? await Task.sleep(for: .milliseconds(150))
         }
+        Perf.event("Cover fade")
         withAnimation(.easeOut(duration: 0.5)) { coverFading = true }
         // Outlast the fade, then unmount without animation.
         try? await Task.sleep(for: .milliseconds(550))

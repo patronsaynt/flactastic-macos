@@ -11,7 +11,7 @@ struct OnboardingDebugPreviewView: View {
 
     var body: some View {
         OnboardingView(onFinish: { dismissWindow(id: "onboarding-debug") })
-            .preferredColorScheme(settings.useLightMode ? .light : .dark)
+            .preferredColorScheme(settings.theme.colorScheme)
             .frame(width: 1180, height: 740)
     }
 }

@@ -260,7 +260,7 @@ extension HomeFeed {
         return counts.filter { $0.value >= 2 }
             .sorted { $0.value > $1.value }
             .compactMap { id, n in tracks[id].map { RepeatTrack(track: $0, plays: n) } }
-            .prefix(8)
+            .prefix(10)
             .map { $0 }
     }
 
@@ -269,15 +269,18 @@ extension HomeFeed {
     /// Up to four genre mixes, from the genres you listen to most (or that
     /// fill most of the library before there's history), then a radio for up
     /// to two artists on heavy rotation: their tracks among others in their genre.
+    /// Tracks from DJ-mix compilations are left out: cut to blend into their
+    /// neighbours, they start and end mid-mix when shuffled into a playlist.
     private static func mixes(_ input: Inputs, now: Date, rng: inout SeededRandom) -> [Mix] {
         let resolver = input.resolver
+        let pool = input.tracks.filter { !isFromDJMix($0) }
         func genres(_ t: Track) -> [String] { ([t.genre].compactMap { $0 } + t.secondaryGenres).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } }
         func credit(_ t: Track) -> String? { t.albumArtist ?? t.artist }
 
         var byGenre: [String: [Track]] = [:]
-        for t in input.tracks { for g in genres(t) { byGenre[g.lowercased(), default: []].append(t) } }
+        for t in pool { for g in genres(t) { byGenre[g.lowercased(), default: []].append(t) } }
         var display: [String: String] = [:]
-        for t in input.tracks { for g in genres(t) where display[g.lowercased()] == nil { display[g.lowercased()] = g } }
+        for t in pool { for g in genres(t) where display[g.lowercased()] == nil { display[g.lowercased()] = g } }
 
         let recent = now.addingTimeInterval(-90 * 86_400)
         var genreMinutes: [String: Double] = [:]
@@ -325,10 +328,10 @@ extension HomeFeed {
         // Radios for artists on heavy rotation.
         let heavy = artistPlays30.filter { $0.value >= 15 }.sorted { $0.value > $1.value }.prefix(2)
         for (key, _) in heavy {
-            let own = input.tracks.filter { t in credit(t).map { resolver.keys(forCredit: $0).contains(key) } ?? false }
+            let own = pool.filter { t in credit(t).map { resolver.keys(forCredit: $0).contains(key) } ?? false }
             guard own.count >= 5, let name = own.first.flatMap(credit).flatMap({ resolver.split($0).first }) else { continue }
             let theirGenres = Set(own.flatMap(genres).map { $0.lowercased() })
-            let neighbours = input.tracks.filter { t in
+            let neighbours = pool.filter { t in
                 !(credit(t).map { resolver.keys(forCredit: $0).contains(key) } ?? false)
                     && genres(t).contains { theirGenres.contains($0.lowercased()) }
             }
@@ -340,6 +343,18 @@ extension HomeFeed {
         }
         return Array(mixes.prefix(6))
     }
+
+    /// A track from a DJ mix, as its tags say: "(Mixed)" after its title, or
+    /// an album or title naming a DJ mix, a continuous mix or who mixed it.
+    /// Remixes and "Extended Mix" versions are ordinary tracks and stay in.
+    static func isFromDJMix(_ track: Track) -> Bool {
+        let title = track.title.lowercased()
+        let album = (track.album ?? "").lowercased()
+        return title.range(of: #"[\(\[]\s*mixed\s*[\)\]]"#, options: .regularExpression) != nil
+            || [title, album].contains { $0.range(of: djMixPattern, options: .regularExpression) != nil }
+    }
+
+    private static let djMixPattern = #"\b(dj[ -]?mix(es|ed)?|continuous mix|mixed by|mixed & compiled|mix compilation)\b"#
 
     // MARK: Recently added
 

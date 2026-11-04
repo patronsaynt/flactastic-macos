@@ -214,7 +214,7 @@ struct OrganizerView: View {
             .padding(.top, topBarInset + 34)
             .padding(.bottom, 140)
         }
-        .scrollIndicators(.automatic)
+        .scrollIndicators(.hidden)
     }
 
     private func section<Content: View>(_ title: String, subtitle: String?, @ViewBuilder content: () -> Content) -> some View {

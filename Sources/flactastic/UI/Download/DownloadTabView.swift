@@ -230,7 +230,7 @@ struct DownloadTabView: View {
             .padding(.top, topBarInset + 38)
             .padding(.bottom, 140)
         }
-        .scrollIndicators(.automatic)
+        .scrollIndicators(.hidden)
     }
 
     private var divider: some View {
@@ -875,7 +875,7 @@ struct DownloadTabView: View {
                 .padding(.horizontal, 28)
                 .padding(.bottom, 120)
             }
-            .scrollIndicators(.automatic)
+            .scrollIndicators(.hidden)
         }
         .background(Theme.surface)
         .overlay(alignment: .leading) {

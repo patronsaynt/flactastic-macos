@@ -126,7 +126,7 @@ struct ArtistsCollectionView: View {
                     .padding(.bottom, 100)
                 }
             }
-            .scrollIndicators(.automatic)
+            .scrollIndicators(.hidden)
 
             if let featured {
                 ArtistLineupPanel(

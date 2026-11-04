@@ -99,6 +99,7 @@ struct ArtistDetailView: View {
             }
             .background(Theme.background)
             .onAppear {
+                Perf.event("Artist page open", artistKey)
                 if cachedSummary?.id != artistKey { cachedSummary = summary }
                 router.hidesPlayerBar = true
                 withAnimation(calmMotion

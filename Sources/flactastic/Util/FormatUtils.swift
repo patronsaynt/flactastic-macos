@@ -25,7 +25,14 @@ enum AudioQuality: Sendable {
     }
 
     @MainActor
+    /// The tier's colour, or the grey ladder while UI for nerds has tier
+    /// colours off.
     var color: Color {
+        guard UIStyle.shared.tierColours else { return Theme.textSecondary }
+        return tierColor
+    }
+
+    private var tierColor: Color {
         switch self {
         case .hiRes: return Theme.qualityLossless
         case .cd:    return Theme.qualityCD

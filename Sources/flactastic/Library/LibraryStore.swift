@@ -376,6 +376,7 @@ final class LibraryStore {
         rootURL = url
         scanState = .scanning
         tracks = []
+        Perf.event("Library load start")
 
         // Load the sidecar before scanning so assign() returns persisted UUIDs.
         trackIDStore.load(from: url)
@@ -587,7 +588,7 @@ final class LibraryStore {
                             current[i] = updated
                         }
                     }
-                    self.tracks = current
+                    Perf.measure("Library flush") { self.tracks = current }
                     pending.removeAll(keepingCapacity: true)
                     lastFlush = .now
                 }
@@ -623,6 +624,7 @@ final class LibraryStore {
                     // ContentView animates the cover's fade itself.
                     if !self.hasCompletedInitialLoad {
                         self.hasCompletedInitialLoad = true
+                        Perf.event("Initial load done")
                     }
 
                     // Run the whole-library refinements on a *later* runloop
@@ -639,6 +641,7 @@ final class LibraryStore {
                         // flag flip, so actually wait out the cover's fade.
                         try? await Task.sleep(for: .milliseconds(500))
                         guard !Task.isCancelled else { return }
+                        let launchWork = Perf.begin("Launch work")
                         self.normaliseArtistTags()
                         // Dedup before seeding so the album cache and albums
                         // reference the shared canonical buffers.
@@ -646,6 +649,7 @@ final class LibraryStore {
                         self.seedAlbumArtworkCache()
                         self.prewarmArtworkCache()
                         self.persistMetadataCache()
+                        Perf.end("Launch work", launchWork)
                         if !self.hasFinishedLaunchWork { self.hasFinishedLaunchWork = true }
                     }
                 }

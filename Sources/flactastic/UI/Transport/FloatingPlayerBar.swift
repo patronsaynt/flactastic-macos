@@ -7,9 +7,13 @@ struct FloatingPlayerBar: View {
     @Environment(PlaylistAddCoordinator.self) private var playlistAddCoordinator
     @Environment(LibraryStore.self)      private var library
     @Environment(NavigationRouter.self)  private var router
-    @Environment(CastManager.self)       private var cast
 
     @State private var contentWidth: CGFloat = 0
+    /// Set by the corner puck, which draws the cover, title and queue button
+    /// itself (so they stay one view while it opens): here they keep their
+    /// room but aren't drawn, and the queue button reports where it sits.
+    @Environment(\.puckQueueFrame) private var puckQueueFrame
+    private var isHosted: Bool { puckQueueFrame != nil }
 
     /// Half the transport row (five buttons and their gaps), which sits
     /// centered on the bar regardless of what's beside it.
@@ -19,8 +23,12 @@ struct FloatingPlayerBar: View {
     /// of the centered transport controls, so they never run underneath.
     private var trackTextMaxWidth: CGFloat {
         guard contentWidth > 0 else { return 200 }
+        return Self.trackTextMaxWidth(contentWidth: contentWidth)
+    }
+
+    static func trackTextMaxWidth(contentWidth: CGFloat) -> CGFloat {
         let coverAndGap: CGFloat = 48 + Theme.Spacing.sm
-        let room = contentWidth / 2 - Self.transportHalfWidth - 20 - coverAndGap
+        let room = contentWidth / 2 - transportHalfWidth - 20 - coverAndGap
         return min(340, max(60, room))
     }
 
@@ -46,7 +54,13 @@ struct FloatingPlayerBar: View {
                     trackInfo
                     Spacer(minLength: 0)
                     addToPlaylistButton
-                    queueToggleButton.puckMatched("queue")
+                    queueToggleButton
+                        .opacity(isHosted ? 0 : 1)
+                        .allowsHitTesting(!isHosted)
+                        .accessibilityHidden(isHosted)
+                        .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.hostSpace)) } action: {
+                            puckQueueFrame?.wrappedValue = $0
+                        }
                     SpeakerPickerButton()
                     VolumeSliderView()
                 }
@@ -65,66 +79,18 @@ struct FloatingPlayerBar: View {
         if let track = player.currentTrack {
             HStack(spacing: Theme.Spacing.sm) {
                 ArtworkView(data: track.artwork, size: 48)
-                    .puckMatched("cover")
-
-                VStack(alignment: .leading, spacing: 1) {
-                    // The badge always shows in full beside the title; a
-                    // title too long for what's left scrolls instead.
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) {
-                            Text(track.title)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(Theme.textPrimary)
-                                .lineLimit(1)
-                                .fixedSize()
-                            PlayerQualityBadge(track: track)
-                        }
-                        HStack(spacing: 6) {
-                            MarqueeText(
-                                text: track.title,
-                                font: .system(size: 13),
-                                weight: .medium,
-                                speed: 24,
-                                pause: 2
-                            )
-                            PlayerQualityBadge(track: track)
-                        }
-                    }
-                    if let artist = ArtistResolver.displayString(track.artist) {
-                        Text(artist)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1)
-                    }
-                    if let speaker = cast.activeSpeaker {
-                        Label("Playing on \(speaker.name)",
-                              systemImage: speaker.isAirPlay ? "airplay.audio" : "hifispeaker.fill")
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(Theme.accent)
-                            .lineLimit(1)
-                    }
-                }
-                .frame(maxWidth: trackTextMaxWidth, alignment: .leading)
-                .puckMatched("text")
+                PlayerTrackText(track: track)
+                    .frame(maxWidth: trackTextMaxWidth, alignment: .leading)
             }
-            .flContextMenu {
-                FLContextMenuItem.button("View Album", systemImage: "square.grid.2x2") {
-                    if let albumID = library.album(for: track)?.id {
-                        router.navigateToAlbum(id: albumID)
-                    }
-                }
-                let artistItems = artistContextMenuItems(
-                    credit: track.artist ?? track.albumArtist,
-                    library: library,
-                    router: router
-                )
-                if !artistItems.isEmpty {
-                    FLContextMenuItem.divider
-                    artistItems
-                }
-            }
+            .opacity(isHosted ? 0 : 1)
+            .allowsHitTesting(!isHosted)
+            .accessibilityHidden(isHosted)
+            .playerTrackMenu(track: track)
         }
     }
+
+    /// The coordinate space the corner puck names on this bar.
+    static let hostSpace = "puckBar"
 
     // MARK: - Add to Playlist
 
@@ -191,6 +157,98 @@ struct FloatingPlayerBar: View {
 
 // MARK: - Pieces
 
+/// Title (with the quality badge), artist and the cast line, as the bar
+/// shows them. The corner puck draws one copy for both of its states,
+/// hiding the bar-only parts with `showsDetail`.
+struct PlayerTrackText: View {
+    let track: Track
+    var showsDetail = true
+
+    @Environment(CastManager.self) private var cast
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            // The badge always shows in full beside the title; a title too
+            // long for what's left scrolls instead.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    Text(track.title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1)
+                        .fixedSize()
+                    badge
+                }
+                HStack(spacing: 6) {
+                    MarqueeText(text: track.title, font: .system(size: 13), weight: .medium, speed: 24, pause: 2)
+                    badge
+                }
+            }
+            if let artist = ArtistResolver.displayString(track.artist) {
+                Text(artist)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+            }
+            if let speaker = cast.activeSpeaker {
+                Label("Playing on \(speaker.name)",
+                      systemImage: speaker.isAirPlay ? "airplay.audio" : "hifispeaker.fill")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Theme.accent)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .opacity(showsDetail ? 1 : 0)
+                    .blur(radius: showsDetail ? 0 : 4)
+                    .accessibilityHidden(!showsDetail)
+            }
+        }
+    }
+
+    private var badge: some View {
+        PlayerQualityBadge(track: track)
+            .opacity(showsDetail ? 1 : 0)
+            .blur(radius: showsDetail ? 0 : 4)
+            .accessibilityHidden(!showsDetail)
+    }
+}
+
+/// The player's right-click menu on the current track: its album, and its
+/// artists.
+private struct PlayerTrackMenu: ViewModifier {
+    let track: Track
+    @Environment(LibraryStore.self) private var library
+    @Environment(NavigationRouter.self) private var router
+
+    func body(content: Content) -> some View {
+        content.flContextMenu {
+            FLContextMenuItem.button("View Album", systemImage: "square.grid.2x2") {
+                if let albumID = library.album(for: track)?.id {
+                    router.navigateToAlbum(id: albumID)
+                }
+            }
+            let artistItems = artistContextMenuItems(
+                credit: track.artist ?? track.albumArtist,
+                library: library,
+                router: router
+            )
+            if !artistItems.isEmpty {
+                FLContextMenuItem.divider
+                artistItems
+            }
+        }
+    }
+}
+
+extension View {
+    func playerTrackMenu(track: Track) -> some View { modifier(PlayerTrackMenu(track: track)) }
+}
+
+extension EnvironmentValues {
+    /// Set inside the corner puck: the bar hides the pieces the puck draws
+    /// itself and reports where its queue button sits.
+    @Entry var puckQueueFrame: Binding<CGRect>? = nil
+}
+
 /// The five transport buttons: shuffle, previous, play/pause, next, repeat.
 /// Shared by the floating player bar and the menu bar player.
 struct PlayerTransportControls: View {
@@ -218,7 +276,6 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
             .help("Previous")
-            .puckMatched("previous")
 
             Button { player.engine.togglePlayPause() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
@@ -227,7 +284,6 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
             .help(player.isPlaying ? "Pause" : "Play")
-            .puckMatched("play")
 
             Button { player.next() } label: {
                 Image(systemName: "forward.fill")
@@ -236,7 +292,6 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
             .help("Next")
-            .puckMatched("next")
 
             Button {
                 switch player.repeatMode {
@@ -279,14 +334,16 @@ struct PlayerGlass: View {
     var body: some View {
         let light = colorScheme == .light
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+        let style = UIStyle.shared
+        // With glass off in UI for nerds, a plain raised surface instead.
         shape
-            .fill(.ultraThinMaterial)
-            .overlay(shape.fill(light ? Color(white: 1).opacity(0.5) : Color(white: 0.08).opacity(0.46)))
+            .fill(style.glass ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Theme.surfaceElevated))
+            .overlay(shape.fill(light ? Color(white: 1).opacity(0.5) : Color(white: 0.08).opacity(0.46)).opacity(style.glass ? 1 : 0))
             .overlay {
                 // Sized and placed inside the glass's own bounds, then
                 // clipped to its shape, so the glow can't spill out.
                 GeometryReader { geo in
-                    if let wash {
+                    if let wash, style.glass, style.playerCoverWash {
                         Image(nsImage: wash)
                             .resizable()
                             .aspectRatio(contentMode: .fill)
@@ -371,14 +428,19 @@ struct GlassIconButtonStyle: ButtonStyle {
 }
 
 /// The playing track's fidelity, tiny, beside its title: "24/96" in the
-/// tier's color, or the tier name when the file carries no rate.
+/// tier's color, or the tier name when the file carries no rate. Shown in
+/// every player unless UI for nerds turns it off.
 struct PlayerQualityBadge: View {
     let track: Track
 
     var body: some View {
+        if UIStyle.shared.playerQualityBadge { badge }
+    }
+
+    private var badge: some View {
         let quality = AudioQuality.of(track)
         let detail = FormatUtils.formatSampleRate(track.sampleRate, bitDepth: track.bitDepth)
-        Text(detail ?? quality.label)
+        return Text(detail ?? quality.label)
             .font(.system(size: 9.5, weight: .bold))
             .monospacedDigit()
             .foregroundStyle(quality.color)

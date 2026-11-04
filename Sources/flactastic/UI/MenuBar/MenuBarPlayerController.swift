@@ -33,7 +33,8 @@ final class MenuBarPlayerController: NSObject {
         let host = NSHostingController(rootView: MenuBarPlayerView()
             .environment(player)
             .environment(settings)
-            .environment(cast))
+            .environment(cast)
+            .scrollIndicators(.hidden))
         host.sizingOptions = [.preferredContentSize]
         popover.contentViewController = host
         refresh()

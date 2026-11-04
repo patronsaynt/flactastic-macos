@@ -12,11 +12,11 @@ struct HomeSectionHeader<Trailing: View>: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(title)
-                .font(.system(size: 22, weight: .heavy))
+                .font(.system(size: UIStyle.shared.sectionTitleSize, weight: .heavy))
                 .tracking(-0.5)
                 .foregroundStyle(Theme.textPrimary)
                 .lineLimit(1)
-            if let subtitle {
+            if let subtitle, UIStyle.shared.homeSubtitles {
                 Text(subtitle)
                     .font(.system(size: 13))
                     .foregroundStyle(Theme.textTertiary)
@@ -93,9 +93,11 @@ struct HomeShelf<Item: Identifiable, Tile: View>: View {
     }
 }
 
+/// Home's cover size and the gap between covers, as UI for nerds sets them.
+@MainActor
 enum HomeTile {
-    static let size: CGFloat = 170
-    static let spacing: CGFloat = 18
+    static var size: CGFloat { UIStyle.shared.homeCoverSize }
+    static var spacing: CGFloat { UIStyle.shared.homeDensity }
 }
 
 // MARK: - Play button
@@ -149,7 +151,7 @@ struct HomeAlbumTile: View {
             VStack(alignment: .leading, spacing: 10) {
                 ArtworkView(data: artwork, size: size, id: artworkID, showsShadow: false)
                     .overlay(alignment: .topLeading) {
-                        if let badge {
+                        if let badge, UIStyle.shared.homeBadges {
                             Text(badge.label.uppercased())
                                 .font(.system(size: 10.5, weight: .heavy))
                                 .foregroundStyle(badge.color)
@@ -161,15 +163,17 @@ struct HomeAlbumTile: View {
                     }
                     .shadow(color: .black.opacity(isHovering ? 0.45 : 0.28), radius: isHovering ? 14 : 6, y: isHovering ? 10 : 4)
                     .offset(y: isHovering ? -3 : 0)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                        .lineLimit(1)
-                    caption
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
+                if UIStyle.shared.homeCaptions {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(title)
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                            .lineLimit(1)
+                        caption
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.textTertiary)
+                            .lineLimit(1)
+                    }
                 }
             }
             .frame(width: size, alignment: .leading)
@@ -204,7 +208,7 @@ struct HomeMixRow<Tile: View>: View {
     var subtitle: String? = nil
     let mixes: [HomeFeed.Mix]
     var minSize: CGFloat = 210
-    var maxSize: CGFloat = 300
+    var maxSize: CGFloat = UIStyle.shared.mixTileSize
     @ViewBuilder let tile: (HomeFeed.Mix, CGFloat) -> Tile
 
     @State private var width: CGFloat = 0
@@ -213,7 +217,7 @@ struct HomeMixRow<Tile: View>: View {
         let spacing = HomeTile.spacing
         let count = CGFloat(max(mixes.count, 1))
         let fill = floor((width - spacing * (count - 1)) / count)
-        let size = min(maxSize, max(minSize, fill))
+        let size = min(maxSize, max(min(minSize, maxSize), fill))
         VStack(alignment: .leading, spacing: 14) {
             HomeSectionHeader(title: title, subtitle: subtitle)
             ScrollView(.horizontal, showsIndicators: false) {
@@ -313,6 +317,7 @@ struct MixCoverArt<Photo: View>: View {
                 .grayscale(1)
                 .contrast(1.12)
                 .colorMultiply(hue)
+                .opacity(UIStyle.shared.mixPhotoStrength)
             LinearGradient(colors: [.white.opacity(0.16), .clear], startPoint: .topLeading, endPoint: .center)
                 .blendMode(.softLight)
             LinearGradient(colors: [.clear, hue.mix(with: .black, by: 0.45).opacity(0.95)],
@@ -368,7 +373,6 @@ struct HomeRepeatRow: View {
     let rank: Int
     let track: Track
     let plays: Int
-    let accent: Color
     let onPlay: () -> Void
     var menu: () -> [FLContextMenuItem] = { [] }
 
@@ -380,7 +384,7 @@ struct HomeRepeatRow: View {
                 Text("\(rank)")
                     .font(.system(size: 15, weight: .heavy))
                     .monospacedDigit()
-                    .foregroundStyle(accent)
+                    .foregroundStyle(Theme.textPrimary)
                     .frame(width: 22, alignment: .trailing)
                 ArtworkView(data: track.artwork, size: 44, id: "track:\(track.id)", showsShadow: false)
                     .overlay {
@@ -403,10 +407,12 @@ struct HomeRepeatRow: View {
                         .lineLimit(1)
                 }
                 Spacer(minLength: 8)
-                (Text("\(plays)").foregroundColor(Theme.textSecondary).fontWeight(.semibold) + Text(" plays"))
-                    .font(.system(size: 12))
-                    .monospacedDigit()
-                    .foregroundStyle(Theme.textTertiary)
+                if UIStyle.shared.repeatShowPlays {
+                    (Text("\(plays)").foregroundColor(Theme.textSecondary).fontWeight(.semibold) + Text(" plays"))
+                        .font(.system(size: 12))
+                        .monospacedDigit()
+                        .foregroundStyle(Theme.textTertiary)
+                }
             }
             .padding(.horizontal, 8)
             .frame(height: 56)
@@ -496,13 +502,17 @@ struct HomeTodayGrid<Feature: View, Tile: View>: View {
 
     var body: some View {
         let spacing = HomeTile.spacing
+        let style = UIStyle.shared
+        let rows = max(1, min(2, style.todayRows))
         let featureWidth = min(400, max(300, width * 0.3))
         let rest = max(0, width - featureWidth - spacing)
-        let columns = min(6, max(2, Int((rest + spacing) / (150 + spacing))))
+        // Columns as narrow as a little under Home's cover size allows.
+        let columns = min(6, max(2, Int((rest + spacing) / (HomeTile.size * 0.88 + spacing))))
         let tileSize = floor((rest - CGFloat(columns - 1) * spacing) / CGFloat(columns))
-        // Cover, gap, two caption lines; two rows and the gap between them.
-        let rowHeight = tileSize + 10 + 34
-        let height = rowHeight * 2 + 22 - 34
+        // Cover, gap, two caption lines; the rows and the gaps between them.
+        let captions: CGFloat = style.homeCaptions ? 10 + 34 : 0
+        let rowHeight = tileSize + captions
+        let height = rowHeight * CGFloat(rows) + 22 * CGFloat(rows - 1) - (style.homeCaptions ? 34 : 0)
 
         Group {
             if width > 0, tileSize > 60 {
@@ -510,7 +520,7 @@ struct HomeTodayGrid<Feature: View, Tile: View>: View {
                     feature(featureWidth, height)
                     LazyVGrid(columns: Array(repeating: GridItem(.fixed(tileSize), spacing: spacing, alignment: .top), count: columns),
                               alignment: .leading, spacing: 22) {
-                        ForEach(albums.prefix(columns * 2)) { tile($0, tileSize) }
+                        ForEach(albums.prefix(columns * rows)) { tile($0, tileSize) }
                     }
                 }
             } else {

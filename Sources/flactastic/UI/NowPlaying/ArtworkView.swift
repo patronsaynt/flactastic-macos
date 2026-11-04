@@ -25,8 +25,10 @@ struct ArtworkView: View {
     /// doesn't apply.
     var alwaysSquare: Bool = false
 
+    /// UI for nerds' corner radius, held to a quarter of the art's size so a
+    /// small thumbnail doesn't turn into a circle.
     private var cornerRadius: CGFloat {
-        settings.roundedArtwork && !alwaysSquare ? Theme.Radius.lg : 0
+        alwaysSquare ? 0 : min(CGFloat(UIStyle.shared.artworkRadius), size * 0.25)
     }
 
     /// Off-main-decoded image for the current cache key. Bridges the gap

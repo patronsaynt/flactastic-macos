@@ -73,8 +73,10 @@ enum FLContextMenuBuilder {
 final class FLContextMenuController {
     static let shared = FLContextMenuController()
 
-    weak var rootWindow: FLContextMenuWindow?
-    weak var childWindow: FLContextMenuWindow?
+    // Held strongly: a menu window the controller loses track of can't be
+    // dismissed by anything and stays on screen for good.
+    var rootWindow: FLContextMenuWindow?
+    var childWindow: FLContextMenuWindow?
 
     // Deduplication: when multiple RightClickCatchers overlap (e.g. queue panel
     // over underlying track rows), collect all claims for a single event and
@@ -177,8 +179,11 @@ struct FLContextMenuView: View {
                     }
                 },
                 onTap: {
-                    action()
+                    // Close the menus before acting: the action often
+                    // navigates, and the re-layout it causes fires late hover
+                    // callbacks on rows that are still on screen.
                     onCommit()
+                    action()
                 }
             )
         case .divider:
@@ -215,8 +220,8 @@ struct FLContextMenuView: View {
                 onSubmit: { text in
                     let trimmed = text.trimmingCharacters(in: .whitespaces)
                     guard !trimmed.isEmpty else { return }
-                    onSubmit(trimmed)
                     onCommit()
+                    onSubmit(trimmed)
                 }
             )
         }
@@ -375,6 +380,11 @@ final class FLContextMenuWindow: NSPanel {
     }
 
     static func presentChild(items: [FLContextMenuItem], anchor: NSRect, onCommit: @escaping () -> Void) {
+        // Only under a live root menu. A hover callback from a row of a menu
+        // that's just been dismissed (by clicking an item that navigated)
+        // otherwise opened a submenu with no root behind it, which nothing
+        // would ever close.
+        guard let root = FLContextMenuController.shared.rootWindow, root.isVisible else { return }
         FLContextMenuController.shared.dismissChild()
         let window = FLContextMenuWindow()
         window.configureChild(items: items, anchor: anchor, onCommit: onCommit)
@@ -437,7 +447,9 @@ final class FLContextMenuWindow: NSPanel {
         // top edge into an AppKit bottom-left origin.
         let origin = NSPoint(x: anchor.origin.x + 2, y: anchor.origin.y)
         installHosting(view: AnyView(view), origin: origin, anchorRight: true)
-        // Child windows share the root's dismiss monitor.
+        // Its own monitors as well as the root's, so a submenu can never be
+        // left on screen without something to close it.
+        installDismissMonitors()
     }
 
     private func installHosting(view: AnyView, origin: NSPoint, anchorRight: Bool) {
@@ -476,7 +488,15 @@ final class FLContextMenuWindow: NSPanel {
         self.contentView = hostingView
     }
 
+    private var resignObserver: NSObjectProtocol?
+
     private func installDismissMonitors() {
+        // Switching to another app closes menus, as native ones do.
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { FLContextMenuController.shared.dismissAll() }
+        }
         // Fires only for events in other apps.
         globalMonitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]
@@ -489,7 +509,7 @@ final class FLContextMenuWindow: NSPanel {
         // window that isn't part of the menu tower; let clicks inside the menu
         // itself flow through so button taps can fire.
         localMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown]
+            matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel]
         ) { event in
             if event.type == .keyDown {
                 if event.keyCode == 53 { // escape
@@ -503,6 +523,8 @@ final class FLContextMenuWindow: NSPanel {
             let target = event.window
             let controller = FLContextMenuController.shared
             let isMenu = (target === controller.rootWindow) || (target === controller.childWindow)
+            // Clicks, and scrolling the page underneath, close the menu; it
+            // would otherwise float over content that's moved out from under it.
             if !isMenu {
                 Task { @MainActor in
                     FLContextMenuController.shared.dismissAll()
@@ -520,6 +542,10 @@ final class FLContextMenuWindow: NSPanel {
         if let lm = localMonitor {
             NSEvent.removeMonitor(lm)
             localMonitor = nil
+        }
+        if let observer = resignObserver {
+            NotificationCenter.default.removeObserver(observer)
+            resignObserver = nil
         }
         self.orderOut(nil)
     }

@@ -38,7 +38,7 @@ struct ArtistEditorView: View {
     var body: some View {
         FLSheet(title: "Edit Artist", width: 600, height: 740) {
             ScrollView { formBody }
-                .scrollIndicators(.automatic)
+                .scrollIndicators(.hidden)
         } footer: {
             footer
         }

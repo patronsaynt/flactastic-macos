@@ -32,8 +32,13 @@ struct HomeTop: View {
     @State private var wordsIn = false
 
     static let wordmarkHeight: CGFloat = 60
-    /// As tall as the case at rest, so the left side centres against it.
-    static let height: CGFloat = 520
+
+    /// As tall as the case at rest, so the left side sits against it; just
+    /// room for the words when the case is turned off.
+    private var height: CGFloat {
+        let style = UIStyle.shared
+        return style.homeShowCase ? 520 * max(0.8, style.caseScale) : 380
+    }
 
     var body: some View {
         // The wordmark, the date under it and the words as one block, sat
@@ -42,9 +47,11 @@ struct HomeTop: View {
             VStack(alignment: .leading, spacing: 40) {
                 VStack(alignment: .leading, spacing: 8) {
                     Wordmark(height: Self.wordmarkHeight)
-                    Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundStyle(Theme.textTertiary)
+                    if UIStyle.shared.homeShowDate {
+                        Text(Date.now.formatted(.dateTime.weekday(.wide).month(.wide).day()))
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(Theme.textTertiary)
+                    }
                 }
                 words
                     .frame(width: geo.size.width * 0.53, alignment: .leading)
@@ -52,10 +59,10 @@ struct HomeTop: View {
             .padding(.bottom, 24)
             .frame(maxHeight: .infinity, alignment: .bottom)
         }
-        .frame(height: Self.height)
+        .frame(height: height)
         // The case is big and near, so it's let a little over the edge.
         .overlay(alignment: .trailing) {
-            if let album = song?.album {
+            if let album = song?.album, UIStyle.shared.homeShowCase {
                 ThrownCase(album: album, artists: song?.albumArtists ?? [], glow: glow, calmMotion: calmMotion) {
                     withAnimation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.7)) { wordsIn = true }
                 }
@@ -64,7 +71,7 @@ struct HomeTop: View {
         }
         .onAppear {
             // Without a case to wait for, the words come in on their own.
-            if song?.album == nil || calmMotion || ThrownCase.hasThrown {
+            if song?.album == nil || calmMotion || !UIStyle.shared.homeShowCase || !ThrownCase.shouldThrow {
                 withAnimation(calmMotion ? .easeOut(duration: 0.3) : .timingCurve(0.16, 1, 0.3, 1, duration: 0.8)) { wordsIn = true }
             }
         }
@@ -77,7 +84,7 @@ struct HomeTop: View {
         VStack(alignment: .leading, spacing: 0) {
             if let lyric {
                 Text("“\(lyric)”")
-                    .font(.system(size: 50, weight: .heavy).italic())
+                    .font(.system(size: UIStyle.shared.lyricSize, weight: .heavy).italic())
                     .tracking(-1.2)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(3)
@@ -87,7 +94,7 @@ struct HomeTop: View {
                 if let song { songLine(song).padding(.top, 20) }
             } else if let welcome {
                 Text(welcome.title)
-                    .font(.system(size: 50, weight: .heavy))
+                    .font(.system(size: UIStyle.shared.lyricSize, weight: .heavy))
                     .tracking(-1.2)
                     .foregroundStyle(Theme.textPrimary)
                     .lineLimit(2)
@@ -128,7 +135,7 @@ struct HomeTop: View {
                 .accessibilityLabel(isPinned ? "Unpin lyric" : "Pin lyric")
             }
             .lineLimit(1)
-            if let story = song.story {
+            if let story = song.story, UIStyle.shared.homeShowStory {
                 Text(story)
                     .font(.system(size: 12.5))
                     .foregroundStyle(Theme.textTertiary)
@@ -169,38 +176,61 @@ private struct ThrownCase: View {
         self.glow = glow
         self.calmMotion = calmMotion
         self.onCaught = onCaught
-        _isWaiting = State(initialValue: !Self.hasThrown && !calmMotion)
+        _isWaiting = State(initialValue: Self.shouldThrow && !calmMotion)
     }
 
     /// Once a launch: the throw is the app opening, not every visit to Home.
     @MainActor static var hasThrown = false
+    private static let lastThrowDayKey = "flactastic.ui.lastThrowDay"
 
-    static let size: CGFloat = 430
-    static let depth: CGFloat = (size * 0.078).rounded()
+    /// Whether this visit to Home throws the case, by UI for nerds' choice:
+    /// on each launch, on the first launch of a day, or never.
+    @MainActor static var shouldThrow: Bool {
+        guard !hasThrown else { return false }
+        switch UIStyle.shared.caseThrow {
+        case .everyLaunch: return true
+        case .onceADay: return UserDefaults.standard.string(forKey: lastThrowDayKey) != HomeFeed.dayKey(.now)
+        case .never: return false
+        }
+    }
+
+    private var size: CGFloat { (430 * UIStyle.shared.caseScale).rounded() }
+    private var depth: CGFloat { (size * 0.078).rounded() }
 
     var body: some View {
-        // Only redrawn while it flies; at rest it's one still picture.
+        // Only redrawn while it flies; at rest it's one still picture. What
+        // doesn't change mid-flight is worked out once, outside the frames.
+        let design = design, discColors = discColors, timing = timing
         TimelineView(.animation(paused: !isFlying)) { context in
-            let pose = thrownAt.map { Pose.at(context.date.timeIntervalSince($0)) } ?? .rest
-            caseView(pose)
+            let pose = thrownAt.map { Pose.at(context.date.timeIntervalSince($0), timing: timing) } ?? .rest
+            caseView(pose, design: design, discColors: discColors)
         }
         .opacity(isWaiting ? 0 : 1)
-        .frame(width: Self.size * 1.62, height: Self.size)
+        .frame(width: size * 1.62, height: size)
         .padding(.trailing, -24)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .task { await throwIfFirst() }
+        // "Throw it again", from UI for nerds.
+        .onChange(of: UIStyle.shared.throwReplay) { _, _ in
+            guard !calmMotion else { return }
+            Task { await fly() }
+        }
     }
 
-    private func caseView(_ pose: Pose) -> some View {
-        let size = Self.size
+    /// The disc's colours (read once per redraw of the view, not per frame).
+    private var discColors: [Color] { RackDisc.colors(for: album) }
+
+    private func caseView(_ pose: Pose, design: SpineDesign, discColors: [Color]) -> some View {
         return ZStack {
             // The light it hangs in, in the artist's colour, and its shadow
             // on the floor far below.
-            RadialGradient(colors: [(glow ?? .white).opacity(0.32), (glow ?? .white).opacity(0.08), .clear],
-                           center: .center, startRadius: 0, endRadius: size * 0.95)
-                .frame(width: size * 2, height: size * 1.6)
-                .opacity(pose.glow)
+            if UIStyle.shared.glass {
+                RadialGradient(colors: [(glow ?? .white).opacity(0.32), (glow ?? .white).opacity(0.08), .clear],
+                               center: .center, startRadius: 0, endRadius: size * 0.95)
+                    .frame(width: size * 2, height: size * 1.6)
+                    .opacity(pose.glow)
+            }
             // A soft gradient rather than a blurred shape: no offscreen pass.
             EllipticalGradient(colors: [.black.opacity(0.55), .clear], center: .center, startRadiusFraction: 0, endRadiusFraction: 0.5)
                 .frame(width: size * 1.2, height: 50)
@@ -211,9 +241,9 @@ private struct ThrownCase: View {
             ZStack {
                 // The disc behind the case, slid out to the right in the
                 // case's own plane, so it turns with it.
-                RackDisc(album: album, colors: RackDisc.colors(for: album), diameter: size * 0.92, isSpinning: false)
+                RackDisc(album: album, colors: discColors, diameter: size * 0.92, isSpinning: false, castsShadow: !isFlying)
                     .projectionEffect(discProjection(turn: pose.turn, slide: pose.disc * size))
-                RackBox(album: album, credit: RackLayout.credit(of: album), design: design, size: size, depth: Self.depth,
+                RackBox(album: album, credit: RackLayout.credit(of: album), design: design, size: size, depth: depth,
                         clearCase: settings.clearCaseLook, blurArt: settings.blurSpineArt, style: settings.spineStyle,
                         scanFolder: settings.useSpineScans ? album.tracks.first?.url.deletingLastPathComponent() : nil,
                         castsShadow: !isFlying, angle: pose.turn)
@@ -233,7 +263,7 @@ private struct ThrownCase: View {
     /// width, just behind its back, and turned and seen in perspective
     /// exactly as `RackBox` projects its faces, so the two read as one object.
     private func discProjection(turn: Double, slide: CGFloat) -> ProjectionTransform {
-        let size = Self.size, diameter = size * 0.92, depth = Self.depth
+        let diameter = size * 0.92
         let a = turn * .pi / 180
         var rotation = CATransform3DIdentity
         rotation.m11 = cos(a); rotation.m13 = -sin(a)
@@ -258,13 +288,14 @@ private struct ThrownCase: View {
     }
 
     private func throwIfFirst() async {
-        guard !Self.hasThrown, !calmMotion else { return }
+        guard Self.shouldThrow, !calmMotion else { return }
         Self.hasThrown = true
+        UserDefaults.standard.set(HomeFeed.dayKey(.now), forKey: Self.lastThrowDayKey)
         // Decode the cover at the case's size and sample its colours for the
         // disc first, as the rack does, so neither pops in mid-flight.
         if let data = album.artwork, !data.isEmpty {
             async let art = ArtworkImageCache.shared.thumbnailAsync(
-                for: data, id: "album:\(album.id)", pointSize: ArtworkImageCache.decodePointSize(for: Self.size), scale: displayScale)
+                for: data, id: "album:\(album.id)", pointSize: ArtworkImageCache.decodePointSize(for: size), scale: displayScale)
             async let palette = CoverPalette.load(for: data)
             _ = await (art, palette)
         }
@@ -281,12 +312,24 @@ private struct ThrownCase: View {
             isWaiting = false
             return
         }
+        await fly()
+    }
+
+    /// The throw's curve and length, from UI for nerds.
+    private var timing: Pose.Timing {
+        Pose.Timing(curve: UIStyle.shared.throwCurve, duration: UIStyle.shared.throwDuration)
+    }
+
+    private func fly() async {
+        let timing = timing
+        let signpost = Perf.begin("Case throw")
+        defer { Perf.end("Case throw", signpost) }
         thrownAt = .now
         isFlying = true
         isWaiting = false
-        try? await Task.sleep(for: .seconds(Pose.caughtAt))
+        try? await Task.sleep(for: .seconds(timing.caughtAt))
         onCaught()
-        try? await Task.sleep(for: .seconds(Pose.duration - Pose.caughtAt))
+        try? await Task.sleep(for: .seconds(timing.duration - timing.caughtAt))
         // Landed: stop redrawing, and let the case's shadow settle in.
         withAnimation(.easeOut(duration: 0.35)) { isFlying = false }
         thrownAt = nil
@@ -315,6 +358,27 @@ private struct Pose {
 
     static let caughtAt: Double = 0.82
     static let duration: Double = 1.5
+
+    /// How the throw runs: the designed keyframes stretched to `duration`,
+    /// or with any other curve, one smooth move from far off to rest.
+    struct Timing {
+        let curve: MotionCurve
+        let duration: Double
+        /// When the words come in: as it's caught, or near the end of a smooth move.
+        var caughtAt: Double { curve == .standard ? Pose.caughtAt * duration / Pose.duration : duration * 0.8 }
+    }
+
+    static func at(_ t: Double, timing: Timing) -> Pose {
+        guard timing.curve == .standard else {
+            // One move, start to rest, along the chosen curve. The disc slides
+            // out over the last stretch, as it does when caught.
+            let p = timing.curve.unitCurve(standard: .linear).value(at: min(1, max(0, t / timing.duration)))
+            var pose = mix(start, rest, p)
+            pose.disc = rest.disc * CGFloat(min(1, max(0, (p - 0.65) / 0.35)))
+            return pose
+        }
+        return at(t * Pose.duration / timing.duration)
+    }
 
     static func at(_ t: Double) -> Pose {
         var pose: Pose

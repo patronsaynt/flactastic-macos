@@ -30,8 +30,9 @@ struct OnboardingLookStep: View {
         VStack(alignment: .leading, spacing: 32) {
             OnboardingStepText(title: "Choose your look", subtitle: "Switch any time in Settings.")
             HStack(spacing: 22) {
-                LookTile(title: "Dark", isLight: false, isSelected: !settings.useLightMode) { select(light: false) }
-                LookTile(title: "Light", isLight: true, isSelected: settings.useLightMode) { select(light: true) }
+                LookTile(title: "System", isLight: AppTheme.system.isLight, isSelected: settings.theme == .system) { select(.system) }
+                LookTile(title: "Dark", isLight: false, isSelected: settings.theme == .dark) { select(.dark) }
+                LookTile(title: "Light", isLight: true, isSelected: settings.theme == .light) { select(.light) }
             }
             Button("Continue", action: onNext)
                 .buttonStyle(SheetPillStyle(isPrimary: true))
@@ -40,8 +41,8 @@ struct OnboardingLookStep: View {
         }
     }
 
-    private func select(light: Bool) {
-        withAnimation(.easeInOut(duration: 0.4)) { settings.useLightMode = light }
+    private func select(_ theme: AppTheme) {
+        withAnimation(.easeInOut(duration: 0.4)) { settings.theme = theme }
     }
 }
 
@@ -300,7 +301,7 @@ struct OnboardingDoneStep: View {
                 subtitle: "Your library is linked and ready. Time to hear it properly."
             )
             VStack(spacing: 0) {
-                row("Look", settings.useLightMode ? "Light" : "Dark")
+                row("Look", settings.theme.label)
                 row("Library", librarySummary)
                 row("Spotify", spotifySummary)
             }

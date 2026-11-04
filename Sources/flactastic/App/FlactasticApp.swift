@@ -121,55 +121,48 @@ struct FlactasticApp: App {
 
     var body: some Scene {
         WindowGroup {
-            GeometryReader { geo in
-                Group {
-                    if settings.hasCompletedOnboarding && !replayingOnboarding {
-                        ContentView()
-                            .environment(library)
-                            .environment(player)
-                            .environment(listening)
-                            .environment(settings)
-                            .environment(audioOutput)
-                            .environment(castManager)
-                            .environment(playlistStore)
-                            .environment(syncModel)
-                            .environment(artistStore)
-                            .environment(artistRemoteCache)
-                            .environment(artistImageFetcher)
-                            .environment(lyricsRemoteCache)
-                            .environment(lyricsFetcher)
-                            .environment(importCoordinator)
-                            .environment(playlistAddCoordinator)
-                            .environment(router)
-                            .environment(streamerRegistry)
-                            .environment(downloadCoordinator)
-                            .environment(playlistRebuildCoordinator)
-                            .environment(spotifyAuth)
-                            .environment(lucidaController)
-                            .environment(\.metadataWriter, metadataWriter)
-                            .environment(homeHighlight)
-                            .environment(debugState)
-                            .transition(.opacity)
-                    } else {
-                        OnboardingView(onFinish: {
-                            withAnimation(.easeInOut(duration: 0.35)) {
-                                settings.hasCompletedOnboarding = true
-                                replayingOnboarding = false
-                            }
-                        })
-                            .environment(library)
-                            .environment(settings)
-                            .environment(playlistStore)
-                            .environment(listening)
-                            .environment(spotifyAuth)
-                            .transition(.opacity)
-                    }
+            Group {
+                if settings.hasCompletedOnboarding && !replayingOnboarding {
+                    ContentView()
+                        .environment(library)
+                        .environment(player)
+                        .environment(listening)
+                        .environment(settings)
+                        .environment(audioOutput)
+                        .environment(castManager)
+                        .environment(playlistStore)
+                        .environment(syncModel)
+                        .environment(artistStore)
+                        .environment(artistRemoteCache)
+                        .environment(artistImageFetcher)
+                        .environment(lyricsRemoteCache)
+                        .environment(lyricsFetcher)
+                        .environment(importCoordinator)
+                        .environment(playlistAddCoordinator)
+                        .environment(router)
+                        .environment(streamerRegistry)
+                        .environment(downloadCoordinator)
+                        .environment(playlistRebuildCoordinator)
+                        .environment(spotifyAuth)
+                        .environment(lucidaController)
+                        .environment(\.metadataWriter, metadataWriter)
+                        .environment(homeHighlight)
+                        .environment(debugState)
+                        .transition(.opacity)
+                } else {
+                    OnboardingView(onFinish: {
+                        withAnimation(.easeInOut(duration: 0.35)) {
+                            settings.hasCompletedOnboarding = true
+                            replayingOnboarding = false
+                        }
+                    })
+                        .environment(library)
+                        .environment(settings)
+                        .environment(playlistStore)
+                        .environment(listening)
+                        .environment(spotifyAuth)
+                        .transition(.opacity)
                 }
-                .frame(
-                    width: max(1, geo.size.width / settings.uiScale),
-                    height: max(1, geo.size.height / settings.uiScale)
-                )
-                .scaleEffect(settings.uiScale, anchor: .topLeading)
             }
             .sheet(isPresented: Binding(
                 get: { lucidaController.needsUserChallenge },
@@ -178,7 +171,7 @@ struct FlactasticApp: App {
                 LucidaChallengeSheet()
                     .environment(lucidaController)
             }
-            .preferredColorScheme(settings.useLightMode ? .light : .dark)
+            .preferredColorScheme(settings.theme.colorScheme)
             // Onboarding and the app share one minimum size: the stage
             // needs the same room as the app, so finishing onboarding
             // doesn't resize the window.
@@ -190,12 +183,16 @@ struct FlactasticApp: App {
                 NSApplication.shared.activate(ignoringOtherApps: true)
                 NSWindow.allowsAutomaticWindowTabbing = false
                 installSpacebarMonitor()
-                applyAppearance(useLight: settings.useLightMode)
+                applyAppearance(settings.theme)
             }
-            .onChange(of: settings.useLightMode) { _, useLight in
-                applyAppearance(useLight: useLight)
+            .onChange(of: settings.theme) { _, theme in
+                applyAppearance(theme)
             }
             .background(DebugWindowController(enabled: debugState.lucidaInspectorActive))
+            .background(LaunchWindowSizer())
+            // No scrollbars anywhere: every scroll view under here (sheets
+            // included) inherits this unless it asks otherwise.
+            .scrollIndicators(.hidden)
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
@@ -205,6 +202,8 @@ struct FlactasticApp: App {
             CommandGroup(replacing: .appSettings) {
                 Button("Settings…") { router.showSettings = true }
                     .keyboardShortcut(",", modifiers: .command)
+                Button("UI for Nerds…") { openWindow(id: "ui-for-nerds") }
+                    .keyboardShortcut(",", modifiers: [.command, .option])
             }
             // Sync takes the (emptied) New Item slot at the top of the File
             // menu. It is a task with a beginning and an end rather than a
@@ -245,14 +244,51 @@ struct FlactasticApp: App {
                 .environment(library)
                 .environment(playlistStore)
                 .environment(syncModel)
-                .preferredColorScheme(settings.useLightMode ? .light : .dark)
+                .preferredColorScheme(settings.theme.colorScheme)
+                .scrollIndicators(.hidden)
         }
         .windowResizability(.contentSize)
+
+        // UI for nerds: every appearance control beyond light and dark, with
+        // a live preview of the real pages, so it carries the main window's
+        // whole environment. Opened under Settings… in the FLACtastic menus.
+        Window("UI for Nerds", id: "ui-for-nerds") {
+            UIForNerdsView()
+                .environment(library)
+                .environment(player)
+                .environment(listening)
+                .environment(settings)
+                .environment(audioOutput)
+                .environment(castManager)
+                .environment(playlistStore)
+                .environment(syncModel)
+                .environment(artistStore)
+                .environment(artistRemoteCache)
+                .environment(artistImageFetcher)
+                .environment(lyricsRemoteCache)
+                .environment(lyricsFetcher)
+                .environment(importCoordinator)
+                .environment(playlistAddCoordinator)
+                .environment(router)
+                .environment(streamerRegistry)
+                .environment(downloadCoordinator)
+                .environment(playlistRebuildCoordinator)
+                .environment(spotifyAuth)
+                .environment(lucidaController)
+                .environment(\.metadataWriter, metadataWriter)
+                .environment(homeHighlight)
+                .environment(debugState)
+                .preferredColorScheme(settings.theme.colorScheme)
+                .scrollIndicators(.hidden)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1280, height: 820)
 
         // About FLACtastic — opened from the application menu.
         Window("About FLACtastic", id: "about") {
             AboutView()
-                .preferredColorScheme(settings.useLightMode ? .light : .dark)
+                .preferredColorScheme(settings.theme.colorScheme)
+                .scrollIndicators(.hidden)
         }
         .windowResizability(.contentSize)
 
@@ -262,6 +298,7 @@ struct FlactasticApp: App {
             LucidaDebugView()
                 .environment(lucidaController)
                 .frame(minWidth: 900, minHeight: 600)
+                .scrollIndicators(.hidden)
         }
         .windowResizability(.contentSize)
 
@@ -276,6 +313,7 @@ struct FlactasticApp: App {
                 .environment(playlistStore)
                 .environment(listening)
                 .environment(spotifyAuth)
+                .scrollIndicators(.hidden)
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
@@ -305,11 +343,16 @@ struct FlactasticApp: App {
         }
     }
 
-    /// Force the app-wide NSAppearance so AppKit-backed surfaces (the menu bar popover,
-    /// Picker menus, NSColor dynamic providers) flip alongside SwiftUI's
-    /// `.preferredColorScheme`.
-    private func applyAppearance(useLight: Bool) {
-        NSApplication.shared.appearance = NSAppearance(named: useLight ? .aqua : .darkAqua)
+    /// Set the app-wide NSAppearance so AppKit-backed surfaces (the menu bar
+    /// popover, Picker menus, NSColor dynamic providers) flip alongside
+    /// SwiftUI's `.preferredColorScheme`. System clears it, and each window's
+    /// own, so the app follows the Mac again (SwiftUI can leave a window on
+    /// the last forced look when the scheme goes back to nil).
+    private func applyAppearance(_ theme: AppTheme) {
+        NSApplication.shared.appearance = theme.appearance
+        if theme == .system {
+            NSApplication.shared.windows.forEach { $0.appearance = nil }
+        }
     }
 
     @MainActor

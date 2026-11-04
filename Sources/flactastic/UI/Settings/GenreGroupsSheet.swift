@@ -26,7 +26,7 @@ struct GenreGroupsSheet: View {
                         .padding(.horizontal, 28)
                         .padding(.vertical, 20)
                 }
-                .scrollIndicators(.automatic)
+                .scrollIndicators(.hidden)
             }
             .frame(maxHeight: .infinity)
         } footer: {

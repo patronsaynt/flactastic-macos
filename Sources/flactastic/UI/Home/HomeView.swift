@@ -103,6 +103,8 @@ struct HomeView: View {
     }
 
     private func recomputeMetrics() {
+        let signpost = Perf.begin("Home recompute")
+        defer { Perf.end("Home recompute", signpost) }
         var m = HomeMetrics()
         let albums = albumsByID
         m.onThisDay = listening.onThisDay { albums[$0] != nil }
@@ -165,13 +167,14 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 top
+                    .nerdPart(.homeTop)
                     .padding(.horizontal, 36)
                     .padding(.top, topBarInset + 4)
-                VStack(alignment: .leading, spacing: 44) {
+                VStack(alignment: .leading, spacing: (HomeTile.spacing * 2.4).rounded()) {
                     if isLibraryEmpty {
                         gettingStarted
                     } else {
-                        ForEach(settings.homeSections) { section($0) }
+                        ForEach(settings.homeSections) { section($0).nerdPart(.home($0)) }
                         homeFooter
                     }
                 }
@@ -251,7 +254,7 @@ struct HomeView: View {
             welcome: shownPick != nil ? nil : (isLibraryEmpty
                 ? ("Welcome to FLACtastic.", "Your library is linked and ready. Add some music to hear it properly.")
                 : ("Welcome to your library.", nil)),
-            glow: highlight.palette?.accent,
+            glow: homePalette?.accent,
             isPinned: highlight.isPinned,
             onPin: { highlight.togglePin() },
             calmMotion: calmMotion
@@ -377,7 +380,7 @@ struct HomeView: View {
         case .bestSounding:
             bestSoundingSection
         case .fidelidex:
-            FidelidexView(palette: highlight.palette)
+            FidelidexView(palette: homePalette)
         }
     }
 
@@ -468,7 +471,7 @@ struct HomeView: View {
 
     @ViewBuilder
     private var onRepeatSection: some View {
-        let rows = feed.onRepeat
+        let rows = Array(feed.onRepeat.prefix(UIStyle.shared.repeatRows))
         if rows.count >= 3 {
             VStack(alignment: .leading, spacing: 14) {
                 HomeSectionHeader(title: "On repeat", subtitle: "Your most-played tracks, last 30 days") {
@@ -478,7 +481,7 @@ struct HomeView: View {
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 28), GridItem(.flexible())], alignment: .leading, spacing: 0) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                         HomeRepeatRow(
-                            rank: index + 1, track: row.track, plays: row.plays, accent: homeAccent,
+                            rank: index + 1, track: row.track, plays: row.plays,
                             onPlay: { play(rows.map(\.track), at: index, source: "On repeat") },
                             menu: { playbackContextMenuItems(for: [row.track], player: player) }
                         )
@@ -571,7 +574,10 @@ struct HomeView: View {
             }
             .buttonStyle(.plain)
             .help("Open \(notice.name)")
-            .padding(.bottom, 104)   // above the floating player bar
+            // Above the floating player bar, whatever its height right now;
+            // it's drawn over every page, so a fixed guess ended up behind it.
+            .padding(.bottom, router.playerBarClearance + 14)
+            .animation(.easeOut(duration: 0.25), value: router.playerBarClearance)
             .transition(.opacity.combined(with: .offset(y: 8)))
         }
     }
@@ -602,7 +608,7 @@ struct HomeView: View {
                     HStack(alignment: .top, spacing: 28) {
                         ListeningChart(
                             breakdown: chart,
-                            palette: highlight.palette,
+                            palette: homePalette,
                             mode: $chartMode,
                             weekOffset: $chartWeekOffset,
                             canGoBack: chartCanGoBack
@@ -625,7 +631,7 @@ struct HomeView: View {
     /// Time listened, streak, and how much of it there was.
     private var listeningFigures: some View {
         let minutes = metrics.minutesListened
-        let series = highlight.palette?.series(4)
+        let series = homePalette?.series(4)
         return HStack(alignment: .top, spacing: 32) {
             if minutes >= 60 {
                 figure("\(minutes / 60)", unit: "h \(minutes % 60)m", label: "Listened, \(statsRange.label.lowercased())", color: homeAccent)
@@ -840,7 +846,13 @@ struct HomeView: View {
     /// The Home palette's dominant color, or the monochrome accent when the artist's photo
     /// has none to give.
     private var homeAccent: Color {
-        highlight.palette?.accent ?? Theme.textPrimary
+        homePalette?.accent ?? Theme.textPrimary
+    }
+
+    /// The artist's palette, or what UI for nerds puts in its place (none
+    /// for mono, or one built from a fixed colour).
+    private var homePalette: HomePalette? {
+        UIStyle.shared.palette(from: highlight.palette)
     }
 
     private func sectionHeader(_ title: String) -> some View {

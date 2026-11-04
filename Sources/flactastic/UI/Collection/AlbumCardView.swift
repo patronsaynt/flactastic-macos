@@ -18,7 +18,9 @@ struct AlbumCardView: View {
         guard let artworkPointSize, artworkPointSize > artSize else { return artSize }
         return ArtworkImageCache.decodePointSize(for: artworkPointSize)
     }
-    private var cornerRadius: CGFloat { settings.roundedArtwork ? Theme.Radius.md : 0 }
+    /// UI for nerds' artwork radius, a touch tighter on the grid's cards (as
+    /// `Theme.Radius.md` is to `.lg`).
+    private var cornerRadius: CGFloat { CGFloat(UIStyle.shared.artworkRadius) * Theme.Radius.md / Theme.Radius.lg }
 
     private var artworkCacheID: String { "album:\(album.id)" }
     /// Identity of the decoded image: the album plus the size it was decoded at.

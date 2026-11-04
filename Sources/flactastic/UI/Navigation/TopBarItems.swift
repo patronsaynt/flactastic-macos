@@ -92,6 +92,7 @@ struct TopBarView: View {
     private var menuItems: [FLContextMenuItem] {
         [
             .button("Settings…", systemImage: "gearshape") { router.showSettings = true },
+            .button("UI for Nerds…", systemImage: "slider.horizontal.3") { openWindow(id: "ui-for-nerds") },
             .button("Devices…", systemImage: "laptopcomputer.and.iphone") { openWindow(id: "sync") },
             .divider,
             .button("Import Track…", systemImage: "music.note") { importCoordinator.begin(.track) },
@@ -376,5 +377,36 @@ struct BarPressButtonStyle: ButtonStyle {
                 .spring(response: 0.22, dampingFraction: 0.65),
                 value: configuration.isPressed
             )
+    }
+}
+
+/// Sizes the window the app opens in to fill the desktop: the screen less
+/// the menu bar and Dock, as a normal window (not fullscreen). Once per
+/// launch, so a window resized or opened later keeps its own size.
+struct LaunchWindowSizer: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { SizerView() }
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private final class SizerView: NSView {
+        @MainActor static var hasSized = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard !Self.hasSized, let window else { return }
+            Self.hasSized = true
+            fill(window)
+            // Again after the launch pass, in case frame restoration lands later.
+            DispatchQueue.main.async { [weak window] in
+                if let window { Self.fill(window) }
+            }
+        }
+
+        private func fill(_ window: NSWindow) { Self.fill(window) }
+
+        private static func fill(_ window: NSWindow) {
+            guard !window.styleMask.contains(.fullScreen),
+                  let screen = window.screen ?? NSScreen.main else { return }
+            window.setFrame(screen.visibleFrame, display: true)
+        }
     }
 }

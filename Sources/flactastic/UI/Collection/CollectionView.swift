@@ -62,6 +62,8 @@ struct CollectionView: View {
     @State private var filteredRevision = 0
 
     private func recomputeVisible() {
+        let signpost = Perf.begin("Collection recompute")
+        defer { Perf.end("Collection recompute", signpost) }
         // Singles are left out of browsing when the setting says so, but a
         // search still reaches them.
         let albums = settings.hideSinglesInAlbums && searchText.isEmpty
@@ -217,10 +219,12 @@ struct CollectionView: View {
                     )
                     .padding(.top, 8)
                 }
+                .nerdPart(.collectionRack)
                 .transition(Self.shelfTransition)
             case .grid:
                 ScrollView {
                     albumGrid(cachedFiltered)
+                        .nerdPart(.collectionGrid)
                         .padding(.horizontal, collectionGutter)
                         .padding(.top, cardHoverHeadroom)
                         .padding(.bottom, 100)
@@ -358,7 +362,7 @@ struct CollectionView: View {
 
     private func albumGrid(_ albums: [Album]) -> some View {
         LazyVGrid(
-            columns: [GridItem(.adaptive(minimum: 180, maximum: 240), spacing: 24)],
+            columns: [GridItem(.adaptive(minimum: UIStyle.shared.gridCoverSize, maximum: UIStyle.shared.gridCoverSize + 60), spacing: 24)],
             spacing: 24
         ) {
             ForEach(Array(albums.enumerated()), id: \.element.id) { index, album in

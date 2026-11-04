@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import Observation
+import SwiftUI
 
 @Observable
 @MainActor
@@ -12,13 +14,9 @@ final class Settings {
         didSet { UserDefaults.standard.set(volume, forKey: "flactastic.volume") }
     }
 
-    var useLightMode: Bool {
-        didSet { UserDefaults.standard.set(useLightMode, forKey: "flactastic.useLightMode") }
-    }
-
-    /// UI scale factor. 1.0 = default. Clamped to 0.9...1.35 in the view layer.
-    var uiScale: Double {
-        didSet { UserDefaults.standard.set(uiScale, forKey: "flactastic.uiScale") }
+    /// Light, dark, or whichever the Mac is set to.
+    var theme: AppTheme {
+        didSet { UserDefaults.standard.set(theme.rawValue, forKey: "flactastic.theme") }
     }
 
     /// Whether the menu bar mini-player is shown. When false, the status item
@@ -31,10 +29,6 @@ final class Settings {
     /// the icon stays for as long as the app is open.
     var menuBarPlayerOnlyWhilePlaying: Bool {
         didSet { UserDefaults.standard.set(menuBarPlayerOnlyWhilePlaying, forKey: "flactastic.menuBarPlayerOnlyWhilePlaying") }
-    }
-
-    var roundedArtwork: Bool {
-        didSet { UserDefaults.standard.set(roundedArtwork, forKey: "flactastic.roundedArtwork") }
     }
 
     var showArtworkShadow: Bool {
@@ -294,14 +288,18 @@ final class Settings {
         lastRootPath = UserDefaults.standard.string(forKey: "flactastic.lastRootPath")
         let stored = UserDefaults.standard.object(forKey: "flactastic.volume")
         volume = (stored as? Float) ?? 0.75
-        useLightMode = UserDefaults.standard.bool(forKey: "flactastic.useLightMode")
-        let storedScale = UserDefaults.standard.object(forKey: "flactastic.uiScale")
-        uiScale = (storedScale as? Double) ?? 1.0
+        // Before there was a System option, the choice was a Light Mode
+        // switch: keep whichever look people had picked.
+        if let stored = UserDefaults.standard.string(forKey: "flactastic.theme").flatMap(AppTheme.init(rawValue:)) {
+            theme = stored
+        } else if let wasLight = UserDefaults.standard.object(forKey: "flactastic.useLightMode") as? Bool {
+            theme = wasLight ? .light : .dark
+        } else {
+            theme = .system
+        }
         let storedMBP = UserDefaults.standard.object(forKey: "flactastic.showMenuBarPlayer")
         showMenuBarPlayer = (storedMBP as? Bool) ?? true
         menuBarPlayerOnlyWhilePlaying = UserDefaults.standard.bool(forKey: "flactastic.menuBarPlayerOnlyWhilePlaying")
-        let storedRA = UserDefaults.standard.object(forKey: "flactastic.roundedArtwork")
-        roundedArtwork = (storedRA as? Bool) ?? true
         let storedShadow = UserDefaults.standard.object(forKey: "flactastic.showArtworkShadow")
         showArtworkShadow = (storedShadow as? Bool) ?? true
         let storedFade = UserDefaults.standard.object(forKey: "flactastic.fadeAnimationsEnabled")
@@ -370,6 +368,48 @@ final class Settings {
         outputBitDepth = UserDefaults.standard.object(forKey: "flactastic.outputBitDepth") as? Int
         networkStreamQuality = UserDefaults.standard.string(forKey: "flactastic.networkStreamQuality")
             .flatMap(NetworkStreamQuality.init(rawValue:)) ?? .original
+    }
+}
+
+/// The app's look: follows the Mac's appearance, or is fixed light or dark.
+enum AppTheme: String, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+
+    /// For SwiftUI's `preferredColorScheme`: nil follows the system.
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: nil
+        case .light: .light
+        case .dark: .dark
+        }
+    }
+
+    /// For `NSApp.appearance`, so AppKit-drawn surfaces agree: nil follows the system.
+    var appearance: NSAppearance? {
+        switch self {
+        case .system: nil
+        case .light: NSAppearance(named: .aqua)
+        case .dark: NSAppearance(named: .darkAqua)
+        }
+    }
+
+    /// Whether the app is drawn light right now, the system's choice included.
+    var isLight: Bool {
+        switch self {
+        case .system: UserDefaults.standard.string(forKey: "AppleInterfaceStyle") != "Dark"
+        case .light: true
+        case .dark: false
+        }
     }
 }
 

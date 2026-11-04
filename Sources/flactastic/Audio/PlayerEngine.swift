@@ -341,8 +341,12 @@ final class PlayerEngine {
     /// to open and playback stops, and skipping fails the same way.
     func relocate(_ newURLByOldPath: [String: URL]) {
         guard !newURLByOldPath.isEmpty else { return }
+        // The Organizer keys its moves by standardized path; compare like
+        // for like, so a path spelled with "." or "//" still matches.
+        let byPath = Dictionary(newURLByOldPath.map { (URL(fileURLWithPath: $0.key).standardizedFileURL.path, $0.value) },
+                                uniquingKeysWith: { a, _ in a })
         func moved(_ track: Track) -> Track {
-            newURLByOldPath[track.url.path].map { track.withURL($0) } ?? track
+            byPath[track.url.standardizedFileURL.path].map { track.withURL($0) } ?? track
         }
         _queue = _queue.map(moved)
         currentTrack = currentTrack.map(moved)
@@ -844,7 +848,13 @@ final class PlayerEngine {
                         try? await Task.sleep(for: .milliseconds(250 * attempts))
                         continue
                     }
-                    print("[PlayerEngine] Couldn't read \(track.title): \(error)")
+                    if FileManager.default.fileExists(atPath: track.url.path) {
+                        print("[PlayerEngine] Couldn't read \(track.title): \(error)")
+                    } else {
+                        // CoreAudio reports a missing file as an opaque 'wht?'
+                        // (2003334207); say what it actually means.
+                        print("[PlayerEngine] Couldn't read \(track.title): no file at \(track.url.path) — moved or renamed since it was queued")
+                    }
                     resume = nil
                     // Close its entry at what was scheduled, so the clock moves
                     // on to the next track at the right frame instead of
