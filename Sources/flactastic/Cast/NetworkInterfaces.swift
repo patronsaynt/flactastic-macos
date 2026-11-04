@@ -54,6 +54,6 @@ enum NetworkInterfaces {
         var addr = in_addr(s_addr: address)
         var buffer = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
         inet_ntop(AF_INET, &addr, &buffer, socklen_t(INET_ADDRSTRLEN))
-        return String(cString: buffer)
+        return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
 }

@@ -256,9 +256,12 @@ struct TitleBarConfigurator: NSViewRepresentable {
                 context.timingFunction = CAMediaTimingFunction(name: .easeOut)
                 buttons.forEach { $0.animator().alphaValue = shows ? 1 : 0 }
             } completionHandler: { [weak self] in
-                // Hidden too, so an invisible button can't be clicked.
-                guard let self, !self.showsButtons else { return }
-                buttons.forEach { $0.isHidden = true }
+                // AppKit calls this on the main thread. Hidden too, so an
+                // invisible button can't be clicked.
+                MainActor.assumeIsolated {
+                    guard let self, !self.showsButtons else { return }
+                    buttons.forEach { $0.isHidden = true }
+                }
             }
         }
 

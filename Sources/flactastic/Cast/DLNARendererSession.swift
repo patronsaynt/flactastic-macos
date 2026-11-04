@@ -157,7 +157,7 @@ final class DLNARendererSession: RemotePlaybackTarget {
                 await waitUntilPlaying(timeout: 15)
                 guard generation == loadGeneration else { return }
                 try? await seekNow(to: startAt)
-                if !autoplay { try? await transport("Pause") }
+                if !autoplay { _ = try? await transport("Pause") }
             }
             graceUntil = Date().addingTimeInterval(3)
             onStatusChange?(nil)

@@ -130,7 +130,7 @@ final class LucidaDownloadWriter: NSObject, WKDownloadDelegate {
 
     private func installObservation(on download: WKDownload, file: URL) {
         self.activeDownload = download
-        Task { @MainActor in
+        Task { @MainActor [self] in
             // WKDownload may not have created the file yet at this exact
             // instant; give it a brief window to appear before observing.
             for _ in 0..<20 where !FileManager.default.fileExists(atPath: file.path) {

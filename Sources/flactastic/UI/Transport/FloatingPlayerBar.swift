@@ -90,7 +90,7 @@ struct FloatingPlayerBar: View {
     }
 
     /// The coordinate space the corner puck names on this bar.
-    static let hostSpace = "puckBar"
+    nonisolated static let hostSpace = "puckBar"
 
     // MARK: - Add to Playlist
 

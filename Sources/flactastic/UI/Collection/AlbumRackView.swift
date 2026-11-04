@@ -1645,7 +1645,7 @@ struct RackSpine: View, Equatable {
 
     private func loadSwatch() async {
         // The cover's colour feeds an art-coloured insert and Auto logos.
-        guard design.fill == .art || design.artistLogos.contains { $0 != nil } || design.labelLogo != nil else { return }
+        guard design.fill == .art || design.artistLogos.contains(where: { $0 != nil }) || design.labelLogo != nil else { return }
         if case let palette?? = CoverPalette.cached(for: album.artwork) {
             artSwatch = palette.swatches.first
             return

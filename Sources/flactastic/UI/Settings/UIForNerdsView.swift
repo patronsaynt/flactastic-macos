@@ -695,15 +695,15 @@ private struct NerdCatalog {
                       default: UIStyle.pristine[keyPath: kp], detail: detail)
     }
 
-    private func settingToggle(_ id: String, _ label: String, detail: String? = nil, get: @escaping () -> Bool,
-                               set: @escaping (Bool) -> Void, default d: Bool, isEnabled: Bool = true) -> NerdKnob {
+    private func settingToggle(_ id: String, _ label: String, detail: String? = nil, get: @escaping @MainActor () -> Bool,
+                               set: @escaping @MainActor (Bool) -> Void, default d: Bool, isEnabled: Bool = true) -> NerdKnob {
         NerdKnob(id: id, isChanged: { get() != d }, reset: { set(d) },
                  view: AnyView(NerdToggleRow(label: label, detail: detail, isOn: Binding(get: get, set: set),
                                              isChanged: get() != d, isEnabled: isEnabled, reset: { set(d) })))
     }
 
-    private func settingChoice<V: Hashable>(_ id: String, _ label: String, _ options: [(V, String)], get: @escaping () -> V,
-                                            set: @escaping (V) -> Void, default d: V, detail: String? = nil,
+    private func settingChoice<V: Hashable>(_ id: String, _ label: String, _ options: [(V, String)], get: @escaping @MainActor () -> V,
+                                            set: @escaping @MainActor (V) -> Void, default d: V, detail: String? = nil,
                                             isEnabled: Bool = true) -> NerdKnob {
         NerdKnob(id: id, isChanged: { get() != d }, reset: { set(d) },
                  view: AnyView(NerdChoiceRow(label: label, detail: detail, selection: Binding(get: get, set: set),

@@ -89,9 +89,8 @@ struct LibraryMatchIndex: Sendable {
         return false
     }
 
-    /// Compiled once. `nonisolated(unsafe)` is sound here: NSRegularExpression
-    /// is documented immutable & thread-safe.
-    nonisolated(unsafe) private static let leadingTrackNumber =
+    /// Compiled once; NSRegularExpression is immutable and Sendable.
+    private static let leadingTrackNumber =
         try! NSRegularExpression(pattern: #"^\d{1,3}\s*-\s*"#)
 
     private static func normalize(_ s: String) -> String {
