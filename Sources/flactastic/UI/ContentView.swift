@@ -33,7 +33,7 @@ struct ContentView: View {
     /// Past this the UI is revealed while metadata keeps streaming in.
     private static let maxCoverDuration: Duration = .seconds(8)
 
-    /// The player bar's width while the queue is closed.
+    /// Widest the corner puck opens into the full player bar.
     private static let playerBarMaxWidth: CGFloat = 700
 
     var body: some View {
@@ -211,20 +211,24 @@ struct ContentView: View {
         }
         .overlay(alignment: .bottom) {
             if showsPlayerBar(router: router) {
-                // Centered at up to 700pt; while the queue is open it stretches
-                // from the window's left edge to where the panel starts. Width
-                // and position are concrete numbers so the change animates.
+                // The corner puck, bottom-right; while the queue is open it
+                // slides left to sit beside the panel. It opens into the full
+                // bar at up to 700pt. Concrete numbers so the moves animate.
                 GeometryReader { geo in
                     let margin = Theme.Spacing.lg
                     let open = player.isQueueVisible
-                    let room = geo.size.width - margin * 2 - (open ? QueuePanelView.width : 0)
-                    let width = max(0, open ? room : min(Self.playerBarMaxWidth, room))
-                    let leading = open ? margin : (geo.size.width - width) / 2
-                    FloatingPlayerBar()
-                        .frame(width: width)
-                        .padding(.leading, leading)
+                    let queue = open ? QueuePanelView.width : 0
+                    let room = geo.size.width - margin * 2 - queue
+                    CornerPlayerPuck(expandedWidth: max(0, min(Self.playerBarMaxWidth, room)))
+                        .onGeometryChange(for: Bool.self) { $0.size.height > 0 } action: { shown in
+                            // Clear only the puck, not the bar it opens into.
+                            // Empty (nothing playing) measures 0: no clearance.
+                            router.playerBarClearance = shown ? CornerPlayerPuck.collapsedHeight + 16 : 0
+                        }
+                        .onDisappear { router.playerBarClearance = 0 }
+                        .padding(.trailing, margin + queue)
                         .padding(.bottom, 16)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 }
                 .transition(.opacity.combined(with: .offset(y: 24)))
             }

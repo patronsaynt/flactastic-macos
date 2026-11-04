@@ -1,5 +1,6 @@
 import SwiftUI
 
+/// The full player bar, shown when the corner puck opens.
 struct FloatingPlayerBar: View {
     @Environment(PlayerState.self)       private var player
     @Environment(PlaylistStore.self)     private var playlistStore
@@ -24,12 +25,13 @@ struct FloatingPlayerBar: View {
     }
 
     var body: some View {
-        if let track = player.currentTrack {
+        // No glass of its own: it only appears inside the corner puck, which
+        // draws one glass for both states so the shape grows between them.
+        if player.currentTrack != nil {
             playerContent
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
                 .padding(.bottom, 10)
-                .background { PlayerGlass(track: track, cornerRadius: 18) }
         }
     }
 
@@ -44,7 +46,7 @@ struct FloatingPlayerBar: View {
                     trackInfo
                     Spacer(minLength: 0)
                     addToPlaylistButton
-                    queueToggleButton
+                    queueToggleButton.puckMatched("queue")
                     SpeakerPickerButton()
                     VolumeSliderView()
                 }
@@ -63,6 +65,7 @@ struct FloatingPlayerBar: View {
         if let track = player.currentTrack {
             HStack(spacing: Theme.Spacing.sm) {
                 ArtworkView(data: track.artwork, size: 48)
+                    .puckMatched("cover")
 
                 VStack(alignment: .leading, spacing: 1) {
                     // The badge always shows in full beside the title; a
@@ -102,6 +105,7 @@ struct FloatingPlayerBar: View {
                     }
                 }
                 .frame(maxWidth: trackTextMaxWidth, alignment: .leading)
+                .puckMatched("text")
             }
             .flContextMenu {
                 FLContextMenuItem.button("View Album", systemImage: "square.grid.2x2") {
@@ -166,7 +170,10 @@ struct FloatingPlayerBar: View {
 
     // MARK: - Queue Toggle
 
-    private var queueToggleButton: some View {
+    private var queueToggleButton: some View { Self.queueToggleButton(player: player) }
+
+    /// Shared with the corner puck.
+    static func queueToggleButton(player: PlayerState) -> some View {
         Button {
             withAnimation(QueuePanelView.motion) {
                 player.isQueueVisible.toggle()
@@ -211,6 +218,7 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
             .help("Previous")
+            .puckMatched("previous")
 
             Button { player.engine.togglePlayPause() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
@@ -219,6 +227,7 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
             .help(player.isPlaying ? "Pause" : "Play")
+            .puckMatched("play")
 
             Button { player.next() } label: {
                 Image(systemName: "forward.fill")
@@ -227,6 +236,7 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
             .help("Next")
+            .puckMatched("next")
 
             Button {
                 switch player.repeatMode {
@@ -254,12 +264,12 @@ struct PlayerTransportControls: View {
 }
 
 /// The player's frosted glass, with a faint wash of the playing cover behind
-/// the track info and, on the floating bar, a lit edge and a soft drop
-/// shadow. Shared by the floating player bar and the menu bar player.
+/// the track info and, on the corner puck, a lit edge and a soft drop
+/// shadow. Shared by the corner puck and the menu bar player.
 struct PlayerGlass: View {
     let track: Track?
     var cornerRadius: CGFloat = 18
-    /// The floating bar sits on the page with its own edge and shadow; the
+    /// The puck sits on the page with its own edge and shadow; the
     /// menu bar popover is a window that draws its own.
     var isFloating = true
 
