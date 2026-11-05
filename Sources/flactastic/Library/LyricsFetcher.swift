@@ -60,6 +60,14 @@ final class LyricsFetcher {
     /// fetch at `.userInitiated` while prefetch passes use `.background`,
     /// so the visible lyrics aren't stuck behind speculative work.
     @discardableResult
+    /// The lyrics lookup for this track is over: found (cached), failed
+    /// recently, or not running.
+    func isSettled(_ track: Track) -> Bool {
+        let key = LyricsCacheKey.make(artist: track.artist ?? track.albumArtist, title: track.title, duration: track.duration)
+        if cache.entry(forKey: key) != nil || hasRecentError(forKey: key) { return true }
+        return !inFlight.contains(key)
+    }
+
     func ensureLyrics(
         for track: Track?,
         enabled: Bool,

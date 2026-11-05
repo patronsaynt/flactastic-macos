@@ -459,7 +459,10 @@ final class DLNARendererSession: RemotePlaybackTarget {
             fileExtension: ext
         )
         var artworkURL: URL?
-        if let art = track.artwork, !art.isEmpty {
+        if let original = track.artwork, !original.isEmpty,
+           // At most 1000 px, as JPEG: renderers show it small, and some
+           // choke on very large images.
+           let art = await Task.detached(priority: .userInitiated, operation: { CoverExport.jpeg(original) }).value {
             let (mime, artExt) = Self.imageType(art)
             let artPath = server.register(MediaResource(body: .data(art), mimeType: mime, isAudio: false),
                                           fileExtension: artExt)

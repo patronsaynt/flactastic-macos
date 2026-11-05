@@ -12,6 +12,10 @@ struct ContentView: View {
     @Environment(ArtistImageFetcher.self) private var artistImageFetcher
     @Environment(Settings.self) private var settings
     @Environment(DebugState.self) private var debugState
+    @Environment(LyricsFetcher.self) private var lyricsFetcher
+    /// On Organizer, the player starts tucked away past the window edge.
+    @State private var isPuckTucked = true
+    @Environment(\.metadataWriter) private var metadataWriter
 
     /// Mirrors the hosting window's fullscreen state. The custom top bar is
     /// the app's own view, not an `NSToolbar`, so hiding it for a fullscreen
@@ -204,7 +208,21 @@ struct ContentView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onChange(of: library.hasCompletedInitialLoad) { _, done in
             if done { prefetchArtistImages() }
+            GenreScanner.shared.libraryChanged()
         }
+        // Genres: new tracks count as imports; a playing untagged track is
+        // looked up (with the next two), like lyrics.
+        .onAppear {
+            GenreScanner.shared.attach(library: library, writer: metadataWriter, lyrics: lyricsFetcher, settings: settings)
+        }
+        .onChange(of: library.tracksRevision) { _, _ in GenreScanner.shared.libraryChanged() }
+        .task(id: player.currentTrack?.id) {
+            let queue = player.engine.queue
+            let next = queue.indices.contains(player.engine.currentIndex + 1)
+                ? Array(queue[(player.engine.currentIndex + 1)...].prefix(2)) : []
+            GenreScanner.shared.trackStarted(player.currentTrack, upcoming: next)
+        }
+        .overlay(alignment: .bottom) { GenreStatusPill().padding(.bottom, router.playerBarClearance + 16) }
         .task { await runLoadingCover() }
         .task {
             if library.hasCompletedInitialLoad { prefetchArtistImages() }
@@ -223,19 +241,45 @@ struct ContentView: View {
                     let side = UIStyle.shared.playerSide
                     let open = player.isQueueVisible
                     let queue = open ? QueuePanelView.width : 0
-                    let room = geo.size.width - margin * 2 - queue
+                    // On Organizer the player can tuck away past the window
+                    // edge (its Organize button sits where the puck does),
+                    // leaving a handle at that edge to bring it back.
+                    let tuckable = router.selectedTab == .organizer
+                    let tucked = tuckable && isPuckTucked
+                    let edge = margin + (tuckable ? PuckTuckHandle.width : 0)
+                    let room = geo.size.width - edge * 2 - queue
+                    let away = (side == .right ? 1.0 : -1.0) * (max(room, CornerPlayerPuck.collapsedWidth) + edge + 24)
                     CornerPlayerPuck(expandedWidth: max(0, min(UIStyle.shared.playerBarWidth, room)))
                         .onGeometryChange(for: Bool.self) { $0.size.height > 0 } action: { shown in
                             // Clear only the puck, not the bar it opens into.
                             // Empty (nothing playing) measures 0: no clearance.
-                            router.playerBarClearance = shown ? CornerPlayerPuck.collapsedHeight + 16 : 0
+                            router.playerBarClearance = shown && !tucked ? CornerPlayerPuck.collapsedHeight + 16 : 0
+                        }
+                        .onChange(of: tucked) { _, now in
+                            router.playerBarClearance = now ? 0 : CornerPlayerPuck.collapsedHeight + 16
                         }
                         .onDisappear { router.playerBarClearance = 0 }
-                        .padding(.leading, side == .left ? margin : 0)
-                        .padding(.trailing, side == .right ? margin + queue : 0)
+                        .padding(.leading, side == .left ? edge : 0)
+                        .padding(.trailing, side == .right ? edge + queue : 0)
                         .padding(.bottom, 16)
+                        .offset(x: tucked ? away : 0)
+                        .opacity(tucked ? 0 : 1)
+                        .allowsHitTesting(!tucked)
+                        .accessibilityHidden(tucked)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side.bottomCorner)
+                        .animation(PuckTuckHandle.motion, value: tucked)
+                    if tuckable {
+                        PuckTuckHandle(side: side, isTucked: isPuckTucked) {
+                            withAnimation(PuckTuckHandle.motion) { isPuckTucked.toggle() }
+                        }
+                        .padding(.trailing, side == .right ? queue : 0)
+                        // Level with the puck's middle.
+                        .padding(.bottom, 16 + (CornerPlayerPuck.collapsedHeight - PuckTuckHandle.height) / 2)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: side.bottomCorner)
+                        .transition(.opacity)
+                    }
                 }
+                .animation(.easeOut(duration: 0.2), value: router.selectedTab == .organizer)
                 .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.5), value: UIStyle.shared.playerSide)
                 .transition(.opacity.combined(with: .offset(y: 24)))
             }

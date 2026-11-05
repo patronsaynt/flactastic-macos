@@ -62,6 +62,92 @@ actor DeezerClient {
         return DeezerArtist(id: match.id, name: match.name, pictureURL: pictureURL)
     }
 
+    /// An album on Deezer: its barcode, broad genres and track count.
+    struct Album: Sendable {
+        let id: Int
+        let upc: String?
+        let genres: [String]
+        let trackCount: Int
+    }
+
+    /// Finds an album by artist and title, then fetches its details. Picks
+    /// the result whose track count is closest to `trackCount`, so a deluxe
+    /// edition isn't mistaken for the standard one.
+    func album(artist: String, title: String, trackCount: Int?) async throws -> Album? {
+        let q = "artist:\"\(artist)\" album:\"\(title)\""
+        guard let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://api.deezer.com/search/album?q=\(encoded)&limit=5") else { throw DeezerClientError.invalidQuery }
+        let hits = try JSONDecoder().decode(AlbumSearch.self, from: try await data(url)).data
+        let wanted = ArtistResolver.key(for: title)
+        let named = hits.filter { ArtistResolver.key(for: $0.title) == wanted }
+        let pool = named.isEmpty ? hits : named
+        guard let best = pool.min(by: { abs(($0.nb_tracks ?? 0) - (trackCount ?? 0)) < abs(($1.nb_tracks ?? 0) - (trackCount ?? 0)) }) else { return nil }
+        return try await album(id: best.id)
+    }
+
+    func album(id: Int) async throws -> Album? {
+        guard let url = URL(string: "https://api.deezer.com/album/\(id)") else { throw DeezerClientError.invalidQuery }
+        let d = try JSONDecoder().decode(AlbumDetail.self, from: try await data(url))
+        guard let albumID = d.id else { return nil }
+        return Album(id: albumID, upc: d.upc, genres: d.genres?.data.map(\.name) ?? [], trackCount: d.nb_tracks ?? 0)
+    }
+
+    /// A single track: its ISRC and the album it's on.
+    func track(artist: String, title: String) async throws -> (isrc: String?, albumID: Int?)? {
+        // Deezer's field search (artist:"…" track:"…") finds no tracks, so a
+        // plain search, keeping only a hit whose artist and title match.
+        let q = "\(artist) \(title)"
+        guard let encoded = q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+              let url = URL(string: "https://api.deezer.com/search?q=\(encoded)&limit=10") else { throw DeezerClientError.invalidQuery }
+        let wantArtist = ArtistResolver.key(for: artist), wantTitle = ArtistResolver.key(for: title)
+        let hits = try JSONDecoder().decode(TrackSearch.self, from: try await data(url)).data
+        guard let hit = hits.first(where: {
+            ArtistResolver.key(for: $0.artist?.name ?? "") == wantArtist && ArtistResolver.key(for: $0.title) == wantTitle
+        }) else { return nil }
+        // Search results leave out the ISRC; the track itself has it.
+        guard let detailURL = URL(string: "https://api.deezer.com/track/\(hit.id)") else { return nil }
+        let detail = try JSONDecoder().decode(TrackDetail.self, from: try await data(detailURL))
+        return (detail.isrc, detail.album?.id ?? hit.album?.id)
+    }
+
+    private func data(_ url: URL) async throws -> Data {
+        await semaphore.wait()
+        defer { Task { await semaphore.signal() } }
+        let (data, response) = try await session.data(from: url)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw DeezerClientError.badResponse
+        }
+        return data
+    }
+
+    private struct AlbumSearch: Decodable {
+        struct Hit: Decodable { let id: Int; let title: String; let nb_tracks: Int? }
+        let data: [Hit]
+    }
+    private struct AlbumDetail: Decodable {
+        struct Genres: Decodable { struct G: Decodable { let name: String }; let data: [G] }
+        let id: Int?
+        let upc: String?
+        let nb_tracks: Int?
+        let genres: Genres?
+    }
+    private struct TrackSearch: Decodable {
+        struct Hit: Decodable {
+            struct A: Decodable { let id: Int }
+            struct P: Decodable { let name: String }
+            let id: Int
+            let title: String
+            let album: A?
+            let artist: P?
+        }
+        let data: [Hit]
+    }
+    private struct TrackDetail: Decodable {
+        struct A: Decodable { let id: Int }
+        let isrc: String?
+        let album: A?
+    }
+
     /// The names of up to 50 artists Deezer lists as related to this one.
     func relatedArtists(id: Int) async throws -> [String] {
         guard let url = URL(string: "https://api.deezer.com/artist/\(id)/related?limit=50") else {

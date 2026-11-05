@@ -295,6 +295,13 @@ private struct LibrarySettingsPane: View {
                 .padding(.vertical, Theme.Spacing.md)
             }
 
+            // Genres ───────────────────────────────────────────────────────
+            SettingsGroup(title: "Genres") {
+                GenreScanRow()
+                    .padding(.horizontal, Theme.Spacing.lg)
+                    .padding(.vertical, Theme.Spacing.md)
+            }
+
             // Collection ───────────────────────────────────────────────────
             // Grid/list layout is chosen in-page on the Collection and
             // Playlists tabs, so it doesn't appear here.
@@ -648,6 +655,86 @@ private struct ConnectionsSettingsPane: View {
     }
 }
 
+// MARK: - Genre scan
+
+/// Settings › Library › Genres: scan every album for missing genres, with
+/// the stage, a progress bar and time left while it runs.
+private struct GenreScanRow: View {
+    @Environment(LibraryStore.self) private var library
+
+    var body: some View {
+        let scanner = GenreScanner.shared
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: Theme.Spacing.lg) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Scan Library for Genres")
+                        .font(Theme.Font.body)
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(detail(scanner))
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if scanner.isScanning {
+                    Button("Stop") { scanner.stopScan() }
+                        .buttonStyle(PillButtonStyle())
+                } else {
+                    Button("Scan") { scanner.scanLibrary() }
+                        .buttonStyle(PillButtonStyle())
+                        .disabled(!library.hasCompletedInitialLoad || untagged.albums == 0)
+                }
+            }
+            if let scan = scanner.scan {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: Double(scan.done), total: Double(max(scan.total, 1)))
+                        .progressViewStyle(.linear)
+                        .tint(Theme.textPrimary)
+                    HStack {
+                        Text("\(scan.stage == .identifying ? "Identifying albums" : "Pulling genres") · \(scan.done) of \(scan.total)")
+                        Spacer()
+                        Text(remaining(scan.remaining))
+                    }
+                    .font(Theme.Font.caption.monospacedDigit())
+                    .foregroundStyle(Theme.textSecondary)
+                }
+                .animation(.easeOut(duration: 0.2), value: scan.done)
+            }
+        }
+        // The summary, once a scan ends (or the next time this row shows).
+        .sheet(item: Binding(get: { GenreScanner.shared.pendingSummary },
+                             set: { GenreScanner.shared.pendingSummary = $0 })) { summary in
+            GenreScanSummarySheet(summary: summary)
+        }
+    }
+
+    private var untagged: (tracks: Int, albums: Int) {
+        let albums = library.albums.filter { $0.tracks.contains { ($0.genre ?? "").isEmpty && $0.secondaryGenres.isEmpty } }
+        let tracks = albums.reduce(0) { $0 + $1.tracks.filter { ($0.genre ?? "").isEmpty && $0.secondaryGenres.isEmpty }.count }
+        return (tracks, albums.count)
+    }
+
+    private func detail(_ scanner: GenreScanner) -> String {
+        if let scan = scanner.scan {
+            return scan.written == 1 ? "Genres written to 1 track so far." : "Genres written to \(scan.written) tracks so far."
+        }
+        let u = untagged
+        if u.albums == 0 { return "Every track has a genre." }
+        let tracks = u.tracks == 1 ? "1 track" : "\(u.tracks) tracks"
+        let albums = u.albums == 1 ? "1 album" : "\(u.albums) albums"
+        return "\(tracks) in \(albums) have no genre. Looks them up on Deezer and MusicBrainz, and writes genres only into tracks that have none."
+    }
+
+    private func remaining(_ seconds: TimeInterval?) -> String {
+        guard let seconds else { return "Estimating time left…" }
+        if seconds < 60 { return "Less than a minute left" }
+        let minutes = Int((seconds / 60).rounded())
+        if minutes < 60 { return "About \(minutes) min left" }
+        let hours = minutes / 60, rest = minutes % 60
+        return rest == 0 ? "About \(hours) h left" : "About \(hours) h \(rest) min left"
+    }
+}
+
 // MARK: - Debug pane
 
 /// Switches for testing the app. Only shown while Settings → General →
@@ -693,6 +780,19 @@ private struct DebugSettingsPane: View {
                     subtitle: "Home, Collection and Playlists appear as a new user sees them. Your library isn't touched.",
                     isOn: $debugState.previewsEmptyLibrary
                 )
+            }
+
+            SettingsGroup(title: "Genre lookups") {
+                actionRow(
+                    "Remembered answers",
+                    detail: cleared.contains("genres")
+                        ? "Cleared. The next scan asks Deezer and MusicBrainz again."
+                        : "Which albums have been looked up, and what was found.",
+                    button: cleared.contains("genres") ? "Cleared" : "Clear"
+                ) {
+                    Task { await GenreCache.shared.clearAlbums() }
+                    cleared.insert("genres")
+                }
             }
 
             SettingsGroup(title: "Generated mixes") {

@@ -27,9 +27,11 @@ struct ImageCropperView: View {
     var aspectRatio: CGFloat = 1.0
     /// Title shown in the sheet header.
     var title: String = "Crop Image"
-    /// Longest output width, in pixels. Crops smaller than this are never
-    /// upscaled past 1200px.
-    var maxOutputPixelWidth: CGFloat = 1200
+    /// Longest output width, in pixels (crops smaller than 1200px are drawn
+    /// at 1200). Nil keeps the crop at its own size, never scaled either way,
+    /// in the source's format, and passes an uncropped JPEG or PNG through
+    /// byte for byte: album covers, which are stored in the music files.
+    var maxOutputPixelWidth: CGFloat? = 1200
     /// JPEG quality for the stored result; nil keeps PNG. Large photographic
     /// crops (banners) use JPEG so the override store stays small.
     var jpegQuality: CGFloat? = nil
@@ -203,10 +205,22 @@ struct ImageCropperView: View {
         let srcY = (renderedH / 2 - cropHeight / 2 - offset.height) * pixelsPerPreviewPoint
 
         let cropRect = CGRect(x: srcX, y: srcY, width: srcW, height: srcH).integral
-        let outputWidth = min(maxOutputPixelWidth, max(cropRect.width, 1200))
-        let outW = Int(outputWidth)
-        let outH = Int(outputWidth / aspectRatio)
-        let quality = jpegQuality
+        let format = CoverFormat(sourceData)
+
+        // Full resolution: an untouched JPEG or PNG goes in exactly as it is.
+        if maxOutputPixelWidth == nil, format != .other, Self.coversWholeImage(cropRect, source.pixelSize) {
+            onComplete(sourceData)
+            dismiss()
+            return
+        }
+
+        let outputWidth = maxOutputPixelWidth.map { min($0, max(cropRect.width, 1200)) } ?? cropRect.width
+        let outW = Int(outputWidth.rounded())
+        let outH = Int((outputWidth / aspectRatio).rounded())
+        // Full-resolution crops stay in their source's format: PNG as PNG,
+        // anything else as a high-quality JPEG (a 4000px PNG would add tens
+        // of megabytes to every track it's embedded in).
+        let quality: CGFloat? = maxOutputPixelWidth == nil ? (format == .png ? nil : 0.95) : jpegQuality
 
         isCommitting = true
         Task {
@@ -218,6 +232,27 @@ struct ImageCropperView: View {
             onComplete(data)
             dismiss()
         }
+    }
+}
+
+extension ImageCropperView {
+    /// The crop is the whole image, give or take rounding: nothing to cut.
+    static func coversWholeImage(_ crop: CGRect, _ size: CGSize) -> Bool {
+        abs(crop.minX) <= 2 && abs(crop.minY) <= 2
+            && abs(crop.width - size.width) <= 2 && abs(crop.height - size.height) <= 2
+    }
+}
+
+/// What an image file is, from its first bytes: covers are embedded as JPEG
+/// or PNG, so anything else is re-encoded.
+enum CoverFormat: Equatable {
+    case jpeg, png, other
+
+    init(_ data: Data) {
+        let head = data.prefix(4)
+        if head.starts(with: [0xFF, 0xD8, 0xFF]) { self = .jpeg }
+        else if head.starts(with: [0x89, 0x50, 0x4E, 0x47]) { self = .png }
+        else { self = .other }
     }
 }
 
@@ -291,6 +326,8 @@ struct SquareImageCropperView: View {
             sourceData: sourceData,
             aspectRatio: 1.0,
             title: "Crop Cover",
+            // Covers keep their full resolution.
+            maxOutputPixelWidth: nil,
             onComplete: onComplete
         )
     }

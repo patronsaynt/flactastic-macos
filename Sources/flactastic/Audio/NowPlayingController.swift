@@ -177,7 +177,7 @@ final class NowPlayingController {
             return cached
         }
         cachedArtworkTrackID = track.id
-        guard let data = track.artwork, let image = NSImage(data: data) else {
+        guard let data = track.artwork, let full = CoverExport.pixelSize(data) else {
             cachedArtwork = nil
             return nil
         }
@@ -188,9 +188,13 @@ final class NowPlayingController {
         // enclosing @MainActor class and crashes the Swift runtime's
         // `_swift_task_checkIsolatedSwift` assertion during that enumeration.
         // Capturing `Data` + `CGSize` (both Sendable) keeps the closure valid.
-        let size = image.size
+        //
+        // Handed over at no more than 1000 px (decoded small, on the system's
+        // queue when it asks), so a 4000 px cover doesn't cost a 64 MB bitmap.
+        let scale = min(1, Double(CoverExport.maxPixel) / Double(max(full.width, full.height, 1)))
+        let size = CGSize(width: Double(full.width) * scale, height: Double(full.height) * scale)
         let artwork = MPMediaItemArtwork(boundsSize: size) { @Sendable _ in
-            NSImage(data: data) ?? NSImage(size: size)
+            CoverExport.image(data) ?? NSImage(size: size)
         }
         cachedArtwork = artwork
         return artwork

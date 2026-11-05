@@ -260,6 +260,31 @@ actor MetadataWriter {
         return updated
     }
 
+    /// Writes a GENRE tag (primary plus secondaries) only if the file has
+    /// none: the file itself is read first, so a genre set in another app
+    /// since the library last read it is never overwritten. Returns the
+    /// track with its new genres, or nil if the file already had a genre.
+    func writeGenreIfEmpty(to track: Track, primary: String, secondary: [String]) throws -> Track? {
+        let url = track.url
+        guard FileManager.default.fileExists(atPath: url.path) else { throw WriteError.fileNotFound(url) }
+        guard let file = url.path.withCString({ taglib_file_new($0) }) else { throw WriteError.fileOpenFailed(url) }
+        defer {
+            taglib_file_free(file)
+            taglib_tag_free_strings()
+        }
+        guard taglib_file_is_valid(file) != 0, let tag = taglib_file_tag(file) else { throw WriteError.fileOpenFailed(url) }
+        let existing = taglib_tag_genre(tag).map { String(cString: $0) } ?? ""
+        guard existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        guard let value = GenreResolver.join(primary: primary, secondary: secondary) else { return nil }
+        value.withCString { taglib_tag_set_genre(tag, $0) }
+        guard taglib_file_save(file) != 0 else { throw WriteError.saveFailed(url) }
+        var updated = track
+        let parsed = GenreResolver.split(value)
+        updated.genre = parsed.primary
+        updated.secondaryGenres = parsed.secondary
+        return updated
+    }
+
     /// Write a `LYRICS` tag onto the file at `track.url`. TagLib normalizes
     /// the property name to the format-specific frame (Xiph LYRICS / ID3v2
     /// USLT / MP4 ©lyr / WMA WM/Lyrics). Pass `nil` or `""` to clear.
