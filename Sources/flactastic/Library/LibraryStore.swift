@@ -402,6 +402,11 @@ final class LibraryStore {
         trackIDStore.load(from: url)
         splitDecisions.load(from: url)
         pendingSplitReview = []
+        // Sync also sweeps after each run, but a library that never syncs
+        // again would keep its dead partial transfers forever.
+        Task.detached(priority: .background) {
+            FileTransfer.sweepAbandonedPartFiles(libraryRoot: url)
+        }
 
         scanTask = Task { [scanner] in
             do {

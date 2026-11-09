@@ -179,6 +179,7 @@ final class TagUpgrader {
             n += 1
         }
         try backup.encoded().write(to: url, options: .atomic)
+        Housekeeping.pruneTagBackups(in: directory)
         return url
     }
 

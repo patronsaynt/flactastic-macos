@@ -226,10 +226,27 @@ final class ArtworkImageCache: @unchecked Sendable {
     private func loadFromDisk(key: String) -> NSImage? {
         // Decoded here, off the main thread: `NSImage(data:)` defers the JPEG
         // decode to the first draw, on the main thread, mid-scroll.
-        guard let source = CGImageSourceCreateWithURL(diskURL(forKey: key) as CFURL, nil),
+        let url = diskURL(forKey: key)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let image = CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary)
         else { return nil }
+        // Mark it used, so the size cap evicts thumbnails nobody has looked
+        // at in a while rather than the oldest-written ones. Once per key per
+        // session at most: after this the memory cache answers.
+        diskWriteQueue.async {
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+        }
         return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+    }
+
+    /// Deletes the least recently used thumbnails on disk until they total
+    /// `target` bytes, when they're over `limit`. Runs on the disk-write
+    /// queue so it never interleaves with `removeAll()` or a write.
+    func trimDisk(toBytes target: Int, ifOver limit: Int) {
+        let directory = diskDirectory
+        diskWriteQueue.async {
+            Housekeeping.trimDirectory(directory, toBytes: target, ifOver: limit)
+        }
     }
 
     private static func saveToDisk(_ image: NSImage, key: String, directory: URL) {

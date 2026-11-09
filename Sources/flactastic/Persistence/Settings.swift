@@ -205,6 +205,22 @@ final class Settings {
         )
     }
 
+    /// Spotify app credentials from the old client-secret sign-in, which the
+    /// PKCE flow replaced. No code reads them any more, so without this they
+    /// would sit in the preferences plist in plain text indefinitely.
+    nonisolated static let legacyCredentialKeys = [
+        "flactastic.spotifyClientSecret",
+        "flactastic.spotifyClientID",
+    ]
+
+    /// Removes `legacyCredentialKeys` from `defaults`. Runs on every launch;
+    /// once the keys are gone it does nothing.
+    nonisolated static func removeLegacyCredentials(from defaults: UserDefaults = .standard) {
+        for key in legacyCredentialKeys where defaults.object(forKey: key) != nil {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
     private static func saveJSON<T: Encodable>(_ value: T, key: String) {
         UserDefaults.standard.set(try? JSONEncoder().encode(value), forKey: key)
     }
@@ -298,6 +314,7 @@ final class Settings {
     }
 
     init() {
+        Self.removeLegacyCredentials()
         lastRootPath = UserDefaults.standard.string(forKey: "flactastic.lastRootPath")
         let stored = UserDefaults.standard.object(forKey: "flactastic.volume")
         volume = (stored as? Float) ?? 0.75

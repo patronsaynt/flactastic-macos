@@ -363,6 +363,7 @@ struct FlactasticApp: App {
         await artistStore.loadAsync()
         await artistRemoteCache.loadAsync()
         await lyricsRemoteCache.loadAsync()
+        Housekeeping.runAtLaunch()
         player.engine.setVolume(settings.volume)
         // Route to the saved output device / format before anything plays,
         // so the choice never interrupts audio at launch.
