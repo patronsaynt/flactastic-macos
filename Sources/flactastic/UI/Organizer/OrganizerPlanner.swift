@@ -25,7 +25,7 @@ enum OrganizerPlanner {
     /// Computes the move plan for `tracks` under `rootURL` using `profile`.
     /// Returns operations in stable, sorted order so the preview UI doesn't
     /// shuffle on small edits.
-    static func plan(tracks: [Track], profile: OrganizerProfile, rootURL: URL) -> [OrganizerOperation] {
+    static func plan(tracks: [Track], profile: OrganizerProfile, rootURL: URL, resolver: ArtistResolver? = nil) -> [OrganizerOperation] {
         var preliminary: [(track: Track, dest: URL)] = []
         preliminary.reserveCapacity(tracks.count)
 
@@ -34,7 +34,7 @@ enum OrganizerPlanner {
             for level in profile.levels {
                 let raw = OrganizerTemplate.render(level.nameTemplate, for: track,
                                                    fallback: level.displayLabel,
-                                                   primaryArtistOnly: profile.usePrimaryArtistOnly)
+                                                   primaryArtistOnly: profile.usePrimaryArtistOnly, resolver: resolver)
                 folder.appendPathComponent(raw, isDirectory: true)
             }
             // Preserve the original extension casing. Lowercasing extensions
@@ -45,7 +45,7 @@ enum OrganizerPlanner {
             let ext = track.url.pathExtension
             let renderedName = OrganizerTemplate.render(profile.fileTemplate, for: track,
                                                         fallback: "Untitled",
-                                                        primaryArtistOnly: profile.usePrimaryArtistOnly)
+                                                        primaryArtistOnly: profile.usePrimaryArtistOnly, resolver: resolver)
             let filename = ext.isEmpty ? renderedName : "\(renderedName).\(ext)"
             let dest = folder.appendingPathComponent(filename).standardizedFileURL
             preliminary.append((track, dest))

@@ -213,6 +213,11 @@ final class LibraryStore {
     /// Persists relativePath → UUID so Track identities survive restarts.
     /// Loaded in `openFolder` and consulted during every scan.
     private(set) var trackIDStore = TrackIDStore()
+    /// Saved answers from the ambiguous-credit review, applied on every scan.
+    @ObservationIgnored private(set) var splitDecisions = SplitDecisionStore()
+    /// Ambiguous credits ("A & B") that nothing in the library confirms as a
+    /// split and that have no saved answer yet. Rebuilt after each scan.
+    var pendingSplitReview: [SplitReviewItem] = []
 
     func album(for track: Track) -> Album? {
         albums.first { $0.tracks.contains { $0.id == track.id } }
@@ -389,6 +394,8 @@ final class LibraryStore {
 
         // Load the sidecar before scanning so assign() returns persisted UUIDs.
         trackIDStore.load(from: url)
+        splitDecisions.load(from: url)
+        pendingSplitReview = []
 
         scanTask = Task { [scanner] in
             do {

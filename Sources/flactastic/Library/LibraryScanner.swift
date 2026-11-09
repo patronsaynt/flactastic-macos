@@ -107,27 +107,27 @@ actor LibraryScanner {
             if let ptr = taglib_tag_title(tag), ptr.pointee != 0 {
                 updated.title = String(cString: ptr)
             }
-            if let ptr = taglib_tag_artist(tag), ptr.pointee != 0 {
-                updated.artist = String(cString: ptr)
-            }
             if let ptr = taglib_tag_album(tag), ptr.pointee != 0 {
                 updated.album = String(cString: ptr)
             }
-            if let ptr = taglib_tag_genre(tag), ptr.pointee != 0 {
-                let (primary, secondary) = GenreResolver.split(String(cString: ptr))
-                updated.genre = primary
-                updated.secondaryGenres = secondary
-            }
+
+            // Artist, album artist and genre come through the property map,
+            // which keeps multi-values as real lists. The basic tag API is the
+            // fallback for an empty list: on an MP3 it also reads ID3v1, which
+            // the property map skips when an ID3v2 tag exists.
+            let fields = Self.multiValueFields(file, tag: tag)
+            updated.artist = fields.artist.value
+            updated.artistIsList = fields.artist.isList
+            updated.albumArtist = fields.albumArtist.value
+            updated.albumArtistIsList = fields.albumArtist.isList
+            updated.genre = fields.genres.primary
+            updated.secondaryGenres = fields.genres.secondary
+            updated.tagVersion = fields.tagVersion
+
             let year = taglib_tag_year(tag)
             if year > 0 { updated.year = Int(year) }
             let track = taglib_tag_track(tag)
             if track > 0 { updated.trackNumber = Int(track) }
-
-            if let aaPtr = taglib_helper_get_album_artist(file) {
-                let aa = String(cString: aaPtr)
-                if !aa.isEmpty { updated.albumArtist = aa }
-                free(aaPtr)
-            }
 
             updated.isCompilation = taglib_helper_get_compilation(file) != 0
             updated.isMixCompilation = taglib_helper_get_mix_compilation(file) != 0
@@ -179,6 +179,58 @@ actor LibraryScanner {
         }
 
         return updated
+    }
+
+    struct MultiValueFields {
+        var artist: (value: String?, isList: Bool)
+        var albumArtist: (value: String?, isList: Bool)
+        var genres: (primary: String?, secondary: [String])
+        var tagVersion: Int?
+    }
+
+    /// Artist, album artist, genre and the tag-format marker of an open file,
+    /// resolved by `MultiValueParser`. Call on the scanner actor (or another
+    /// single thread): `tag` strings live in TagLib's global string list.
+    static func multiValueFields(_ file: UnsafeMutablePointer<TagLib_File>, tag: UnsafeMutablePointer<TagLib_Tag>) -> MultiValueFields {
+        func basic(_ read: (UnsafePointer<TagLib_Tag>?) -> UnsafeMutablePointer<CChar>?) -> [String] {
+            guard let ptr = read(tag), ptr.pointee != 0 else { return [] }
+            return [String(cString: ptr)]
+        }
+        func native(_ key: String, fallback: @autoclosure () -> [String] = []) -> [String] {
+            let values = propertyList(file, key)
+            return values.isEmpty ? fallback() : values
+        }
+        let artistIDs = MultiValueParser.splitIdentifiers(propertyList(file, "MUSICBRAINZ_ARTISTID"))
+        let albumArtistIDs = MultiValueParser.splitIdentifiers(propertyList(file, "MUSICBRAINZ_ALBUMARTISTID"))
+        return MultiValueFields(
+            artist: MultiValueParser.storedCredit(
+                plural: propertyList(file, "ARTISTS"),
+                native: native("ARTIST", fallback: basic(taglib_tag_artist)),
+                mbidCount: artistIDs.count),
+            albumArtist: MultiValueParser.storedCredit(
+                plural: propertyList(file, "ALBUMARTISTS"),
+                native: native("ALBUMARTIST"),
+                mbidCount: albumArtistIDs.count),
+            genres: MultiValueParser.storedGenres(native: native("GENRE", fallback: basic(taglib_tag_genre))),
+            tagVersion: propertyList(file, "FLACTASTIC_TAGVERSION").first.flatMap {
+                Int($0.trimmingCharacters(in: .whitespaces))
+            }
+        )
+    }
+
+    /// Every value of a property (TagLib's cross-format key), in file order.
+    /// Empty when unset. At most `MultiValueParser.maxValues` + 1 are kept, so
+    /// a hostile file can't make the parser walk an unbounded list.
+    static func propertyList(_ file: UnsafeMutablePointer<TagLib_File>, _ key: String) -> [String] {
+        guard let values = key.withCString({ taglib_property_get(file, $0) }) else { return [] }
+        defer { taglib_property_free(values) }
+        var out: [String] = []
+        var i = 0
+        while let ptr = values[i], out.count <= MultiValueParser.maxValues {
+            out.append(String(cString: ptr))
+            i += 1
+        }
+        return out
     }
 
     /// One text property by name, trimmed; nil when unset or blank.

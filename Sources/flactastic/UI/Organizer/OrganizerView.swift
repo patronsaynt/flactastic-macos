@@ -92,7 +92,8 @@ struct OrganizerView: View {
         model.schedulePreview(
             profile: store.selected,
             tracks: library.tracks,
-            rootURL: library.rootURL
+            rootURL: library.rootURL,
+            resolver: library.makeArtistResolver()
         )
     }
 
@@ -111,7 +112,8 @@ struct OrganizerView: View {
             template,
             for: exampleTrack,
             fallback: fallback,
-            primaryArtistOnly: store.selected.usePrimaryArtistOnly
+            primaryArtistOnly: store.selected.usePrimaryArtistOnly,
+            resolver: library.makeArtistResolver()
         )
     }
 

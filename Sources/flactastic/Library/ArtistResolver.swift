@@ -1,60 +1,75 @@
 import Foundation
 
-/// Identifies and parses artist credit strings against the set of canonical
-/// artists known to the library. Splitting only happens when each fragment of
-/// a separator-laden string matches a known canonical name, so legitimate
-/// names like "Earth, Wind & Fire" stay intact.
+/// Identifies and parses artist credit strings against the artists known to
+/// the library. Splitting rules live in `MultiValueParser`; this adds the
+/// library context the parser's ambiguous rule needs: which names exist on
+/// their own, saved review decisions, and which strings came from a real list.
 struct ArtistResolver: Sendable {
     /// Maps normalised key → preferred display casing observed in tags.
     let canonicalByKey: [String: String]
+    /// Keys of names that exist as a value on their own somewhere in the
+    /// library: a single-name credit, or one entry of an explicit list. Only
+    /// these can confirm an ambiguous split ("A & B" splits when both A and B
+    /// are known); fragments of other ambiguous strings never count.
+    let standaloneKeys: Set<String>
+    /// Saved review answers, keyed by the raw credit string.
+    let decisions: [String: MultiValueParser.Decision]
+    /// Raw strings that came from a plural tag or native multi-values and so
+    /// are never split heuristically.
+    let exactRaws: Set<String>
 
     /// Build a resolver from a track collection.
     ///
-    /// **Pass 1** – single-artist tags (no separator tokens) are the most
-    /// trustworthy source of a display name; first occurrence wins.
+    /// **Pass 1** – credits with no separator of any kind, and each entry of
+    /// an explicit list (";", NUL, " / ", backslash, a plural tag or a saved
+    /// split), are standalone names; first casing wins.
     ///
-    /// **Pass 2** – multi-artist strings are split permissively so that
-    /// artists who *only* appear inside collaborative credits (e.g. "A, B, C")
-    /// still get their tag casing stored rather than falling back to the
-    /// lowercase normalized key. Pass-1 names are never overwritten, so a
-    /// well-tagged solo artist like "Earth, Wind & Fire" keeps its full name
-    /// intact even if pass 2 would split it.
-    init(tracks: [Track]) {
+    /// **Pass 2** – ambiguous credits ("A & B", "A, B") are resolved against
+    /// pass 1. A split's parts are already known; an unsplit credit is a name
+    /// in its own right ("Earth, Wind & Fire"), so its casing is stored too.
+    init(tracks: [Track], decisions: [String: MultiValueParser.Decision] = [:]) {
         var byKey: [String: String] = [:]
-        var multiRaws: [String] = []
+        var standalone = Set<String>()
+        var ambiguous: [String] = []
+        var exact = Set<String>()
 
-        // Pass 1 – standalone (non-separator) tags → primary display names.
+        func addStandalone(_ name: String) {
+            let key = Self.key(for: name)
+            standalone.insert(key)
+            if byKey[key] == nil { byKey[key] = name }
+        }
+
         for track in tracks {
-            for raw in [track.albumArtist, track.artist] {
+            for (raw, isList) in [(track.albumArtist, track.albumArtistIsList), (track.artist, track.artistIsList)] {
                 guard let raw, !raw.isEmpty else { continue }
                 let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                if Self.containsSeparator(trimmed) || Self.explicitlySeparated(trimmed) != nil {
-                    multiRaws.append(trimmed)
+                if isList { exact.insert(trimmed) }
+                if let pieces = MultiValueParser.splitSafe(trimmed) {
+                    pieces.forEach(addStandalone)
+                } else if case .split(let parts)? = decisions[trimmed] {
+                    parts.forEach(addStandalone)
+                } else if isList || decisions[trimmed] == .keep || !MultiValueParser.hasAmbiguousSeparator(trimmed) {
+                    addStandalone(trimmed)
                 } else {
-                    let key = Self.key(for: trimmed)
-                    if byKey[key] == nil { byKey[key] = trimmed }
+                    ambiguous.append(trimmed)
                 }
             }
         }
 
-        // Pass 2 – harvest display names from multi-artist strings.
-        // Explicit delimiters (NUL / ";" / " / ") are always split.
-        // Heuristic delimiters (", " / "feat." / "&" etc.) are split
-        // unconditionally here *only* for name storage — the strict
-        // all-known-fragments check in split() is preserved for navigation.
-        // False-positive fragments (e.g. "Earth" from "Earth, Wind & Fire")
-        // are harmless: they only get a display-name entry in byKey; they
-        // never appear in allArtists() unless a track actually credits them
-        // as a standalone artist.
-        for raw in Set(multiRaws) {
-            let pieces = Self.explicitlySeparated(raw) ?? Self.splitOnSeparators(raw)
-            for piece in pieces {
-                let key = Self.key(for: piece)
-                if byKey[key] == nil { byKey[key] = piece }
+        // Pass 2 – an unsplit ambiguous credit keeps its own display name.
+        for raw in Set(ambiguous) {
+            let parts = MultiValueParser.splitAmbiguous(raw)
+            let splits = parts.count > 1 && parts.allSatisfy { standalone.contains(Self.key(for: $0)) }
+            if !splits {
+                let key = Self.key(for: raw)
+                if byKey[key] == nil { byKey[key] = raw }
             }
         }
 
         self.canonicalByKey = byKey
+        self.standaloneKeys = standalone
+        self.decisions = decisions
+        self.exactRaws = exact
     }
 
     /// Stable lookup key: lowercased, diacritic-folded, whitespace-collapsed.
@@ -72,45 +87,43 @@ struct ArtistResolver: Sendable {
         canonicalByKey[key] ?? key
     }
 
-    /// Parse a raw credit string into one or more artist names.
-    /// - Strings containing the explicit delimiter (`;` or NUL) are always
-    ///   split on those — that's how the track editor stores user-defined
-    ///   artist lists, so they're authoritative.
-    /// - Otherwise we attempt to split on common collaboration tokens
-    ///   (feat./&/etc.) only when every fragment matches a known canonical
-    ///   artist, so legitimate names like "Earth, Wind & Fire" stay intact.
+    /// Parse a raw credit string into one or more artist names, following
+    /// `MultiValueParser.resolve`: explicit lists always split; strings from a
+    /// plural tag or native values never split further; saved review
+    /// decisions apply next; and an ambiguous credit splits only when every
+    /// fragment is a standalone name in the library.
     func split(_ raw: String?) -> [String] {
         guard let raw, !raw.isEmpty else { return [] }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
-
-        // Explicit user-defined list.
         if let explicit = Self.explicitlySeparated(trimmed) { return explicit }
+        if exactRaws.contains(trimmed) || standaloneKeys.contains(Self.key(for: trimmed)) { return [trimmed] }
+        let outcome = MultiValueParser.resolve(
+            field: .artist, native: [trimmed],
+            isKnown: { standaloneKeys.contains(Self.key(for: $0)) },
+            decision: decisions[trimmed]
+        )
+        if case .values(let parts) = outcome, !parts.isEmpty { return parts }
+        return [trimmed]
+    }
 
-        // Fast path: the whole string is itself a known canonical name.
-        if canonicalByKey[Self.key(for: trimmed)] != nil { return [trimmed] }
-        if !Self.containsSeparator(trimmed) { return [trimmed] }
-
-        let fragments = Self.splitOnSeparators(trimmed)
-        let allKnown = fragments.allSatisfy { canonicalByKey[Self.key(for: $0)] != nil }
-        return allKnown ? fragments : [trimmed]
+    /// True when `raw` is an ambiguous credit this resolver keeps whole only
+    /// because nothing confirms a split yet, i.e. it needs a review decision.
+    func needsReview(_ raw: String) -> Bool {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, Self.explicitlySeparated(trimmed) == nil,
+              !exactRaws.contains(trimmed), decisions[trimmed] == nil,
+              !standaloneKeys.contains(Self.key(for: trimmed)) else { return false }
+        if case .review = MultiValueParser.resolve(
+            field: .artist, native: [trimmed], isKnown: { standaloneKeys.contains(Self.key(for: $0)) }
+        ) { return true }
+        return false
     }
 
     /// If the string uses one of the explicit multi-artist delimiters, return
-    /// the trimmed pieces. Otherwise nil.
+    /// the trimmed pieces. Otherwise nil. See `MultiValueParser.splitSafe`.
     static func explicitlySeparated(_ raw: String) -> [String]? {
-        // NUL and ";" are the app's own storage delimiters.
-        // " / " (with spaces) is iTunes/Music.app's multi-artist delimiter —
-        // spaces are required so names like "AC/DC" are left intact.
-        for delimiter in ["\u{0000}", ";", " / "] {
-            if raw.contains(delimiter) {
-                return raw
-                    .components(separatedBy: delimiter)
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-            }
-        }
-        return nil
+        MultiValueParser.splitSafe(raw)
     }
 
     /// The lead credit of a multi-artist string, using only the explicit
@@ -161,48 +174,11 @@ struct ArtistResolver: Sendable {
 
     // MARK: - Separator handling
 
-    /// Tokens that count as artist-credit separators. Order matters: longer
-    /// alternatives are tried first so "feat." doesn't get partially matched.
-    private static let separatorPatterns: [String] = [
-        " featuring ", " feat. ", " feat ", " ft. ", " ft ",
-        " vs. ", " vs ",
-        " with ",
-        " & ", " x ", " X ",
-        ", "
-    ]
-
     static func containsSeparator(_ s: String) -> Bool {
-        let padded = " \(s) "
-        let lower = padded.lowercased()
-        for token in separatorPatterns {
-            if lower.contains(token.lowercased()) { return true }
-        }
-        return false
+        MultiValueParser.hasAmbiguousSeparator(s)
     }
 
     static func splitOnSeparators(_ s: String) -> [String] {
-        var fragments: [String] = [s]
-        for token in separatorPatterns {
-            var next: [String] = []
-            for piece in fragments {
-                next.append(contentsOf: caseInsensitiveSplit(piece, separator: token))
-            }
-            fragments = next
-        }
-        return fragments
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-    }
-
-    private static func caseInsensitiveSplit(_ s: String, separator: String) -> [String] {
-        guard !separator.isEmpty else { return [s] }
-        var pieces: [String] = []
-        var remainder = s
-        while let range = remainder.range(of: separator, options: .caseInsensitive) {
-            pieces.append(String(remainder[..<range.lowerBound]))
-            remainder = String(remainder[range.upperBound...])
-        }
-        pieces.append(remainder)
-        return pieces
+        MultiValueParser.splitAmbiguous(s)
     }
 }

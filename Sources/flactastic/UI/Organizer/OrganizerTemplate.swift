@@ -30,36 +30,33 @@ enum OrganizerTemplate {
     /// Renders `template` using values from `track`. Result is sanitised for
     /// filesystem safety (path separators stripped, etc.). Empty result falls
     /// back to `fallback`. When `primaryArtistOnly` is true, multi-artist
-    /// values are reduced to the first credited artist.
-    static func render(_ template: String, for track: Track, fallback: String = "Unknown", primaryArtistOnly: Bool = false) -> String {
+    /// values are reduced to the first credited artist, split the way the rest
+    /// of the app splits them (`resolver`; explicit lists only without one).
+    static func render(_ template: String, for track: Track, fallback: String = "Unknown", primaryArtistOnly: Bool = false,
+                       resolver: ArtistResolver? = nil) -> String {
         var out = template
         for token in allTokens {
-            out = out.replacingOccurrences(of: token.placeholder, with: value(for: token.key, track: track, primaryArtistOnly: primaryArtistOnly))
+            out = out.replacingOccurrences(of: token.placeholder, with: value(for: token.key, track: track, primaryArtistOnly: primaryArtistOnly, resolver: resolver))
         }
         return ImportCopy.sanitize(out, fallback: fallback)
     }
 
-    /// Splits a multi-artist string ("A & B", "A; B", "A feat. B", "A, B",
-    /// "A / B") and returns just the first credited artist, trimmed.
-    static func primaryArtist(_ raw: String) -> String {
-        let separators: [String] = [";", " feat.", " feat ", " ft.", " ft ", " featuring ", " & ", " and ", " with ", " vs.", " vs ", "/", ","]
-        var s = raw
-        for sep in separators {
-            if let r = s.range(of: sep, options: .caseInsensitive) {
-                s = String(s[..<r.lowerBound])
-            }
-        }
-        return s.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The first credited artist of a multi-artist string. Explicit lists
+    /// ("A ; B") always split; ambiguous credits ("A & B", "A, B") split only
+    /// when `resolver` confirms it, so "Earth, Wind & Fire" stays whole.
+    static func primaryArtist(_ raw: String, resolver: ArtistResolver? = nil) -> String {
+        let pieces = resolver?.split(raw) ?? MultiValueParser.splitSafe(raw) ?? [raw]
+        return (pieces.first ?? raw).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private static func value(for key: String, track: Track, primaryArtistOnly: Bool) -> String {
+    private static func value(for key: String, track: Track, primaryArtistOnly: Bool, resolver: ArtistResolver?) -> String {
         switch key {
         case "artist":
             let raw = track.artist ?? "Unknown Artist"
-            return primaryArtistOnly ? primaryArtist(raw) : raw
+            return primaryArtistOnly ? primaryArtist(raw, resolver: resolver) : raw
         case "albumArtist":
             let raw = track.albumArtist ?? track.artist ?? "Unknown Artist"
-            return primaryArtistOnly ? primaryArtist(raw) : raw
+            return primaryArtistOnly ? primaryArtist(raw, resolver: resolver) : raw
         case "album": return track.album ?? "Unknown Album"
         case "title": return track.title.isEmpty ? "Untitled" : track.title
         case "track": return track.trackNumber.map { String(format: "%02d", $0) } ?? "00"
@@ -70,7 +67,7 @@ enum OrganizerTemplate {
         case "ext": return track.url.pathExtension.lowercased()
         case "artistInitial":
             var name = track.albumArtist ?? track.artist ?? ""
-            if primaryArtistOnly { name = primaryArtist(name) }
+            if primaryArtistOnly { name = primaryArtist(name, resolver: resolver) }
             return name.trimmingCharacters(in: .whitespaces).first.map { String($0).uppercased() } ?? "#"
         default: return ""
         }

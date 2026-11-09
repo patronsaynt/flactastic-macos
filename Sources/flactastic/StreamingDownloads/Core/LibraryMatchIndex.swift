@@ -110,15 +110,10 @@ struct LibraryMatchIndex: Sendable {
     }
 
     /// Split a (possibly multi-artist) artist tag into a set of normalized
-    /// names, tolerating the separators different services use (";", ",", "&",
-    /// "/", "feat."/"ft.").
+    /// names, tolerating every separator different services use. Permissive
+    /// on purpose: this only decides whether two credits overlap.
     private static func artistTokens(_ raw: String?) -> Set<String> {
         guard let raw, !raw.isEmpty else { return [] }
-        var working = raw.lowercased()
-        for marker in [" feat.", " feat ", " ft.", " ft ", " featuring "] {
-            working = working.replacingOccurrences(of: marker, with: ";")
-        }
-        let parts = working.components(separatedBy: CharacterSet(charactersIn: ";,&/"))
-        return Set(parts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty })
+        return Set(MultiValueParser.splitPermissive(raw.lowercased()))
     }
 }

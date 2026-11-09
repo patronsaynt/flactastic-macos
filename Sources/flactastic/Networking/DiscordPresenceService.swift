@@ -107,14 +107,10 @@ final class DiscordPresenceService {
 
     /// The artist line Discord shows for `track`.
     nonisolated static func artistLine(for track: Track) -> String {
-        // FLAC/Vorbis tags commonly join multiple artists with " ; " or ";".
-        // Normalise to ", " so Discord shows "Artist1, Artist2" instead.
+        // An explicit list ("A ; B") shows as "A, B", like everywhere else.
         let rawTag = track.artist ?? track.albumArtist ?? ""
-        return rawTag
-            .components(separatedBy: ";")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .joined(separator: ", ")
+        return MultiValueParser.splitSafe(rawTag)?.joined(separator: ", ")
+            ?? rawTag.trimmingCharacters(in: .whitespaces)
     }
 
     private func makeSnapshot() -> Snapshot {

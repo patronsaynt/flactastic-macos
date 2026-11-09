@@ -9,7 +9,7 @@ extension LibraryStore {
         // the library changes, as they did when this rebuilt every time.
         _ = tracksRevision
         if let cached = artistResolverCache { return cached }
-        let resolver = ArtistResolver(tracks: tracks)
+        let resolver = ArtistResolver(tracks: tracks, decisions: splitDecisions.decisions)
         artistResolverCache = resolver
         return resolver
     }
@@ -30,8 +30,9 @@ extension LibraryStore {
     /// imported from third-party tools surface as chips in the editor and
     /// produce per-artist links across the UI without the user having to
     /// edit each track. Safe by design: a string is rewritten only when
-    /// *every* fragment maps to an artist already known to the library
-    /// (canonical names with no separators of their own).
+    /// *every* fragment is a standalone artist in the library, or when the
+    /// user chose Split for it in the review. Strings nothing confirms are
+    /// left whole and listed in `pendingSplitReview`.
     ///
     /// Does NOT touch the source files — the rewrite is only on the
     /// in-memory `Track.artist` value. The user can persist via the editor.
@@ -42,7 +43,7 @@ extension LibraryStore {
         var didChange = false
 
         for _ in 0..<2 {
-            let resolver = ArtistResolver(tracks: working)
+            let resolver = ArtistResolver(tracks: working, decisions: splitDecisions.decisions)
             var passChanged = false
             for i in working.indices {
                 guard let raw = working[i].artist, !raw.isEmpty else { continue }
@@ -61,6 +62,39 @@ extension LibraryStore {
         }
 
         if didChange { tracks = working }
+        refreshSplitReview()
+    }
+
+    /// Rebuilds `pendingSplitReview` from the current tracks: one item per
+    /// ambiguous credit (artist or album artist) still waiting for an answer.
+    func refreshSplitReview() {
+        let resolver = makeArtistResolver()
+        var counts: [String: Int] = [:]
+        for track in tracks {
+            var seen = Set<String>()
+            for raw in [track.artist, track.albumArtist] {
+                guard let raw else { continue }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard seen.insert(trimmed).inserted, resolver.needsReview(trimmed) else { continue }
+                counts[trimmed, default: 0] += 1
+            }
+        }
+        let items = counts
+            .map { SplitReviewItem(raw: $0.key, trackCount: $0.value) }
+            .sorted { $0.trackCount != $1.trackCount ? $0.trackCount > $1.trackCount
+                                                     : $0.raw.localizedStandardCompare($1.raw) == .orderedAscending }
+        if items != pendingSplitReview { pendingSplitReview = items }
+    }
+
+    /// Saves review answers and applies them to the library: Split answers
+    /// rewrite the in-memory credit (files are untouched), Keep answers stop
+    /// the string from being offered again.
+    func recordSplitDecisions(_ answers: [String: MultiValueParser.Decision]) {
+        guard !answers.isEmpty else { return }
+        splitDecisions.record(answers)
+        artistResolverCache = nil
+        artistSummariesCache = nil
+        normaliseArtistTags()
     }
 
     /// All artists in the library, with their albums / singles / appears-on
@@ -178,4 +212,13 @@ private extension String {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+}
+
+/// One ambiguous credit waiting for a Split / Keep answer.
+struct SplitReviewItem: Identifiable, Hashable, Sendable {
+    let raw: String
+    let trackCount: Int
+    var id: String { raw }
+    /// What Split would produce.
+    var preview: [String] { MultiValueParser.normalize(MultiValueParser.splitAmbiguous(raw)) }
 }

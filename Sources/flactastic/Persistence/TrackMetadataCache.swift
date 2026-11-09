@@ -26,11 +26,16 @@ struct TrackMetadataCacheEntry: Codable, Sendable {
     var label: String?
     var discNumber: Int?
     var discTotal: Int?
+    /// Multi-value tag state (schema 3): the FLACTASTIC_TAGVERSION marker and
+    /// whether artist / album artist came from a real list.
+    var tagVersion: Int?
+    var artistIsList: Bool?
+    var albumArtistIsList: Bool?
     /// Which fields the entry covers. Entries from before a field existed
     /// decode with an older (or no) schema and are re-parsed once, rather than
     /// hydrating that field as nil forever.
     var schema: Int?
-    static let currentSchema = 2
+    static let currentSchema = 3
     var fileSize: Int64
     var mtime: Date
 
@@ -53,6 +58,9 @@ struct TrackMetadataCacheEntry: Codable, Sendable {
         label = track.label
         discNumber = track.discNumber
         discTotal = track.discTotal
+        tagVersion = track.tagVersion
+        artistIsList = track.artistIsList
+        albumArtistIsList = track.albumArtistIsList
         schema = Self.currentSchema
         self.fileSize = fileSize
         self.mtime = mtime
@@ -98,6 +106,9 @@ struct TrackMetadataCacheEntry: Codable, Sendable {
         track.label = label
         track.discNumber = discNumber
         track.discTotal = discTotal
+        track.tagVersion = tagVersion
+        track.artistIsList = artistIsList ?? false
+        track.albumArtistIsList = albumArtistIsList ?? false
     }
 }
 

@@ -4,11 +4,13 @@
       "Jay-Z ; Kanye West|Watch the Throne"
     ],
     "&" : [
-      "Earth|The Best of Earth, Wind & Fire",
+      "Earth, Wind & Fire|The Best of Earth, Wind & Fire",
       "Simon & Garfunkel|Bookends"
     ],
     "," : [
-      "Earth|The Best of Earth, Wind & Fire"
+      "Earth, Wind & Fire|The Best of Earth, Wind & Fire",
+      "Tyler, The Creator|Flower Boy",
+      "Unknown One, Unknown Two|Commas"
     ],
     "/" : [
       "AC/DC|Back in Black"
@@ -39,7 +41,8 @@
       "Kaskade|Strobelite Seduction"
     ],
     "punk" : [
-      "Daft Punk|Discovery"
+      "Daft Punk|Discovery",
+      "Daft Punk|Random Access Memories"
     ],
     "rob" : [
       "Kaskade|Strobelite Seduction",
@@ -126,6 +129,22 @@
       ]
     },
     {
+      "artist" : "Daft Punk",
+      "cardArtist" : "Daft Punk",
+      "genre" : "Disco",
+      "id" : "Daft Punk|Random Access Memories",
+      "isCompilation" : false,
+      "name" : "Random Access Memories",
+      "rackArtist" : "Daft Punk",
+      "secondaryGenres" : [
+
+      ],
+      "trackFiles" : [
+        "ext-backslash.flac",
+        "ext-native.m4a"
+      ]
+    },
+    {
       "artist" : "Deadmau5",
       "cardArtist" : "Deadmau5",
       "genre" : "Electronic",
@@ -175,13 +194,13 @@
       ]
     },
     {
-      "artist" : "Earth",
-      "cardArtist" : "Earth",
+      "artist" : "Earth, Wind & Fire",
+      "cardArtist" : "Earth, Wind & Fire",
       "genre" : "Funk",
-      "id" : "Earth|The Best of Earth, Wind & Fire",
+      "id" : "Earth, Wind & Fire|The Best of Earth, Wind & Fire",
       "isCompilation" : false,
       "name" : "The Best of Earth, Wind & Fire",
-      "rackArtist" : "Earth",
+      "rackArtist" : "Earth, Wind & Fire",
       "secondaryGenres" : [
         "Soul",
         "Disco"
@@ -303,13 +322,13 @@
       ]
     },
     {
-      "artist" : "Tyler",
-      "cardArtist" : "Tyler",
+      "artist" : "Tyler, The Creator",
+      "cardArtist" : "Tyler, The Creator",
       "genre" : "Hip-Hop",
-      "id" : "Tyler|Flower Boy",
+      "id" : "Tyler, The Creator|Flower Boy",
       "isCompilation" : false,
       "name" : "Flower Boy",
-      "rackArtist" : "Tyler",
+      "rackArtist" : "Tyler, The Creator",
       "secondaryGenres" : [
 
       ],
@@ -318,13 +337,13 @@
       ]
     },
     {
-      "artist" : "Unknown One",
-      "cardArtist" : "Unknown One",
+      "artist" : "Unknown One, Unknown Two",
+      "cardArtist" : "Unknown One, Unknown Two",
       "genre" : "Rock, Pop",
-      "id" : "Unknown One|Commas",
+      "id" : "Unknown One, Unknown Two|Commas",
       "isCompilation" : false,
       "name" : "Commas",
-      "rackArtist" : "Unknown One",
+      "rackArtist" : "Unknown One, Unknown Two",
       "secondaryGenres" : [
 
       ],
@@ -349,22 +368,6 @@
       ]
     },
     {
-      "artist" : "Various Artists",
-      "cardArtist" : "Various Artists",
-      "genre" : "Disco",
-      "id" : "Various Artists|Random Access Memories",
-      "isCompilation" : false,
-      "name" : "Random Access Memories",
-      "rackArtist" : "Various Artists",
-      "secondaryGenres" : [
-
-      ],
-      "trackFiles" : [
-        "ext-backslash.flac",
-        "ext-native.m4a"
-      ]
-    },
-    {
       "artist" : "Zedd",
       "cardArtist" : "Zedd",
       "genre" : "Pop",
@@ -386,10 +389,11 @@
     "Alpha;Beta|Semis",
     "Calvin Harris|One Kiss",
     "Daft Punk|Discovery",
+    "Daft Punk|Random Access Memories",
     "Deadmau5|4x4=12",
     "Deadmau5|For Lack of a Better Name",
     "Deadmau5|Random Album Title",
-    "Earth|The Best of Earth, Wind & Fire",
+    "Earth, Wind & Fire|The Best of Earth, Wind & Fire",
     "Guest|Guest Album",
     "Host|Host Album",
     "Jay-Z ; Kanye West|Watch the Throne",
@@ -397,31 +401,30 @@
     "Pendulum|Hold Your Colour",
     "Queen|Hot Space",
     "Simon & Garfunkel|Bookends",
-    "Tyler|Flower Boy",
-    "Unknown One|Commas",
+    "Tyler, The Creator|Flower Boy",
+    "Unknown One, Unknown Two|Commas",
     "Various Artists|Now Hits",
-    "Various Artists|Random Access Memories",
     "Zedd|Stay"
   ],
   "albumsSortedByGenre" : [
-    "Various Artists|Random Access Memories",
+    "Daft Punk|Random Access Memories",
     "Pendulum|Hold Your Colour",
     "Daft Punk|Discovery",
     "Deadmau5|4x4=12",
     "Deadmau5|For Lack of a Better Name",
     "Simon & Garfunkel|Bookends",
-    "Earth|The Best of Earth, Wind & Fire",
+    "Earth, Wind & Fire|The Best of Earth, Wind & Fire",
     "AC/DC|Back in Black",
     "A Tribe Called Quest|The Low End Theory",
     "Jay-Z ; Kanye West|Watch the Throne",
-    "Tyler|Flower Boy",
+    "Tyler, The Creator|Flower Boy",
     "Calvin Harris|One Kiss",
     "Deadmau5|Random Album Title",
     "Kaskade|Strobelite Seduction",
     "Various Artists|Now Hits",
     "Zedd|Stay",
     "Queen|Hot Space",
-    "Unknown One|Commas",
+    "Unknown One, Unknown Two|Commas",
     "Guest|Guest Album",
     "Host|Host Album",
     "Alpha;Beta|Semis"
@@ -602,34 +605,18 @@
 
       ],
       "appearsOn" : [
-        "Various Artists|Random Access Memories"
+
       ],
       "appearsOnTracks" : [
-        "ext-native.m4a"
+
       ],
       "displayName" : "Daft Punk",
       "id" : "daft punk",
       "singles" : [
-        "Daft Punk|Discovery"
+        "Daft Punk|Discovery",
+        "Daft Punk|Random Access Memories"
       ],
-      "trackCount" : 2
-    },
-    {
-      "albums" : [
-
-      ],
-      "appearsOn" : [
-        "Various Artists|Random Access Memories"
-      ],
-      "appearsOnTracks" : [
-        "ext-backslash.flac"
-      ],
-      "displayName" : "Daft Punk\\Pharrell Williams",
-      "id" : "daft punk\\pharrell williams",
-      "singles" : [
-
-      ],
-      "trackCount" : 1
+      "trackCount" : 3
     },
     {
       "albums" : [
@@ -694,44 +681,10 @@
       "appearsOnTracks" : [
 
       ],
-      "displayName" : "Earth",
-      "id" : "earth",
+      "displayName" : "Earth, Wind & Fire",
+      "id" : "earth, wind & fire",
       "singles" : [
-        "Earth|The Best of Earth, Wind & Fire"
-      ],
-      "trackCount" : 1
-    },
-    {
-      "albums" : [
-
-      ],
-      "appearsOn" : [
-        "Earth|The Best of Earth, Wind & Fire"
-      ],
-      "appearsOnTracks" : [
-        "cur-ewf.flac"
-      ],
-      "displayName" : "Fire",
-      "id" : "fire",
-      "singles" : [
-
-      ],
-      "trackCount" : 1
-    },
-    {
-      "albums" : [
-
-      ],
-      "appearsOn" : [
-
-      ],
-      "appearsOnTracks" : [
-
-      ],
-      "displayName" : "Garfunkel",
-      "id" : "garfunkel",
-      "singles" : [
-        "Simon & Garfunkel|Bookends"
+        "Earth, Wind & Fire|The Best of Earth, Wind & Fire"
       ],
       "trackCount" : 1
     },
@@ -860,9 +813,10 @@
 
       ],
       "appearsOn" : [
-        "Various Artists|Random Access Memories"
+        "Daft Punk|Random Access Memories"
       ],
       "appearsOnTracks" : [
+        "ext-backslash.flac",
         "ext-native.m4a"
       ],
       "displayName" : "Pharrell Williams",
@@ -870,7 +824,7 @@
       "singles" : [
 
       ],
-      "trackCount" : 1
+      "trackCount" : 2
     },
     {
       "albums" : [
@@ -916,8 +870,8 @@
       "appearsOnTracks" : [
 
       ],
-      "displayName" : "Simon",
-      "id" : "simon",
+      "displayName" : "Simon & Garfunkel",
+      "id" : "simon & garfunkel",
       "singles" : [
         "Simon & Garfunkel|Bookends"
       ],
@@ -928,15 +882,15 @@
 
       ],
       "appearsOn" : [
-        "Tyler|Flower Boy"
+
       ],
       "appearsOnTracks" : [
-        "cur-tyler.m4a"
-      ],
-      "displayName" : "The Creator",
-      "id" : "the creator",
-      "singles" : [
 
+      ],
+      "displayName" : "Tyler, The Creator",
+      "id" : "tyler, the creator",
+      "singles" : [
+        "Tyler, The Creator|Flower Boy"
       ],
       "trackCount" : 1
     },
@@ -950,78 +904,10 @@
       "appearsOnTracks" : [
 
       ],
-      "displayName" : "Tyler",
-      "id" : "tyler",
+      "displayName" : "Unknown One, Unknown Two",
+      "id" : "unknown one, unknown two",
       "singles" : [
-        "Tyler|Flower Boy"
-      ],
-      "trackCount" : 1
-    },
-    {
-      "albums" : [
-
-      ],
-      "appearsOn" : [
-
-      ],
-      "appearsOnTracks" : [
-
-      ],
-      "displayName" : "Unknown One",
-      "id" : "unknown one",
-      "singles" : [
-        "Unknown One|Commas"
-      ],
-      "trackCount" : 1
-    },
-    {
-      "albums" : [
-
-      ],
-      "appearsOn" : [
-        "Unknown One|Commas"
-      ],
-      "appearsOnTracks" : [
-        "ext-comma.flac"
-      ],
-      "displayName" : "Unknown Two",
-      "id" : "unknown two",
-      "singles" : [
-
-      ],
-      "trackCount" : 1
-    },
-    {
-      "albums" : [
-
-      ],
-      "appearsOn" : [
-
-      ],
-      "appearsOnTracks" : [
-
-      ],
-      "displayName" : "various artists",
-      "id" : "various artists",
-      "singles" : [
-        "Various Artists|Random Access Memories"
-      ],
-      "trackCount" : 2
-    },
-    {
-      "albums" : [
-
-      ],
-      "appearsOn" : [
-        "Earth|The Best of Earth, Wind & Fire"
-      ],
-      "appearsOnTracks" : [
-        "cur-ewf.flac"
-      ],
-      "displayName" : "Wind",
-      "id" : "wind",
-      "singles" : [
-
+        "Unknown One, Unknown Two|Commas"
       ],
       "trackCount" : 1
     },
@@ -1055,13 +941,10 @@
     "busta rhymes" : "Busta Rhymes",
     "calvin harris" : "Calvin Harris",
     "daft punk" : "Daft Punk",
-    "daft punk\\pharrell williams" : "Daft Punk\\Pharrell Williams",
     "david bowie" : "David Bowie",
     "deadmau5" : "Deadmau5",
     "dua lipa" : "Dua Lipa",
-    "earth" : "Earth",
-    "fire" : "Fire",
-    "garfunkel" : "Garfunkel",
+    "earth, wind & fire" : "Earth, Wind & Fire",
     "greta svabo bech" : "Greta Svabo Bech",
     "guest" : "Guest",
     "host" : "Host",
@@ -1072,12 +955,9 @@
     "pharrell williams" : "Pharrell Williams",
     "queen" : "Queen",
     "rob swire" : "Rob Swire",
-    "simon" : "Simon",
-    "the creator" : "The Creator",
-    "tyler" : "Tyler",
-    "unknown one" : "Unknown One",
-    "unknown two" : "Unknown Two",
-    "wind" : "Wind",
+    "simon & garfunkel" : "Simon & Garfunkel",
+    "tyler, the creator" : "Tyler, The Creator",
+    "unknown one, unknown two" : "Unknown One, Unknown Two",
     "zedd" : "Zedd"
   },
   "downloadMatches" : {
@@ -1093,42 +973,39 @@
   "trackSearch" : {
     " ; " : [
       "cur-comp2.m4a",
-      "cur-ewf.flac",
       "cur-host2.flac",
       "cur-host3.mp3",
       "cur-multi.flac",
-      "cur-simon.mp3",
-      "cur-tyler.m4a",
-      "ext-comma.flac",
       "ext-mbid.flac",
+      "ext-native.flac",
       "ext-native.m4a",
+      "ext-native.mp3",
       "ext-plural.flac",
       "ext-plural.mp3"
     ],
     "&" : [
-      "cur-ewf.flac"
+      "cur-ewf.flac",
+      "cur-simon.mp3"
     ],
     "," : [
-      "cur-ewf.flac"
+      "cur-ewf.flac",
+      "cur-tyler.m4a",
+      "ext-comma.flac"
     ],
     "/" : [
       "cur-acdc.flac",
-      "ext-native.flac",
-      "ext-native.mp3",
       "ext-slash.flac"
     ],
     ";" : [
       "cur-comp2.m4a",
       "cur-dl.flac",
-      "cur-ewf.flac",
       "cur-host2.flac",
       "cur-host3.mp3",
       "cur-multi.flac",
-      "cur-simon.mp3",
-      "cur-tyler.m4a",
-      "ext-comma.flac",
       "ext-mbid.flac",
+      "ext-native.flac",
       "ext-native.m4a",
+      "ext-native.mp3",
       "ext-plural.flac",
       "ext-plural.mp3",
       "ext-semicolon.mp3"
@@ -1181,7 +1058,7 @@
         "greta svabo bech"
       ],
       "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>Raise Your Weapon</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Deadmau5 / Greta Svabo Bech</dc:creator><upnp:artist>Deadmau5 / Greta Svabo Bech</upnp:artist><upnp:album>4x4=12</upnp:album><upnp:originalTrackNumber>7</upnp:originalTrackNumber><upnp:genre>Electronic</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
-      "discordArtist" : "Deadmau5 / Greta Svabo Bech",
+      "discordArtist" : "Deadmau5, Greta Svabo Bech",
       "displayArtist" : "Deadmau5, Greta Svabo Bech",
       "displayArtistOrAlbumArtist" : "Deadmau5, Greta Svabo Bech",
       "editorAlbumArtistChips" : [
@@ -1238,7 +1115,7 @@
       "isCompilation" : false,
       "nowPlayingArtist" : "AC/DC",
       "organizerPath" : "ACDCBack in BlackACDC - Back in Black [Hard Rock]",
-      "organizerPrimaryPath" : "ACBack in BlackAC - Back in Black [Hard Rock]",
+      "organizerPrimaryPath" : "ACDCBack in BlackACDC - Back in Black [Hard Rock]",
       "primaryCredit" : "AC/DC",
       "secondaryGenres" : [
 
@@ -1255,44 +1132,39 @@
       "album" : "Bookends",
       "albumArtist" : "Simon & Garfunkel",
       "albumArtistKeys" : [
-        "simon",
-        "garfunkel"
+        "simon & garfunkel"
       ],
-      "artist" : "Simon ; Garfunkel",
+      "artist" : "Simon & Garfunkel",
       "artistKeys" : [
-        "simon",
-        "garfunkel"
+        "simon & garfunkel"
       ],
-      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>Mrs Robinson</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Simon ; Garfunkel</dc:creator><upnp:artist>Simon ; Garfunkel</upnp:artist><upnp:artist role=\"AlbumArtist\">Simon &amp; Garfunkel</upnp:artist><upnp:album>Bookends</upnp:album><upnp:originalTrackNumber>1</upnp:originalTrackNumber><upnp:genre>Folk Rock</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
-      "discordArtist" : "Simon, Garfunkel",
+      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>Mrs Robinson</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Simon &amp; Garfunkel</dc:creator><upnp:artist>Simon &amp; Garfunkel</upnp:artist><upnp:artist role=\"AlbumArtist\">Simon &amp; Garfunkel</upnp:artist><upnp:album>Bookends</upnp:album><upnp:originalTrackNumber>1</upnp:originalTrackNumber><upnp:genre>Folk Rock</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
+      "discordArtist" : "Simon & Garfunkel",
       "displayAlbumArtist" : "Simon & Garfunkel",
-      "displayArtist" : "Simon, Garfunkel",
-      "displayArtistOrAlbumArtist" : "Simon, Garfunkel",
+      "displayArtist" : "Simon & Garfunkel",
+      "displayArtistOrAlbumArtist" : "Simon & Garfunkel",
       "editorAlbumArtistChips" : [
         "Simon & Garfunkel"
       ],
       "editorArtistChips" : [
-        "Simon",
-        "Garfunkel"
+        "Simon & Garfunkel"
       ],
       "editorGenreString" : "Folk Rock",
       "file" : "cur-simon.mp3",
       "genre" : "Folk Rock",
       "isCompilation" : false,
-      "nowPlayingArtist" : "Simon ; Garfunkel",
-      "organizerPath" : "Simon & GarfunkelBookendsSimon ; Garfunkel - Mrs Robinson [Folk Rock]",
-      "organizerPrimaryPath" : "SimonBookendsSimon - Mrs Robinson [Folk Rock]",
-      "primaryCredit" : "Simon",
+      "nowPlayingArtist" : "Simon & Garfunkel",
+      "organizerPath" : "Simon & GarfunkelBookendsSimon & Garfunkel - Mrs Robinson [Folk Rock]",
+      "organizerPrimaryPath" : "Simon & GarfunkelBookendsSimon & Garfunkel - Mrs Robinson [Folk Rock]",
+      "primaryCredit" : "Simon & Garfunkel",
       "secondaryGenres" : [
 
       ],
       "splitAlbumArtist" : [
-        "Simon",
-        "Garfunkel"
+        "Simon & Garfunkel"
       ],
       "splitArtist" : [
-        "Simon",
-        "Garfunkel"
+        "Simon & Garfunkel"
       ],
       "title" : "Mrs Robinson"
     },
@@ -1301,12 +1173,11 @@
       "albumArtistKeys" : [
 
       ],
-      "artist" : "Unknown One ; Unknown Two",
+      "artist" : "Unknown One, Unknown Two",
       "artistKeys" : [
-        "unknown one",
-        "unknown two"
+        "unknown one, unknown two"
       ],
-      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>Ice Ice Baby</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Unknown One ; Unknown Two</dc:creator><upnp:artist>Unknown One ; Unknown Two</upnp:artist><upnp:album>Commas</upnp:album><upnp:originalTrackNumber>1</upnp:originalTrackNumber><upnp:genre>Rock, Pop</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
+      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>Ice Ice Baby</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Unknown One, Unknown Two</dc:creator><upnp:artist>Unknown One, Unknown Two</upnp:artist><upnp:album>Commas</upnp:album><upnp:originalTrackNumber>1</upnp:originalTrackNumber><upnp:genre>Rock, Pop</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
       "discordArtist" : "Unknown One, Unknown Two",
       "displayArtist" : "Unknown One, Unknown Two",
       "displayArtistOrAlbumArtist" : "Unknown One, Unknown Two",
@@ -1314,17 +1185,16 @@
 
       ],
       "editorArtistChips" : [
-        "Unknown One",
-        "Unknown Two"
+        "Unknown One, Unknown Two"
       ],
       "editorGenreString" : "Rock, Pop",
       "file" : "ext-comma.flac",
       "genre" : "Rock, Pop",
       "isCompilation" : false,
-      "nowPlayingArtist" : "Unknown One ; Unknown Two",
-      "organizerPath" : "Unknown One ; Unknown TwoCommasUnknown One ; Unknown Two - Ice Ice Baby [Rock, Pop]",
-      "organizerPrimaryPath" : "Unknown OneCommasUnknown One - Ice Ice Baby [Rock, Pop]",
-      "primaryCredit" : "Unknown One",
+      "nowPlayingArtist" : "Unknown One, Unknown Two",
+      "organizerPath" : "Unknown One, Unknown TwoCommasUnknown One, Unknown Two - Ice Ice Baby [Rock, Pop]",
+      "organizerPrimaryPath" : "Unknown One, Unknown TwoCommasUnknown One, Unknown Two - Ice Ice Baby [Rock, Pop]",
+      "primaryCredit" : "Unknown One, Unknown Two",
       "secondaryGenres" : [
 
       ],
@@ -1332,8 +1202,7 @@
 
       ],
       "splitArtist" : [
-        "Unknown One",
-        "Unknown Two"
+        "Unknown One, Unknown Two"
       ],
       "title" : "Ice Ice Baby"
     },
@@ -1382,12 +1251,11 @@
       "albumArtistKeys" : [
 
       ],
-      "artist" : "Tyler ; The Creator",
+      "artist" : "Tyler, The Creator",
       "artistKeys" : [
-        "tyler",
-        "the creator"
+        "tyler, the creator"
       ],
-      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>See You Again</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Tyler ; The Creator</dc:creator><upnp:artist>Tyler ; The Creator</upnp:artist><upnp:album>Flower Boy</upnp:album><upnp:originalTrackNumber>6</upnp:originalTrackNumber><upnp:genre>Hip-Hop</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
+      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>See You Again</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Tyler, The Creator</dc:creator><upnp:artist>Tyler, The Creator</upnp:artist><upnp:album>Flower Boy</upnp:album><upnp:originalTrackNumber>6</upnp:originalTrackNumber><upnp:genre>Hip-Hop</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
       "discordArtist" : "Tyler, The Creator",
       "displayArtist" : "Tyler, The Creator",
       "displayArtistOrAlbumArtist" : "Tyler, The Creator",
@@ -1395,17 +1263,16 @@
 
       ],
       "editorArtistChips" : [
-        "Tyler",
-        "The Creator"
+        "Tyler, The Creator"
       ],
       "editorGenreString" : "Hip-Hop",
       "file" : "cur-tyler.m4a",
       "genre" : "Hip-Hop",
       "isCompilation" : false,
-      "nowPlayingArtist" : "Tyler ; The Creator",
-      "organizerPath" : "Tyler ; The CreatorFlower BoyTyler ; The Creator - See You Again [Hip-Hop]",
-      "organizerPrimaryPath" : "TylerFlower BoyTyler - See You Again [Hip-Hop]",
-      "primaryCredit" : "Tyler",
+      "nowPlayingArtist" : "Tyler, The Creator",
+      "organizerPath" : "Tyler, The CreatorFlower BoyTyler, The Creator - See You Again [Hip-Hop]",
+      "organizerPrimaryPath" : "Tyler, The CreatorFlower BoyTyler, The Creator - See You Again [Hip-Hop]",
+      "primaryCredit" : "Tyler, The Creator",
       "secondaryGenres" : [
 
       ],
@@ -1413,8 +1280,7 @@
 
       ],
       "splitArtist" : [
-        "Tyler",
-        "The Creator"
+        "Tyler, The Creator"
       ],
       "title" : "See You Again"
     },
@@ -1671,13 +1537,13 @@
       "albumArtistKeys" : [
 
       ],
-      "artist" : "Queen / David Bowie",
+      "artist" : "Queen ; David Bowie",
       "artistKeys" : [
         "queen",
         "david bowie"
       ],
-      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>Under Pressure</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Queen / David Bowie</dc:creator><upnp:artist>Queen / David Bowie</upnp:artist><upnp:album>Hot Space</upnp:album><upnp:originalTrackNumber>11</upnp:originalTrackNumber><upnp:genre>Rock</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
-      "discordArtist" : "Queen / David Bowie",
+      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>Under Pressure</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Queen ; David Bowie</dc:creator><upnp:artist>Queen ; David Bowie</upnp:artist><upnp:album>Hot Space</upnp:album><upnp:originalTrackNumber>11</upnp:originalTrackNumber><upnp:genre>Rock</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
+      "discordArtist" : "Queen, David Bowie",
       "displayArtist" : "Queen, David Bowie",
       "displayArtistOrAlbumArtist" : "Queen, David Bowie",
       "editorAlbumArtistChips" : [
@@ -1691,8 +1557,8 @@
       "file" : "ext-native.mp3",
       "genre" : "Rock",
       "isCompilation" : false,
-      "nowPlayingArtist" : "Queen / David Bowie",
-      "organizerPath" : "Queen  David BowieHot SpaceQueen  David Bowie - Under Pressure [Rock]",
+      "nowPlayingArtist" : "Queen ; David Bowie",
+      "organizerPath" : "Queen ; David BowieHot SpaceQueen ; David Bowie - Under Pressure [Rock]",
       "organizerPrimaryPath" : "QueenHot SpaceQueen - Under Pressure [Rock]",
       "primaryCredit" : "Queen",
       "secondaryGenres" : [
@@ -1834,17 +1700,19 @@
       ],
       "artist" : "Daft Punk\\Pharrell Williams",
       "artistKeys" : [
-        "daft punk\\pharrell williams"
+        "daft punk",
+        "pharrell williams"
       ],
       "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>Lose Yourself to Dance</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Daft Punk\\Pharrell Williams</dc:creator><upnp:artist>Daft Punk\\Pharrell Williams</upnp:artist><upnp:album>Random Access Memories</upnp:album><upnp:originalTrackNumber>6</upnp:originalTrackNumber><upnp:genre>Disco</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
-      "discordArtist" : "Daft Punk\\Pharrell Williams",
-      "displayArtist" : "Daft Punk\\Pharrell Williams",
-      "displayArtistOrAlbumArtist" : "Daft Punk\\Pharrell Williams",
+      "discordArtist" : "Daft Punk, Pharrell Williams",
+      "displayArtist" : "Daft Punk, Pharrell Williams",
+      "displayArtistOrAlbumArtist" : "Daft Punk, Pharrell Williams",
       "editorAlbumArtistChips" : [
 
       ],
       "editorArtistChips" : [
-        "Daft Punk\\Pharrell Williams"
+        "Daft Punk",
+        "Pharrell Williams"
       ],
       "editorGenreString" : "Disco",
       "file" : "ext-backslash.flac",
@@ -1852,8 +1720,8 @@
       "isCompilation" : false,
       "nowPlayingArtist" : "Daft Punk\\Pharrell Williams",
       "organizerPath" : "Daft PunkPharrell WilliamsRandom Access MemoriesDaft PunkPharrell Williams - Lose Yourself to Dance [Disco]",
-      "organizerPrimaryPath" : "Daft PunkPharrell WilliamsRandom Access MemoriesDaft PunkPharrell Williams - Lose Yourself to Dance [Disco]",
-      "primaryCredit" : "Daft Punk\\Pharrell Williams",
+      "organizerPrimaryPath" : "Daft PunkRandom Access MemoriesDaft Punk - Lose Yourself to Dance [Disco]",
+      "primaryCredit" : "Daft Punk",
       "secondaryGenres" : [
 
       ],
@@ -1861,7 +1729,8 @@
 
       ],
       "splitArtist" : [
-        "Daft Punk\\Pharrell Williams"
+        "Daft Punk",
+        "Pharrell Williams"
       ],
       "title" : "Lose Yourself to Dance"
     },
@@ -2124,32 +1993,28 @@
       "albumArtistKeys" : [
 
       ],
-      "artist" : "Earth ; Wind ; Fire",
+      "artist" : "Earth, Wind & Fire",
       "artistKeys" : [
-        "earth",
-        "wind",
-        "fire"
+        "earth, wind & fire"
       ],
-      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>September</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Earth ; Wind ; Fire</dc:creator><upnp:artist>Earth ; Wind ; Fire</upnp:artist><upnp:album>The Best of Earth, Wind &amp; Fire</upnp:album><upnp:originalTrackNumber>1</upnp:originalTrackNumber><upnp:genre>Funk</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
-      "discordArtist" : "Earth, Wind, Fire",
-      "displayArtist" : "Earth, Wind, Fire",
-      "displayArtistOrAlbumArtist" : "Earth, Wind, Fire",
+      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>September</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>Earth, Wind &amp; Fire</dc:creator><upnp:artist>Earth, Wind &amp; Fire</upnp:artist><upnp:album>The Best of Earth, Wind &amp; Fire</upnp:album><upnp:originalTrackNumber>1</upnp:originalTrackNumber><upnp:genre>Funk</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
+      "discordArtist" : "Earth, Wind & Fire",
+      "displayArtist" : "Earth, Wind & Fire",
+      "displayArtistOrAlbumArtist" : "Earth, Wind & Fire",
       "editorAlbumArtistChips" : [
 
       ],
       "editorArtistChips" : [
-        "Earth",
-        "Wind",
-        "Fire"
+        "Earth, Wind & Fire"
       ],
       "editorGenreString" : "Funk ; Soul ; Disco",
       "file" : "cur-ewf.flac",
       "genre" : "Funk",
       "isCompilation" : false,
-      "nowPlayingArtist" : "Earth ; Wind ; Fire",
-      "organizerPath" : "Earth ; Wind ; FireThe Best of Earth, Wind & FireEarth ; Wind ; Fire - September [Funk]",
-      "organizerPrimaryPath" : "EarthThe Best of Earth, Wind & FireEarth - September [Funk]",
-      "primaryCredit" : "Earth",
+      "nowPlayingArtist" : "Earth, Wind & Fire",
+      "organizerPath" : "Earth, Wind & FireThe Best of Earth, Wind & FireEarth, Wind & Fire - September [Funk]",
+      "organizerPrimaryPath" : "Earth, Wind & FireThe Best of Earth, Wind & FireEarth, Wind & Fire - September [Funk]",
+      "primaryCredit" : "Earth, Wind & Fire",
       "secondaryGenres" : [
         "Soul",
         "Disco"
@@ -2158,9 +2023,7 @@
 
       ],
       "splitArtist" : [
-        "Earth",
-        "Wind",
-        "Fire"
+        "Earth, Wind & Fire"
       ],
       "title" : "September"
     },
@@ -2169,13 +2032,13 @@
       "albumArtistKeys" : [
 
       ],
-      "artist" : "A Tribe Called Quest / Busta Rhymes",
+      "artist" : "A Tribe Called Quest ; Busta Rhymes",
       "artistKeys" : [
         "a tribe called quest",
         "busta rhymes"
       ],
-      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>Scenario</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>A Tribe Called Quest / Busta Rhymes</dc:creator><upnp:artist>A Tribe Called Quest / Busta Rhymes</upnp:artist><upnp:album>The Low End Theory</upnp:album><upnp:originalTrackNumber>14</upnp:originalTrackNumber><upnp:genre>Hip-Hop</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
-      "discordArtist" : "A Tribe Called Quest / Busta Rhymes",
+      "castDIDL" : "<DIDL-Lite xmlns=\"urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:upnp=\"urn:schemas-upnp-org:metadata-1-0/upnp/\"><item id=\"00000000-0000-0000-0000-000000000000\" parentID=\"0\" restricted=\"1\"><dc:title>Scenario</dc:title><upnp:class>object.item.audioItem.musicTrack</upnp:class><dc:creator>A Tribe Called Quest ; Busta Rhymes</dc:creator><upnp:artist>A Tribe Called Quest ; Busta Rhymes</upnp:artist><upnp:album>The Low End Theory</upnp:album><upnp:originalTrackNumber>14</upnp:originalTrackNumber><upnp:genre>Hip-Hop</upnp:genre><res protocolInfo=\"http-get:*:audio/flac:DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000\">http://127.0.0.1:1/t</res></item></DIDL-Lite>",
+      "discordArtist" : "A Tribe Called Quest, Busta Rhymes",
       "displayArtist" : "A Tribe Called Quest, Busta Rhymes",
       "displayArtistOrAlbumArtist" : "A Tribe Called Quest, Busta Rhymes",
       "editorAlbumArtistChips" : [
@@ -2189,8 +2052,8 @@
       "file" : "ext-native.flac",
       "genre" : "Hip-Hop",
       "isCompilation" : false,
-      "nowPlayingArtist" : "A Tribe Called Quest / Busta Rhymes",
-      "organizerPath" : "A Tribe Called Quest  Busta RhymesThe Low End TheoryA Tribe Called Quest  Busta Rhymes - Scenario [Hip-Hop]",
+      "nowPlayingArtist" : "A Tribe Called Quest ; Busta Rhymes",
+      "organizerPath" : "A Tribe Called Quest ; Busta RhymesThe Low End TheoryA Tribe Called Quest ; Busta Rhymes - Scenario [Hip-Hop]",
       "organizerPrimaryPath" : "A Tribe Called QuestThe Low End TheoryA Tribe Called Quest - Scenario [Hip-Hop]",
       "primaryCredit" : "A Tribe Called Quest",
       "secondaryGenres" : [

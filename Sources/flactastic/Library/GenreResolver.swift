@@ -78,17 +78,9 @@ enum GenreResolver {
     }
 
     /// If `raw` uses one of the explicit multi-genre delimiters, returns the
-    /// trimmed, non-empty pieces. Otherwise nil. Delimiter priority mirrors
-    /// `ArtistResolver.explicitlySeparated`.
+    /// trimmed, non-empty pieces. Otherwise nil. Genres only ever split on
+    /// these safe separators, never on "&", "," or "/" ("Drum & Bass").
     private static func explicitlySeparated(_ raw: String) -> [String]? {
-        for delimiter in ["\u{0000}", ";", " / "] {
-            if raw.contains(delimiter) {
-                return raw
-                    .components(separatedBy: delimiter)
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
-            }
-        }
-        return nil
+        MultiValueParser.splitSafe(raw)
     }
 }

@@ -34,7 +34,8 @@ final class OrganizerModel {
     /// so the preview tracks the rules live; the debounce keeps a burst of
     /// keystrokes from replanning the whole library once per character, and the
     /// plan itself runs off the main actor so typing stays smooth.
-    func schedulePreview(profile: OrganizerProfile, tracks: [Track], rootURL: URL?, debounceMilliseconds: Int = 300) {
+    func schedulePreview(profile: OrganizerProfile, tracks: [Track], rootURL: URL?, resolver: ArtistResolver? = nil,
+                         debounceMilliseconds: Int = 300) {
         previewTask?.cancel()
         guard let rootURL else {
             previewTask = nil
@@ -50,7 +51,7 @@ final class OrganizerModel {
             try? await Task.sleep(for: .milliseconds(debounceMilliseconds))
             guard !Task.isCancelled else { return }
             let ops = await Task.detached(priority: .userInitiated) {
-                OrganizerPlanner.plan(tracks: tracks, profile: profile, rootURL: rootURL)
+                OrganizerPlanner.plan(tracks: tracks, profile: profile, rootURL: rootURL, resolver: resolver)
             }.value
             guard !Task.isCancelled, let self else { return }
             self.operations = ops
