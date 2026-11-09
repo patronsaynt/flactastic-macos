@@ -10,7 +10,7 @@ struct OnboardingDebugPreviewView: View {
     @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
-        OnboardingView(onFinish: { dismissWindow(id: "onboarding-debug") })
+        OnboardingView(onFinish: { dismissWindow(id: "onboarding-debug") }, appliesRestore: false)
             .preferredColorScheme(settings.theme.colorScheme)
             .frame(width: 1180, height: 740)
     }

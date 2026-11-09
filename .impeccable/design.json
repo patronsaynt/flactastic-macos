@@ -1,0 +1,686 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-09T19:30:00+00:00",
+  "title": "Design System: FLACtastic",
+  "extensions": {
+    "platform": "Native macOS (SwiftUI/AppKit, macOS 14+). Not web; px = macOS points. Component CSS is a dark-mode preview only.",
+    "colorMeta": {
+      "background-dark": {
+        "role": "neutral",
+        "displayName": "Ground (dark mode)",
+        "pairedWith": "background-light",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "background-light": {
+        "role": "neutral",
+        "displayName": "Ground (light mode)",
+        "pairedWith": "background-dark",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "surface-dark": {
+        "role": "neutral",
+        "displayName": "Surface (dark mode)",
+        "pairedWith": "surface-light",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "surface-light": {
+        "role": "neutral",
+        "displayName": "Surface (light mode)",
+        "pairedWith": "surface-dark",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "surface-elevated-dark": {
+        "role": "neutral",
+        "displayName": "Surface Elevated (dark mode)",
+        "pairedWith": "surface-elevated-light",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "surface-elevated-light": {
+        "role": "neutral",
+        "displayName": "Surface Elevated (light mode)",
+        "pairedWith": "surface-elevated-dark",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "surface-hover-dark": {
+        "role": "neutral",
+        "displayName": "Surface Hover (dark mode)",
+        "pairedWith": "surface-hover-light",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "surface-hover-light": {
+        "role": "neutral",
+        "displayName": "Surface Hover (light mode)",
+        "pairedWith": "surface-hover-dark",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "ink-primary-dark": {
+        "role": "primary",
+        "displayName": "The Ink (dark mode)",
+        "pairedWith": "ink-primary-light",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "ink-primary-light": {
+        "role": "primary",
+        "displayName": "The Ink (light mode)",
+        "pairedWith": "ink-primary-dark",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "ink-secondary-dark": {
+        "role": "neutral",
+        "displayName": "Ink Secondary (dark mode)",
+        "pairedWith": "ink-secondary-light",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "ink-secondary-light": {
+        "role": "neutral",
+        "displayName": "Ink Secondary (light mode)",
+        "pairedWith": "ink-secondary-dark",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "ink-tertiary-dark": {
+        "role": "neutral",
+        "displayName": "Ink Tertiary (dark mode)",
+        "pairedWith": "ink-tertiary-light",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "ink-tertiary-light": {
+        "role": "neutral",
+        "displayName": "Ink Tertiary (light mode)",
+        "pairedWith": "ink-tertiary-dark",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "hairline-dark": {
+        "role": "neutral",
+        "displayName": "Hairline (dark mode)",
+        "pairedWith": "hairline-light",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "hairline-light": {
+        "role": "neutral",
+        "displayName": "Hairline (light mode)",
+        "pairedWith": "hairline-dark",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "accent-dark": {
+        "role": "primary",
+        "displayName": "Accent (pure ink) (dark mode)",
+        "pairedWith": "accent-light",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "accent-light": {
+        "role": "primary",
+        "displayName": "Accent (pure ink) (light mode)",
+        "pairedWith": "accent-dark",
+        "tonalRamp": [
+          "#000000",
+          "#1F1F1F",
+          "#2E2E2E",
+          "#595959",
+          "#8C8C8C",
+          "#C7C7C7",
+          "#E6E6E6",
+          "#F5F5F5"
+        ]
+      },
+      "quality-hires-dark": {
+        "role": "secondary",
+        "displayName": "Hi-Res Turquoise (dark mode)",
+        "pairedWith": "quality-hires-light",
+        "tonalRamp": [
+          "#003A33",
+          "#005C52",
+          "#008073",
+          "#00A896",
+          "#00E6CC",
+          "#5CF0DE",
+          "#A3F7EC",
+          "#D9FCF7"
+        ]
+      },
+      "quality-hires-light": {
+        "role": "secondary",
+        "displayName": "Hi-Res Turquoise (light mode)",
+        "pairedWith": "quality-hires-dark",
+        "tonalRamp": [
+          "#003A33",
+          "#005C52",
+          "#008073",
+          "#00A896",
+          "#00E6CC",
+          "#5CF0DE",
+          "#A3F7EC",
+          "#D9FCF7"
+        ]
+      },
+      "quality-cd-dark": {
+        "role": "secondary",
+        "displayName": "CD Green (dark mode)",
+        "pairedWith": "quality-cd-light",
+        "tonalRamp": [
+          "#0F3319",
+          "#1B5A2C",
+          "#268040",
+          "#33A653",
+          "#4DD966",
+          "#80E691",
+          "#B3F0BD",
+          "#E0F9E4"
+        ]
+      },
+      "quality-cd-light": {
+        "role": "secondary",
+        "displayName": "CD Green (light mode)",
+        "pairedWith": "quality-cd-dark",
+        "tonalRamp": [
+          "#0F3319",
+          "#1B5A2C",
+          "#268040",
+          "#33A653",
+          "#4DD966",
+          "#80E691",
+          "#B3F0BD",
+          "#E0F9E4"
+        ]
+      },
+      "quality-mid-dark": {
+        "role": "secondary",
+        "displayName": "Mid Amber (dark mode)",
+        "pairedWith": "quality-mid-light",
+        "tonalRamp": [
+          "#3D2B05",
+          "#6B4C09",
+          "#AD7A0D",
+          "#D69A1A",
+          "#F2BF33",
+          "#F6D26E",
+          "#FAE3A6",
+          "#FDF3D9"
+        ]
+      },
+      "quality-mid-light": {
+        "role": "secondary",
+        "displayName": "Mid Amber (light mode)",
+        "pairedWith": "quality-mid-dark",
+        "tonalRamp": [
+          "#3D2B05",
+          "#6B4C09",
+          "#AD7A0D",
+          "#D69A1A",
+          "#F2BF33",
+          "#F6D26E",
+          "#FAE3A6",
+          "#FDF3D9"
+        ]
+      },
+      "quality-low-dark": {
+        "role": "secondary",
+        "displayName": "Low Red (dark mode)",
+        "pairedWith": "quality-low-light",
+        "tonalRamp": [
+          "#3D0F0F",
+          "#6E1C1C",
+          "#B82E2E",
+          "#D93B3B",
+          "#F24D4D",
+          "#F68282",
+          "#FAB3B3",
+          "#FDE0E0"
+        ]
+      },
+      "quality-low-light": {
+        "role": "secondary",
+        "displayName": "Low Red (light mode)",
+        "pairedWith": "quality-low-dark",
+        "tonalRamp": [
+          "#3D0F0F",
+          "#6E1C1C",
+          "#B82E2E",
+          "#D93B3B",
+          "#F24D4D",
+          "#F68282",
+          "#FAB3B3",
+          "#FDE0E0"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Album, playlist and mix detail titles (80pt heavy)."
+      },
+      "stage-title": {
+        "displayName": "Stage Title",
+        "purpose": "Onboarding's playing-track title, revealed word by word."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Tab page titles (40pt; 56 to 72pt on Organizer, Artist, Downloads)."
+      },
+      "numeral": {
+        "displayName": "Numeral",
+        "purpose": "Counting figures: Fidelidex score, track and album counts."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Tracklist names and radio-card titles."
+      },
+      "row-title": {
+        "displayName": "Row Title",
+        "purpose": "Option and done-row titles; quiet field values."
+      },
+      "body-lead": {
+        "displayName": "Body Lead",
+        "purpose": "The line under a stage title."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Card detail text."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Row details, running counts, hints, tier legends."
+      },
+      "button": {
+        "displayName": "Button",
+        "purpose": "Sheet and transport pill labels."
+      },
+      "group-label": {
+        "displayName": "Group Label",
+        "purpose": "Uppercase label over a settings group or edit-sheet field; never above a page title."
+      }
+    },
+    "shadows": [
+      {
+        "name": "case-floor",
+        "value": "0 20px 22px rgba(0,0,0,0.5)",
+        "purpose": "RackBox resting in the scene."
+      },
+      {
+        "name": "disc-floor",
+        "value": "0 16px 24px rgba(0,0,0,0.5)",
+        "purpose": "RackDisc out of its case."
+      },
+      {
+        "name": "taken-from-shelf",
+        "value": "0 10px 14px rgba(0,0,0,0.45)",
+        "purpose": "A case lifted off the rack."
+      },
+      {
+        "name": "spine-hover",
+        "value": "0 12px 14px rgba(0,0,0,0.6)",
+        "purpose": "Rack spine under the pointer."
+      },
+      {
+        "name": "thumb-drop",
+        "value": "0 6px 7px rgba(0,0,0,0.3)",
+        "purpose": "Covers arriving in the scan reveal."
+      },
+      {
+        "name": "palette-glow",
+        "value": "radial-gradient(<banner hue> 32%, <banner hue> 8%, transparent)",
+        "purpose": "Behind the Home thrown case only."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-house",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Arrivals, reveals, scrubber fills, radio, case glides (0.35 to 1.15s). SwiftUI timingCurve(0.16,1,0.3,1); MotionCurve.flactastic."
+      },
+      {
+        "name": "ease-exit",
+        "value": "cubic-bezier(0.6, 0, 0.9, 0.4)",
+        "purpose": "Leaving: stage tear-off, tracklist folding away (0.24 to 0.5s)."
+      },
+      {
+        "name": "ease-wipe",
+        "value": "cubic-bezier(0.7, 0, 0.2, 1)",
+        "purpose": "Wordmark wipe-on (1.1s) and theme flood (0.9s)."
+      },
+      {
+        "name": "ease-switch",
+        "value": "cubic-bezier(0.25, 0.1, 0.25, 1) 200ms",
+        "purpose": "FLSwitchStyle knob."
+      },
+      {
+        "name": "press",
+        "value": "ease-out 80ms, scale 0.96 (pills) / 120ms scale 0.985 (rows)",
+        "purpose": "Pressed state."
+      },
+      {
+        "name": "hover",
+        "value": "ease-out 150ms",
+        "purpose": "Hover fill and stroke changes."
+      },
+      {
+        "name": "settle-spring",
+        "value": "spring(response 0.8 to 1.0, damping 0.6 to 0.72)",
+        "purpose": "Case settling to a new mark after a choice."
+      },
+      {
+        "name": "caught-jolt",
+        "value": "keyframes (4,-3) (-3,2) (1,-1) (0,0) over 0.2s",
+        "purpose": "A thrown case being caught."
+      },
+      {
+        "name": "cd-skip",
+        "value": "laser 420ms cubic-bezier(0.5,0,0.3,1); stutter -12/5/-20/-8px; tear-off x -140, skew -12deg, blur 20, stretch 1.1 over 240ms ease-exit",
+        "purpose": "Continue between onboarding tracks."
+      },
+      {
+        "name": "theme-flood",
+        "value": "circular reveal from the click, 900ms ease-wipe",
+        "purpose": "Changing light/dark/system look."
+      },
+      {
+        "name": "reduce-motion",
+        "value": "0.15 to 0.25s ease-out fades; no spins, jolts, floats, laser, flood, throw or loader motion",
+        "purpose": "Every motion's still version."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "window-min",
+        "value": "1000x650pt"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Pill",
+      "kind": "button",
+      "refersTo": "pill-primary",
+      "description": "SheetPillStyle(isPrimary: true): the one main action in a transport or sheet row.",
+      "html": "<button class=\"ds-pill ds-pill-primary\">Continue <svg width=\"11\" height=\"11\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M5 12h14M13 6l6 6-6 6\"/></svg></button>",
+      "css": ".ds-pill{font:600 14px -apple-system,system-ui,sans-serif;height:40px;padding:0 22px;border:0;border-radius:9999px;display:inline-flex;align-items:center;gap:9px;cursor:pointer;transition:transform .08s ease-out,opacity .08s ease-out}.ds-pill:active{transform:scale(.96);opacity:.8}.ds-pill:focus-visible{outline:2px solid #F2F2F2;outline-offset:3px}.ds-pill-primary{background:#F2F2F2;color:#000}"
+    },
+    {
+      "name": "Secondary Pill",
+      "kind": "button",
+      "refersTo": "pill-secondary",
+      "description": "SheetPillStyle(): Cancel, Skip for now.",
+      "html": "<button class=\"ds-pill2\">Skip for now</button>",
+      "css": ".ds-pill2{font:600 14px -apple-system,system-ui,sans-serif;height:40px;padding:0 22px;border:0;border-radius:9999px;background:rgba(242,242,242,0.08);color:#F2F2F2;cursor:pointer;transition:transform .08s ease-out,background .15s ease-out}.ds-pill2:hover{background:rgba(242,242,242,0.12)}.ds-pill2:active{transform:scale(.96);opacity:.8}.ds-pill2:focus-visible{outline:2px solid #F2F2F2;outline-offset:3px}"
+    },
+    {
+      "name": "Quiet Text Button",
+      "kind": "button",
+      "refersTo": "quiet-text-button",
+      "description": "QuietTextButtonStyle: Back, Remove cover, minor actions.",
+      "html": "<button class=\"ds-quiet\"><svg width=\"10\" height=\"10\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3\" stroke-linecap=\"round\"><path d=\"M15 5l-7 7 7 7\"/></svg> Back</button>",
+      "css": ".ds-quiet{font:400 12px -apple-system,system-ui,sans-serif;height:26px;padding:0 10px;border:0;border-radius:9999px;background:transparent;color:#737373;display:inline-flex;align-items:center;gap:5px;cursor:pointer;transition:color .15s ease-out,background .15s ease-out}.ds-quiet:hover,.ds-quiet:focus-visible{color:#F2F2F2;background:rgba(242,242,242,0.06);outline:none}.ds-quiet:active{opacity:.7}"
+    },
+    {
+      "name": "Toggle Pill",
+      "kind": "chip",
+      "refersTo": "toggle-pill-on",
+      "description": "SheetTogglePill: on/off flags in edit sheets.",
+      "html": "<span style=\"display:flex;gap:8px\"><button class=\"ds-tp ds-tp-on\">Compilation</button><button class=\"ds-tp\">Mix Compilation</button></span>",
+      "css": ".ds-tp{font:600 12.5px -apple-system,system-ui,sans-serif;height:30px;padding:0 13px;border-radius:9999px;border:1px solid rgba(242,242,242,0.14);background:transparent;color:#A6A6A6;cursor:pointer;transition:all .15s ease-out}.ds-tp:hover{border-color:rgba(242,242,242,0.3)}.ds-tp:focus-visible{outline:2px solid #F2F2F2;outline-offset:2px}.ds-tp-on{background:#F2F2F2;color:#000;border-color:transparent}"
+    },
+    {
+      "name": "Switch",
+      "kind": "custom",
+      "refersTo": "switch-on",
+      "description": "FLSwitchStyle: capsule switch in the ink.",
+      "html": "<label class=\"ds-sw\"><input type=\"checkbox\" checked><span></span></label>",
+      "css": ".ds-sw input{position:absolute;opacity:0}.ds-sw span{display:block;width:40px;height:24px;border-radius:9999px;background:rgba(242,242,242,0.16);position:relative;transition:background .2s cubic-bezier(.25,.1,.25,1);cursor:pointer}.ds-sw span:after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:rgba(242,242,242,0.55);transition:all .2s cubic-bezier(.25,.1,.25,1)}.ds-sw input:checked+span{background:#F2F2F2}.ds-sw input:checked+span:after{left:19px;background:#000}.ds-sw input:focus-visible+span{outline:2px solid #F2F2F2;outline-offset:2px}"
+    },
+    {
+      "name": "Option Row",
+      "kind": "card",
+      "refersTo": "option-row",
+      "description": "OnboardingOption: an icon tile, title, detail and action word.",
+      "html": "<button class=\"ds-opt\"><span class=\"ds-opt-tile\"><svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2.4\" stroke-linecap=\"round\"><path d=\"M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z\"/></svg></span><span class=\"ds-opt-text\"><b>Choose a folder…</b><small>Use your existing library</small></span><em>Browse</em></button>",
+      "css": ".ds-opt{display:flex;align-items:center;gap:14px;width:440px;padding:14px 16px 14px 14px;border-radius:16px;border:1px solid rgba(242,242,242,0.1);background:rgba(242,242,242,0.05);color:#F2F2F2;text-align:left;font-family:-apple-system,system-ui,sans-serif;cursor:pointer;transition:background .15s ease-out,transform .12s ease-out}.ds-opt:hover{background:rgba(242,242,242,0.08)}.ds-opt:active{transform:scale(.985)}.ds-opt:focus-visible{outline:none;border:1.5px solid #F2F2F2}.ds-opt-tile{width:44px;height:44px;border-radius:12px;background:rgba(242,242,242,0.08);display:grid;place-items:center;flex:none}.ds-opt-text{display:flex;flex-direction:column;gap:2px;flex:1}.ds-opt-text b{font:700 15px inherit}.ds-opt-text small{font-size:12.5px;color:#737373}.ds-opt em{font:normal 600 12.5px -apple-system,system-ui,sans-serif;color:#A6A6A6}"
+    },
+    {
+      "name": "Radio Card",
+      "kind": "card",
+      "refersTo": "radio-card",
+      "description": "OnboardingChoice: one side of a fork.",
+      "html": "<div style=\"display:flex;gap:14px\"><button class=\"ds-rc ds-rc-on\"><i></i><b>New here</b><small>Start a fresh library.</small></button><button class=\"ds-rc\"><i></i><b>Coming back</b><small>Restore from a backup.</small></button></div>",
+      "css": ".ds-rc{position:relative;width:220px;padding:20px;padding-top:74px;border-radius:18px;border:1px solid rgba(242,242,242,0.1);background:rgba(242,242,242,0.05);color:#F2F2F2;text-align:left;display:flex;flex-direction:column;font-family:-apple-system,system-ui,sans-serif;cursor:pointer;transition:background .15s ease-out,border-color .2s ease-out}.ds-rc:hover{background:rgba(242,242,242,0.08)}.ds-rc:focus-visible{outline:2px solid #F2F2F2;outline-offset:3px}.ds-rc b{font:800 19px inherit;letter-spacing:-.3px}.ds-rc small{font-size:13px;color:#A6A6A6;margin-top:5px}.ds-rc i{position:absolute;top:16px;right:16px;width:18px;height:18px;border-radius:50%;box-sizing:border-box;border:1.5px solid #737373;transition:border .35s cubic-bezier(.16,1,.3,1)}.ds-rc-on{border:2px solid #F2F2F2;background:rgba(242,242,242,0.08)}.ds-rc-on i{border:5.5px solid #F2F2F2}"
+    },
+    {
+      "name": "Quiet Field",
+      "kind": "input",
+      "refersTo": "quiet-field",
+      "description": "QuietFieldStyle: a value that becomes a field on hover and focus.",
+      "html": "<input class=\"ds-qf\" value=\"Burning Out\">",
+      "css": ".ds-qf{font:600 15px -apple-system,system-ui,sans-serif;color:#F2F2F2;background:transparent;border:1px solid transparent;border-radius:10px;padding:6px 10px;margin:0 -10px;transition:background .15s ease-out,border-color .15s ease-out}.ds-qf:hover{background:rgba(242,242,242,0.045)}.ds-qf:focus,.ds-qf:focus-visible{outline:none;background:rgba(242,242,242,0.07);border-color:rgba(242,242,242,0.12)}"
+    },
+    {
+      "name": "Track Row with Scrubber",
+      "kind": "nav",
+      "refersTo": "title",
+      "description": "Onboarding tracklist: number or tick, title, answer, and the scrubber as progress.",
+      "html": "<div class=\"ds-tl\"><div class=\"ds-tr ds-done\"><span class=\"n\"><svg width=\"17\" height=\"17\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"3.2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M4 12l5 5L20 6\"/></svg></span><span><b>Look</b><small>Follow System</small></span><i style=\"--f:100%\"></i></div><div class=\"ds-tr ds-play\"><span class=\"n\">02</span><span><b>Library</b><small>&nbsp;</small></span><i style=\"--f:40%\"></i></div><div class=\"ds-tr\"><span class=\"n\">03</span><span><b>Spotify</b><small>&nbsp;</small></span><i style=\"--f:0%\"></i></div></div>",
+      "css": ".ds-tl{width:290px;font-family:-apple-system,system-ui,sans-serif}.ds-tr{position:relative;display:flex;align-items:center;gap:6px;height:74px;border-bottom:1px solid rgba(242,242,242,0.1);color:#737373}.ds-tr .n{width:52px;font:800 30px inherit;letter-spacing:-1px;font-variant-numeric:tabular-nums}.ds-tr span:last-of-type{display:flex;flex-direction:column;gap:3px}.ds-tr b{font:700 18px inherit;letter-spacing:-.3px}.ds-tr small{font-size:12.5px;color:#737373}.ds-done,.ds-play{color:#F2F2F2}.ds-done .n{font-size:17px}.ds-done:hover b{text-decoration:underline}.ds-tr i{position:absolute;left:0;bottom:-2px;height:3px;width:var(--f);background:#F2F2F2;border-radius:9999px;transition:width .5s cubic-bezier(.16,1,.3,1)}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The CD Back Insert",
+    "overview": "**Creative North Star: \"The CD Back Insert\"**\n\nFLACtastic is drawn in one ink on one ground, the way a CD's back insert is printed: heavy SF Pro titles and track numbers, hairline rules, plain lists, and no chrome that doesn't do anything. In dark mode the ink is near-white on true black; in light mode it is near-black on paper grey. Both are first-class, and every surface is checked in both. The interface itself stays colourless. Colour comes from the music: the Home banner's sampled artist palette, the quality tiers, and the album art.\n\nThe one physical object in this world is the jewel case. The Collection rack draws albums as real clear-plastic cases with designed spines and printed discs (`RackBox`, `RackDisc`), and that same case comes back as the signature object elsewhere: it is thrown onto Home once per launch, and it rides through onboarding, turning to a new mark on every step. The motion has weight. Things are thrown, caught with a small jolt, and come to rest. Transitions borrow from the player: a step change is a CD skip, and a theme change floods out from the click.\n\nDensity is generous at the top of a page and tighter in lists. One huge heavy title, a quiet line under it, then content. Surfaces sit flat on the ground. Depth comes only from the physical objects (case, disc, artwork), which cast soft floor shadows.",
+    "keyCharacteristics": [
+      "One adaptive ink on one adaptive ground; the accent is that same ink (white in dark mode, black in light mode).",
+      "Heavy (800) SF Pro titles with tight negative tracking, scaled to the space.",
+      "Fills and strokes are the primary ink at low opacity (5%, 8%, 10%, 12%, 16%), so the same component works on either ground.",
+      "Capsule buttons and continuous-corner rows; no outlined chrome boxes around groups.",
+      "The jewel case and disc are the recurring physical signature.",
+      "Motion: one house ease (`timingCurve(0.16, 1, 0.3, 1)`), throws that end in a caught jolt, and a Reduce Motion version for every move."
+    ],
+    "rules": [
+      {
+        "name": "The One Ink Rule",
+        "body": "The interface has a single accent, and it is the text colour. No UI element takes a hue for emphasis. Emphasis comes from inverting the fill (ink fill with ground-coloured text).",
+        "section": "colors"
+      },
+      {
+        "name": "The Colour Means Something Rule",
+        "body": "A hue on screen is either a quality tier, the banner palette, or album art. Quality colours never become a general accent, and the banner palette never leaves Home.",
+        "section": "colors"
+      },
+      {
+        "name": "The Opacity Ladder Rule",
+        "body": "New fills and strokes are ink-primary at a fixed opacity: 5% for a resting card fill, 8% for hover or a secondary fill, 10% for a resting stroke or rule, 12% for a strong hover, 16% for an off switch track. This is what keeps one component correct on both grounds.",
+        "section": "colors"
+      },
+      {
+        "name": "The Heavy Title Rule",
+        "body": "Every page has one heavy (800) title with negative tracking proportional to its size (about -0.035 to -0.04em). Nothing else on the page competes with it in weight.",
+        "section": "typography"
+      },
+      {
+        "name": "The Counting Digits Rule",
+        "body": "Any number that changes or lines up in a column uses monospaced digits. Numbers that count up use the numeric-text transition.",
+        "section": "typography"
+      },
+      {
+        "name": "The Left-Edge Rule",
+        "body": "Content hangs from a left edge, like the text on an insert. Titles, subtitles, bodies and lists share one left alignment. The rare centred element is a transient moment, such as the intro wordmark before it lifts away.",
+        "section": "layout"
+      },
+      {
+        "name": "The Objects Cast Shadows Rule",
+        "body": "If it isn't a physical thing (case, disc, cover, spine), it doesn't cast a shadow. Controls show state by changing fill and stroke opacity.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Continuous Corner Rule",
+        "body": "Every rounded rectangle uses `style: .continuous`, so corners follow the macOS squircle. A larger container gets a larger radius.",
+        "section": "shapes"
+      }
+    ],
+    "dos": [
+      "**Do** take every colour from `Theme` adaptive pairs and check the surface in both light and dark.",
+      "**Do** build fills and strokes from ink-primary at the opacity ladder (5 / 8 / 10 / 12 / 16%).",
+      "**Do** give each page one heavy 800 title with negative tracking, and keep everything else small.",
+      "**Do** use `SheetPillStyle` for actions (one primary per row) and `QuietTextButtonStyle` for minor ones.",
+      "**Do** use the house ease `timingCurve(0.16, 1, 0.3, 1)` for arrivals, and give every animation a Reduce Motion path.",
+      "**Do** reuse `RackBox` / `RackDisc` whenever an album needs to appear as an object, and `BrandLoader` for waits.",
+      "**Do** write copy that is short, warm and plain (\"Files only move when you say so.\", \"Skipped, connect any time\")."
+    ],
+    "donts": [
+      "**Don't** introduce a hue as a UI accent. Quality colours mean quality, and the banner palette stays on Home.",
+      "**Don't** put shadows on controls, rows or cards. Only physical objects cast them.",
+      "**Don't** wrap settings groups in boxes. Use a group label, hairline-split rows, and the sheet behind them.",
+      "**Don't** put a spaced-capitals label above a page or display title. Group labels name a group of rows or a field only.",
+      "**Don't** use system spinners, segmented pickers or switches where the app has its own (`BrandLoader`, `FLPillToggle`, `FLSwitchStyle`).",
+      "**Don't** let the thrown case move once it has landed: one throw per launch, then completely still."
+    ]
+  }
+}
