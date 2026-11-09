@@ -1,0 +1,72 @@
+{
+  "title": "The menu bar player",
+  "question": "Three ways to lay out the mini player with shuffle, repeat, volume, speaker and an expandable, editable queue drawer, in the floating bar's frosted glass. Lock one, steer, or re-roll.",
+  "options": [
+    {
+      "id": "road-ahead",
+      "label": "The road ahead",
+      "kicker": "THE ROLL",
+      "lineage": "A timeline that keeps going past the current song",
+      "thesis": "The seek bar doesn't stop at the end of the song: it carries on into the next few tracks, so 'what's on' and 'what's next' read as one line.",
+      "palette": ["#141414", "#f2f2f2", "#00e5cc", "#ff7a2f"],
+      "materials": ["the floating bar's frosted glass with a cover wash", "a segmented progress line: this song long, the next three as short labelled segments", "the bar's own glass icon buttons"],
+      "viewport": "Cover, title, artist and quality badge at the top; the long progress line with times; the five transport buttons centred; volume, speaker and a queue chevron on one quiet row. Opening the drawer unrolls the segments into the full queue list.",
+      "risk": "The segments must stay legible at 320pt wide; with a one-song queue the line is just a normal seek bar.",
+      "raised": [
+        { "from": "signature move", "raise": "Hover a segment ahead to see the track; click it to jump there." },
+        { "from": "queue editing", "raise": "In the drawer: drag to reorder, swipe or ⌫ to remove, double-click to play, as in the main queue panel." }
+      ],
+      "wireframe": { "cols": 6, "rows": 12, "regions": [
+        { "label": "cover · title · artist · badge", "x": 0, "y": 0, "w": 6, "h": 2 },
+        { "label": "now ▬▬▬▬ | next | next | next", "x": 0, "y": 2.3, "w": 6, "h": 0.8, "accent": true },
+        { "label": "shuffle ◀◀ ▶ ▶▶ repeat", "x": 0.6, "y": 3.4, "w": 4.8, "h": 1.2 },
+        { "label": "volume · speaker · queue ⌄", "x": 0, "y": 4.9, "w": 6, "h": 0.8 },
+        { "label": "queue drawer (editable)", "x": 0, "y": 6.1, "w": 6, "h": 5.9, "accent": true }
+      ] }
+    },
+    {
+      "id": "cover-led",
+      "label": "The cover is the player",
+      "lineage": "Album art first, like holding the sleeve",
+      "thesis": "A big crop of the cover leads the popover, with the title and artist set on its lower edge; the controls sit on glass beneath it.",
+      "palette": ["#000000", "#f2f2f2", "#00e5cc"],
+      "materials": ["a wide crop of the cover with a dark gradient to carry the words", "frosted glass for the controls", "the glass icon buttons"],
+      "viewport": "A 320 × 190 cover crop with title, artist and badge on its bottom edge; the seek bar; the five transport buttons; volume, speaker and queue. The drawer opens under it.",
+      "risk": "Tall before the drawer even opens; a dark or busy cover needs a stronger gradient behind the words.",
+      "raised": [
+        { "from": "check what's on", "raise": "Time left and the album name sit on the cover's top corner, quiet until you hover." }
+      ],
+      "wireframe": { "cols": 6, "rows": 12, "regions": [
+        { "label": "cover crop", "x": 0, "y": 0, "w": 6, "h": 4, "accent": true },
+        { "label": "title · artist · badge (on cover)", "x": 0.3, "y": 3, "w": 5, "h": 0.8 },
+        { "label": "seek", "x": 0, "y": 4.3, "w": 6, "h": 0.5 },
+        { "label": "shuffle ◀◀ ▶ ▶▶ repeat", "x": 0.6, "y": 5, "w": 4.8, "h": 1.1 },
+        { "label": "volume · speaker · queue ⌄", "x": 0, "y": 6.3, "w": 6, "h": 0.7 },
+        { "label": "queue drawer (editable)", "x": 0, "y": 7.3, "w": 6, "h": 4.7 }
+      ] }
+    },
+    {
+      "id": "bar-sibling",
+      "label": "The floating bar, pocket-sized",
+      "lineage": "The main window's floating player bar",
+      "thesis": "The popover is the floating player bar itself, a little wider and drawn as one glass slab, so it's instantly familiar; the queue drops down under it.",
+      "palette": ["#141414", "#f2f2f2", "#00e5cc"],
+      "materials": ["exactly the bar's frosted glass, lit edge and cover wash", "the bar's track info, transport and right-hand buttons", "the main queue panel's rows in the drawer"],
+      "viewport": "A 460pt-wide slab: cover and title on the left, the five transport buttons centred, volume, speaker and queue on the right, the seek bar across the bottom. The drawer opens below with the queue.",
+      "risk": "Wide for a menu bar popover, and the title gets little room beside centred controls.",
+      "raised": [
+        { "from": "matching the app", "raise": "Shares the bar's own components, so a change to one changes both." }
+      ],
+      "wireframe": { "cols": 12, "rows": 8, "regions": [
+        { "label": "cover · title · artist", "x": 0, "y": 0, "w": 4, "h": 1.6 },
+        { "label": "shuffle ◀◀ ▶ ▶▶ repeat", "x": 4.2, "y": 0, "w": 4, "h": 1.6, "accent": true },
+        { "label": "vol · speaker · queue", "x": 8.4, "y": 0, "w": 3.6, "h": 1.6 },
+        { "label": "seek", "x": 0, "y": 1.9, "w": 12, "h": 0.5 },
+        { "label": "queue drawer (editable)", "x": 0, "y": 2.8, "w": 12, "h": 5.2 }
+      ] }
+    }
+  ],
+  "reroll": true,
+  "buildPath": { "value": "code", "toggle": false },
+  "steer": true
+}

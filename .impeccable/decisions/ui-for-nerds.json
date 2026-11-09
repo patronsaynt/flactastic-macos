@@ -1,0 +1,66 @@
+{
+  "title": "UI for nerds",
+  "question": "Three ways to lay out the new appearance window: its own window with a live preview inside, controls for every page (show/hide and reorder, size and density, colour and type, motion and effects), playful but tidy. Lock one, steer, or re-roll.",
+  "options": [
+    {
+      "id": "before-after",
+      "label": "Before and after",
+      "kicker": "THE ROLL",
+      "lineage": "Photo editors' compare view",
+      "thesis": "The preview is split down the middle by a handle: your current look on one side, the edited look on the other, so every tweak is judged against what you had.",
+      "palette": ["#141414", "#f2f2f2", "#00e5cc", "#ff7a2f"],
+      "materials": ["a live miniature of the chosen page, split by a draggable handle", "controls in a left column, grouped Layout · Size · Colour & type · Motion", "Apply and Revert, with the count of changes"],
+      "viewport": "A page picker across the top (Everywhere, Home, Collection, Playlists, Downloads, Organizer, Visualizer, Player). Left: that page's controls. Right: the preview with its before/after handle. Footer: 4 changes · Revert · Apply.",
+      "risk": "Changes wait for Apply instead of landing live; the split halves the preview's width.",
+      "raised": [
+        { "from": "signature move", "raise": "Drag the handle to wipe between before and after; double-click it to flip sides." },
+        { "from": "playful but tidy", "raise": "The change count reads like a diff: '+3 −1 tweaks', with a Reset Everything escape hatch." }
+      ],
+      "wireframe": { "cols": 12, "rows": 9, "regions": [
+        { "label": "page picker", "x": 0, "y": 0, "w": 12, "h": 0.8 },
+        { "label": "controls (grouped)", "x": 0, "y": 1, "w": 4, "h": 7 },
+        { "label": "before ┃ after preview", "x": 4.3, "y": 1, "w": 7.7, "h": 7, "accent": true },
+        { "label": "changes · revert · apply", "x": 0, "y": 8.2, "w": 12, "h": 0.8 }
+      ] }
+    },
+    {
+      "id": "click-to-inspect",
+      "label": "Click the thing you want to change",
+      "lineage": "A browser's element inspector",
+      "thesis": "The preview is the menu: hover any part of the miniature page and it outlines; click it and the inspector beside it shows that element's controls.",
+      "palette": ["#141414", "#f2f2f2", "#00e5cc"],
+      "materials": ["a large live preview that fills most of the window", "a slim inspector on the right for the selected element", "outline highlights on hover"],
+      "viewport": "Page picker on top; a big live preview; on the right an inspector headed with the selected element ('Recommended for today · shelf') and its controls; a breadcrumb back to the whole page.",
+      "risk": "Settings without a visible element (animation timing, the launch fade) need a separate 'Page' inspector; discovering what's clickable takes a moment.",
+      "raised": [
+        { "from": "signature move", "raise": "Click a shelf, a badge or the player bar and its knobs appear; Escape walks back up to the page." }
+      ],
+      "wireframe": { "cols": 12, "rows": 9, "regions": [
+        { "label": "page picker", "x": 0, "y": 0, "w": 12, "h": 0.8 },
+        { "label": "live preview (click to inspect)", "x": 0, "y": 1, "w": 8.5, "h": 8, "accent": true },
+        { "label": "inspector", "x": 8.8, "y": 1, "w": 3.2, "h": 8 }
+      ] }
+    },
+    {
+      "id": "three-column",
+      "label": "Pages, knobs, preview",
+      "lineage": "A classic preferences inspector",
+      "thesis": "Three columns read left to right: which page, its knobs, and the live result, so nothing is hidden and every change lands instantly.",
+      "palette": ["#141414", "#f2f2f2", "#00e5cc"],
+      "materials": ["a page list with small icons", "the knobs in collapsible groups", "a live preview that scrolls with the knob you're touching"],
+      "viewport": "Left rail: Everywhere, Home, Collection, Playlists, Downloads, Organizer, Visualizer, Player bar, Menu bar. Middle: grouped controls. Right: the live preview of that page.",
+      "risk": "Three columns get tight at small window sizes; the preview is the narrowest of the three.",
+      "raised": [
+        { "from": "size & density", "raise": "Each slider shows its exact value (170 pt, 6 columns) beside a reset dot." }
+      ],
+      "wireframe": { "cols": 12, "rows": 9, "regions": [
+        { "label": "pages", "x": 0, "y": 0, "w": 2.4, "h": 9 },
+        { "label": "controls", "x": 2.6, "y": 0, "w": 4.2, "h": 9 },
+        { "label": "live preview", "x": 7, "y": 0, "w": 5, "h": 9, "accent": true }
+      ] }
+    }
+  ],
+  "reroll": true,
+  "buildPath": { "value": "code", "toggle": false },
+  "steer": true
+}

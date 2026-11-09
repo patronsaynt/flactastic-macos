@@ -182,10 +182,17 @@ final class LyricsFetcher {
                             let moved = await MainActor.run { self?.resolveCurrentURL?(track) }
                             if let moved { target = track.withURL(moved) }
                         }
-                        do {
-                            try await writer.writeLyrics(to: target, lyrics: payload)
-                        } catch {
-                            print("[LyricsFetcher] Failed to embed lyrics in \(target.url.lastPathComponent): \(error)")
+                        // Not into a file playback is reading: held until the
+                        // track finishes or is skipped (PlaybackFileGuard).
+                        let embed = UncheckedSendableBox(target)
+                        await MainActor.run {
+                            PlaybackFileGuard.shared.whenFree(embed.value.url) {
+                                do {
+                                    try await writer.writeLyrics(to: embed.value, lyrics: payload)
+                                } catch {
+                                    print("[LyricsFetcher] Failed to embed lyrics in \(embed.value.url.lastPathComponent): \(error)")
+                                }
+                            }
                         }
                     }
                 }

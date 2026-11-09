@@ -383,6 +383,20 @@ final class GenreScanner {
         let current = library.tracks.filter { ids.contains($0.id) && Self.isUntagged($0) }
         var count = 0
         for t in current where !pendingWrites.keys.contains(t.id) {
+            // A file playback is using waits until the track finishes or is
+            // skipped (see PlaybackFileGuard); counted now, written then.
+            if PlaybackFileGuard.shared.isInUse(t.url) {
+                count += 1
+                PlaybackFileGuard.shared.whenFree(t.url) { [weak self] in
+                    guard let self, let library = self.library,
+                          let now = library.tracks.first(where: { $0.id == t.id }), Self.isUntagged(now),
+                          let written = try? await writer.writeGenreIfEmpty(to: now, primary: found.primary, secondary: found.secondary)
+                    else { return }
+                    self.pendingWrites[t.id] = written
+                    self.scheduleFlush(soon: true)
+                }
+                continue
+            }
             if let written = try? await writer.writeGenreIfEmpty(to: t, primary: found.primary, secondary: found.secondary) {
                 pendingWrites[t.id] = written
                 count += 1

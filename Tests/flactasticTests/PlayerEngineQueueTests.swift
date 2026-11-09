@@ -175,3 +175,60 @@ private func organize(_ tracks: [Track]) throws -> [String: URL] {
     #expect(engine.currentTrack?.title == "B")
     engine.pause()
 }
+
+/// Background tag writes wait for the file to stop playing: the playing
+/// track (through scrubbing and pausing), and the next one once its audio is
+/// read ahead for the gapless join. A track that finished, or was skipped,
+/// is free; so is everything once the queue has played out.
+@MainActor
+@Test func filesInUseCoverPlayingAndReadAheadTracksOnly() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try track("UseA", 30), b = try track("UseB", 30), c = try track("UseC", 30)
+    func inUse(_ t: Track) -> Bool { engine.filesInUse.contains(t.url.standardizedFileURL.path) }
+    engine.setQueue([a, b, c], startAt: 0)
+    engine.play()
+    try? await Task.sleep(for: .milliseconds(200))
+    #expect(inUse(a) && !inUse(b))
+
+    // A write for the playing track is held, through a scrub and a pause.
+    let guardian = PlaybackFileGuard.shared
+    guardian.filesInUse = { engine.filesInUse }
+    var wroteA = false
+    guardian.whenFree(a.url) { wroteA = true }
+    engine.seek(to: 12)
+    engine.pause()
+    try? await Task.sleep(for: .milliseconds(150))
+    guardian.release()
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(!wroteA)
+    #expect(inUse(a))
+    engine.play()
+
+    // Near A's end, B is read ahead for the gapless join: in use too.
+    await play(engine, graph, seconds: 15)
+    #expect(inUse(a) && inUse(b))
+
+    // Across the join A is done: its held write runs; B's waits.
+    var wroteB = false
+    guardian.whenFree(b.url) { wroteB = true }
+    await play(engine, graph, seconds: 5)
+    #expect(engine.currentTrack?.title == "UseB")
+    guardian.release()
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(wroteA)
+    #expect(!wroteB)
+
+    // Skipping frees the skipped track.
+    engine.next()
+    try? await Task.sleep(for: .milliseconds(150))
+    #expect(!inUse(b) && inUse(c))
+    guardian.release()
+    try? await Task.sleep(for: .milliseconds(50))
+    #expect(wroteB)
+
+    // Played to the end: nothing is in use.
+    await play(engine, graph, seconds: 31)
+    #expect(engine.filesInUse.isEmpty)
+    guardian.filesInUse = { [] }
+}

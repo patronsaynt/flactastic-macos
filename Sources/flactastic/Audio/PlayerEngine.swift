@@ -17,6 +17,19 @@ final class PlayerEngine {
     var queue: [Track] { _queue }
     var currentIndex: Int { _currentIndex }
 
+    /// Files playback depends on right now (standardized paths): the playing
+    /// track, every track whose audio is scheduled or still being read, and,
+    /// on a cast device, the one armed to play next. Writing tags into one of
+    /// these rewrites it under the decoder, so `PlaybackFileGuard` waits.
+    var filesInUse: Set<String> {
+        // The queue ran out: the last track is still "current" but done.
+        if hasFinished { return [] }
+        var paths = Set(scheduledEntries.map { $0.track.url.standardizedFileURL.path })
+        if let currentTrack { paths.insert(currentTrack.url.standardizedFileURL.path) }
+        if remote != nil, let next = remoteNextTrack { paths.insert(next.url.standardizedFileURL.path) }
+        return paths
+    }
+
     // MARK: - State update callback
 
     var onStateUpdate: (@MainActor () -> Void)?
@@ -33,6 +46,8 @@ final class PlayerEngine {
     private var isPrepared = false
     private var isDecoding = false
     private var seekTimeOffset: TimeInterval = 0
+    /// The queue played to its end (cleared when anything starts again).
+    private var hasFinished = false
 
     /// Tracks which scheduled entry playback is currently inside (by its startFrame).
     /// Used to detect entry transitions — including loops of the same track under
@@ -142,6 +157,7 @@ final class PlayerEngine {
     // MARK: - Transport API
 
     func setQueue(_ tracks: [Track], startAt index: Int) {
+        hasFinished = false
         if let remote {
             _queue = tracks
             _currentIndex = min(index, max(tracks.count - 1, 0))
@@ -186,6 +202,7 @@ final class PlayerEngine {
     }
 
     func play() {
+        hasFinished = false
         if let remote {
             guard currentTrack != nil else { return }
             remote.play()
@@ -986,6 +1003,7 @@ final class PlayerEngine {
             }
         } else {
             if let duration { currentTime = duration }
+            hasFinished = true
             isPlaying = false
             setRemoteAnchor(currentTime)
             stopTick()
@@ -1106,6 +1124,7 @@ final class PlayerEngine {
            sampleTime >= lastEntry.endFrame {
             // Snap currentTime to duration so repeat-end detection works reliably.
             if let d = duration { currentTime = d }
+            hasFinished = true
             isPlaying = false
             stopTick()
             notifyStateUpdate()

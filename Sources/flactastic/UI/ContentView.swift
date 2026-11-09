@@ -213,6 +213,8 @@ struct ContentView: View {
         // Genres: new tracks count as imports; a playing untagged track is
         // looked up (with the next two), like lyrics.
         .onAppear {
+            let engine = player.engine
+            PlaybackFileGuard.shared.filesInUse = { engine.filesInUse }
             GenreScanner.shared.attach(library: library, writer: metadataWriter, lyrics: lyricsFetcher, settings: settings)
         }
         .onChange(of: library.tracksRevision) { _, _ in GenreScanner.shared.libraryChanged() }

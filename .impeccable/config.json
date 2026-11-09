@@ -1,0 +1,188 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "design_handoffs/download-search/index.html"
+        ],
+        "createdAt": "2026-11-02T18:00:33.080Z",
+        "reason": "Claude: HTML mockup imitating SwiftUI's push-in Downloads panel and Fetch button; not shipped web code"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "design_handoffs/download-search/index.html"
+        ],
+        "createdAt": "2026-11-02T18:00:33.106Z",
+        "reason": "Claude: small badges copy the app's exact metrics (7px tag inset); user asked to keep matching the app exactly"
+      },
+      {
+        "rule": "tight-leading",
+        "value": "*",
+        "files": [
+          "design_handoffs/download-search/index.html"
+        ],
+        "createdAt": "2026-11-02T18:00:33.131Z",
+        "reason": "Claude: only single-line display headings (72pt title, 30pt top result) use leading of 1.0 to 1.05, matching the app"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-sections/index.html"
+        ],
+        "createdAt": "2026-11-02T20:40:21.196Z",
+        "reason": "user confirmed 2026-11-02: keep Theme.swift tokens exactly (tertiary text) rather than raise contrast"
+      },
+      {
+        "rule": "clipped-overflow-container",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-sections/index.html"
+        ],
+        "createdAt": "2026-11-02T20:40:21.221Z",
+        "reason": "Claude: covers clip their own play button and art by design; shelves clip to one row and pad for the hover lift"
+      },
+      {
+        "rule": "nested-cards",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-sections/index.html"
+        ],
+        "createdAt": "2026-11-02T20:50:22.849Z",
+        "reason": "Claude: only in layout B (bento), an exploration the user passed over for layout A; not being built"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-sections/index.html"
+        ],
+        "createdAt": "2026-11-02T20:50:22.873Z",
+        "reason": "Claude: small tags (HI-RES, range pills) copy the app's existing 7px tag inset; user asked to keep matching the app"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-top/index.html"
+        ],
+        "createdAt": "2026-11-02T21:39:02.433Z",
+        "reason": "user confirmed 2026-11-02: keep Theme.swift tokens exactly (tertiary text)"
+      },
+      {
+        "rule": "clipped-overflow-container",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-top/index.html"
+        ],
+        "createdAt": "2026-11-02T21:39:02.458Z",
+        "reason": "Claude: the mock app window and Today's pick card clip their own contents by design"
+      },
+      {
+        "rule": "repeated-container-text",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-top/index.html"
+        ],
+        "createdAt": "2026-11-02T21:39:51.204Z",
+        "reason": "Claude: four alternative layouts on one comparison page each show the same lyric and date; only one is visible at a time"
+      },
+      {
+        "rule": "nested-cards",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-top/index.html"
+        ],
+        "createdAt": "2026-11-02T21:39:51.229Z",
+        "reason": "Claude: the outer card is the mock app window frame, not product UI"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-top/index.html"
+        ],
+        "createdAt": "2026-11-02T21:39:51.254Z",
+        "reason": "Claude: small review-control pills and tab pills copying the app's existing sizes; user asked to keep matching the app"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-top-live/index.html"
+        ],
+        "createdAt": "2026-11-02T21:57:53.980Z",
+        "reason": "user confirmed 2026-11-02: keep Theme.swift tokens exactly (tertiary text); white-on-field text fixed separately by darkening the field behind it"
+      },
+      {
+        "rule": "repeated-container-text",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-top-live/index.html"
+        ],
+        "createdAt": "2026-11-02T21:59:11.805Z",
+        "reason": "Claude: 'Burning Out' is the lyric's song, the now-playing bar and a Recently played tile at once, as on the real Home"
+      },
+      {
+        "rule": "nested-cards",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-top-live/index.html"
+        ],
+        "createdAt": "2026-11-02T21:59:11.829Z",
+        "reason": "Claude: the outer card is the mock app window frame"
+      },
+      {
+        "rule": "cramped-padding",
+        "value": "*",
+        "files": [
+          "design_handoffs/home-top-live/index.html"
+        ],
+        "createdAt": "2026-11-02T21:59:11.854Z",
+        "reason": "Claude: flush edges are the mock window and its top bar (window chrome), not content containers"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "design_handoffs/ui-for-nerds/index.html"
+        ],
+        "createdAt": "2026-11-03T20:17:24.997Z",
+        "reason": "assistant: mockup mirrors the app's own Theme.textTertiary (#737373 on #141414), the established world's tertiary ink"
+      },
+      {
+        "rule": "undersized-ui-text",
+        "value": "*",
+        "files": [
+          "design_handoffs/player-bar-options/index.html"
+        ],
+        "createdAt": "2026-11-03T20:28:05.245Z",
+        "reason": "Claude decided: mockup mirrors shipped sizes in FloatingPlayerBar.swift (badge 9.5pt, time/meta 10.5pt)"
+      },
+      {
+        "rule": "nested-cards",
+        "value": "*",
+        "files": [
+          "design_handoffs/ui-for-nerds/index.html"
+        ],
+        "createdAt": "2026-11-04T03:30:32.701Z",
+        "reason": "assistant: the mockup draws the app's own pages (stats cards, tiles) inside a framed preview window, so the 'nested' cards are the page-in-a-screen depiction, not a layout choice"
+      },
+      {
+        "rule": "dark-glow",
+        "value": "*",
+        "files": [
+          "design_handoffs/loading-chromas/index.html"
+        ],
+        "createdAt": "2026-11-04T16:25:41.969Z",
+        "reason": "assistant: the glow is the Laser variant's literal reading beam (a light source), not a decorative halo"
+      }
+    ]
+  }
+}

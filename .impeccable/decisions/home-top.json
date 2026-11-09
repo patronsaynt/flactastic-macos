@@ -1,0 +1,76 @@
+{
+  "title": "The top of Home",
+  "question": "Three ways to turn today's lyric into a small daily moment, tied to the song, with no blurred banner. Lock one, steer, or re-roll.",
+  "options": [
+    {
+      "id": "postcard",
+      "label": "A postcard from your library",
+      "kicker": "THE ROLL",
+      "lineage": "Photo postcards and the notes written on their backs",
+      "thesis": "Each day your library sends you a card: the song's art on the front, the lyric as its message.",
+      "palette": ["#000000", "#f2f2f2", "#ff7a2f", "#ffb547"],
+      "materials": ["crisp album art or artist photo, framed", "the lyric set as the card's message", "a date mark in the artist's colour"],
+      "viewport": "Wordmark row on top; below, one wide card: the artwork framed on its left, the lyric and the song beside it, today's date stamped in the artist's colour; the pin sits on the card. Today's pick starts right under it.",
+      "risk": "If it leans into stamps and paper it becomes a costume; it has to stay a clean card in Home's own type.",
+      "raised": [
+        { "from": "signature move", "raise": "Click the card and it turns over: the back is your story with the song (first played, how often, album, year, quality)." },
+        { "from": "gently alive", "raise": "It settles in each morning with a slight tilt that levels out, and the date mark is new every day." }
+      ],
+      "wireframe": { "cols": 12, "rows": 10, "regions": [
+        { "label": "wordmark · date", "x": 0, "y": 0, "w": 12, "h": 1 },
+        { "label": "artwork (front)", "x": 0, "y": 1.5, "w": 4, "h": 5, "accent": true },
+        { "label": "lyric as the message", "x": 4.4, "y": 1.8, "w": 6, "h": 2.6 },
+        { "label": "song · artist · pin", "x": 4.4, "y": 4.8, "w": 5, "h": 0.8 },
+        { "label": "date mark", "x": 10.4, "y": 1.8, "w": 1.4, "h": 1.4, "accent": true },
+        { "label": "Recommended for today", "x": 0, "y": 7.4, "w": 12, "h": 2.6 }
+      ] }
+    },
+    {
+      "id": "colour-field",
+      "label": "The artist's colour, with them standing in it",
+      "lineage": "Gig posters and album-era press portraits",
+      "thesis": "The top becomes a field of the artist's own colour, with the artist cut out and standing in it.",
+      "palette": ["#ff7a2f", "#c4531a", "#ffd890", "#000000"],
+      "materials": ["a wide field of the sampled colour", "the artist photo cut out with a real matte (macOS person segmentation)", "the album cover as a small chip"],
+      "viewport": "A rounded field of the artist's colour runs the width; the lyric sits large on its left, the song and its story beneath; the cut-out artist stands on the right, breaking the field's top edge; the wordmark sits above the field.",
+      "risk": "Needs a photo of a person to cut out; bands' logos, groups and illustrations fall back to the album cover standing in the field.",
+      "raised": [
+        { "from": "signature move", "raise": "The field's colour drifts slowly between the two to four hues sampled from the artist, so the top is never quite the same twice." },
+        { "from": "gently alive", "raise": "The portrait sits a little behind the scroll, a slow parallax as Home moves under it." }
+      ],
+      "wireframe": { "cols": 12, "rows": 10, "regions": [
+        { "label": "wordmark · date", "x": 0, "y": 0, "w": 12, "h": 1 },
+        { "label": "artist's colour field", "x": 0, "y": 1.6, "w": 12, "h": 4.8, "accent": true },
+        { "label": "lyric", "x": 0.5, "y": 2.2, "w": 6.5, "h": 2.4 },
+        { "label": "song · story · pin", "x": 0.5, "y": 5, "w": 6, "h": 0.9 },
+        { "label": "cut-out portrait", "x": 8, "y": 1, "w": 3.6, "h": 5.4 },
+        { "label": "Recommended for today", "x": 0, "y": 7.4, "w": 12, "h": 2.6 }
+      ] }
+    },
+    {
+      "id": "jewel-case",
+      "label": "The day's CD, opened",
+      "lineage": "The CD rack's own jewel case and its booklet",
+      "thesis": "The song's album rests on Home as the same clear case from your rack, opened to a booklet page with the lyric printed on it.",
+      "palette": ["#000000", "#f2f2f2", "#ff7a2f", "#00e5cc"],
+      "materials": ["the rack's 3D jewel case, slightly open", "the lyric printed on the booklet in the spine's designed face", "the song's story set as the tray card's credits"],
+      "viewport": "Wordmark row on top; on the left the opened case at about 240pt, cover on one side and the booklet page with the lyric on the other; on the right the song, artist, pin and its story as credits; the shelves start below.",
+      "risk": "A 3D object is heavy at the top of a page; it has to stay small and render cheaply to feel like a moment, not a centrepiece.",
+      "raised": [
+        { "from": "signature move", "raise": "The case eases open as Home appears and the disc turns a quarter, the same motion language as taking a CD out of the rack." },
+        { "from": "gently alive", "raise": "It tilts slightly under the pointer, catching the light like the Clear Case Look." }
+      ],
+      "wireframe": { "cols": 12, "rows": 10, "regions": [
+        { "label": "wordmark · date", "x": 0, "y": 0, "w": 12, "h": 1 },
+        { "label": "open jewel case", "x": 0, "y": 1.4, "w": 5.6, "h": 5.4, "accent": true },
+        { "label": "lyric on the booklet", "x": 2.9, "y": 2.2, "w": 2.4, "h": 3.4 },
+        { "label": "song · artist · pin", "x": 6.4, "y": 2.2, "w": 5, "h": 1 },
+        { "label": "story as credits", "x": 6.4, "y": 3.6, "w": 5, "h": 2.4 },
+        { "label": "Recommended for today", "x": 0, "y": 7.4, "w": 12, "h": 2.6 }
+      ] }
+    }
+  ],
+  "reroll": { "registers": ["safer", "bolder"] },
+  "buildPath": { "value": "code" },
+  "steer": true
+}
