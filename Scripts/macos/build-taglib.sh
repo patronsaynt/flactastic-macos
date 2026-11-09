@@ -4,6 +4,11 @@
 # (macOS 26 here), so a release linked against it could fail on older macOS
 # wherever TagLib uses something newer. Debug builds keep using Homebrew's.
 #
+# Built as static libraries, so release builds link TagLib into the app's own
+# binary and ship no third-party dylib. That's what lets the app run with
+# library validation on (no com.apple.security.cs.disable-library-validation):
+# a dylib signed by anyone but the app's own team would otherwise be refused.
+#
 # Usage: build-taglib.sh [deployment-target]   (default 14.0)
 # Prints nothing more and exits early when the build is already in place.
 
@@ -19,7 +24,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$( cd "$SCRIPT_DIR/../.." && pwd )"
 DEPS="$PROJECT_ROOT/.deps"
 PREFIX="$DEPS/taglib"
-STAMP="$PREFIX/.built-$VERSION-macos-$TARGET"
+STAMP="$PREFIX/.built-$VERSION-macos-$TARGET-static"
 
 [[ -f "$STAMP" ]] && exit 0
 
@@ -51,7 +56,7 @@ cmake -S "$DEPS/src/taglib-$VERSION" -B "$DEPS/build" \
     -DCMAKE_OSX_ARCHITECTURES=arm64 \
     -DCMAKE_INSTALL_PREFIX="$PREFIX" \
     -DCMAKE_PREFIX_PATH="$UTF8CPP" \
-    -DBUILD_SHARED_LIBS=ON \
+    -DBUILD_SHARED_LIBS=OFF \
     -DBUILD_BINDINGS=ON \
     -DWITH_ZLIB=ON \
     -DBUILD_TESTING=OFF \
@@ -61,6 +66,9 @@ cmake --install "$DEPS/build" >/dev/null
 # Escape spaces in the install path, or the flags read from these files
 # split at them (the project lives under "computer stuff").
 sed -i '' '/^prefix=/s/ /\\ /g' "$PREFIX"/lib/pkgconfig/*.pc
+# SwiftPM reads `pkg-config --libs` without --static, which leaves out what
+# the static archives need: TagLib itself, zlib, and the C++ runtime.
+sed -i '' '/^Libs:/s/$/ -ltag -lz -lc++/' "$PREFIX/lib/pkgconfig/taglib_c.pc"
 rm -rf "$DEPS/src" "$DEPS/build"
 touch "$STAMP"
 echo "  installed to $PREFIX"

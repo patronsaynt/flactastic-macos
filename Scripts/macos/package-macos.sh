@@ -178,6 +178,17 @@ while IFS= read -r dep; do
     embed_dylib "$dep"
 done < <(list_external_dylibs "$MACOS_DIR/flactastic")
 
+# The app runs with library validation on (no disable-library-validation
+# entitlement), so macOS refuses any dylib not signed by the app's own team.
+# TagLib is linked statically for this reason (build-taglib.sh). Anything
+# that ends up here would crash the app at launch, so stop now instead.
+if [[ -s "$BUNDLED_LIST" ]]; then
+    echo "ERROR: the binary links third-party dylibs, which library validation will refuse:" >&2
+    sed 's/^/  /' "$BUNDLED_LIST" >&2
+    echo "Link them statically, or sign them with the app's Developer ID team." >&2
+    exit 1
+fi
+
 # Rewrite the main binary's load commands to look in Frameworks/
 chmod u+w "$MACOS_DIR/flactastic"
 while IFS= read -r name; do

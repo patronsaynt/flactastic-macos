@@ -57,9 +57,13 @@ struct PlayEvent: Codable, Sendable, Identifiable {
 }
 
 /// Local-only, per-library listening history. Persists to
-/// `<libraryRoot>/.flactastic/listening.json`, mirroring `PlaylistStore` so the
-/// data travels with its library and switching libraries is a clean swap. Never
-/// transmitted anywhere — the home page reads it in-process only.
+/// `~/Library/Application Support/flactastic/libraries/<libraryID>/listening.json`,
+/// owner-readable only. The library ID lives in the folder
+/// (`LibraryIdentity`), so switching libraries is still a clean swap, but the
+/// history itself stays on this Mac rather than on a possibly shared drive.
+/// Older versions kept it at `<libraryRoot>/.flactastic/listening.json`; it is
+/// moved across the first time the library is opened. Never transmitted
+/// anywhere — the home page reads it in-process only.
 @Observable
 @MainActor
 final class ListeningStore {
@@ -71,7 +75,16 @@ final class ListeningStore {
     /// than surfacing an album for every single track that happened to play.
     private(set) var recentContexts: [RecentContext] = []
 
-    private var currentRootURL: URL?
+    /// Where the current library's history is saved; nil until a library loads.
+    private var fileURL: URL?
+
+    /// Parent of the per-library folders. Injectable for tests.
+    private let librariesDirectory: URL
+
+    nonisolated static var defaultLibrariesDirectory: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("flactastic/libraries", isDirectory: true)
+    }
 
     /// On-disk container so events and recent contexts persist together while
     /// staying backward-compatible with files that held a bare `[PlayEvent]`.
@@ -86,66 +99,107 @@ final class ListeningStore {
     /// Gap (seconds) between consecutive events that starts a new session.
     private static let sessionGap: TimeInterval = 30 * 60
 
-    private var fileURL: URL? {
-        guard let rootURL = currentRootURL else { return nil }
-        let dir = rootURL.appendingPathComponent(".flactastic", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("listening.json")
+    // MARK: - Location
+
+    nonisolated static func legacyHistoryURL(for root: URL) -> URL {
+        root.appendingPathComponent(".flactastic", isDirectory: true)
+            .appendingPathComponent("listening.json")
+    }
+
+    /// The history file for the library at `root`, creating its folder
+    /// (owner-only) and moving an old in-library history across if this
+    /// library hasn't got one here yet. Does file I/O; call off the main actor
+    /// where it matters.
+    nonisolated static func historyURL(for root: URL, librariesDirectory: URL) -> URL {
+        let fm = FileManager.default
+        let dir = librariesDirectory
+            .appendingPathComponent(LibraryIdentity.id(for: root).uuidString, isDirectory: true)
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true,
+                                attributes: [.posixPermissions: 0o700])
+        let url = dir.appendingPathComponent("listening.json")
+
+        let legacy = legacyHistoryURL(for: root)
+        if !fm.fileExists(atPath: url.path), fm.fileExists(atPath: legacy.path) {
+            do {
+                // Copy, lock down, then remove the original: if anything
+                // fails partway the old file is still there to retry from.
+                try fm.copyItem(at: legacy, to: url)
+                try fm.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+                try fm.removeItem(at: legacy)
+            } catch {
+                print("[ListeningStore] Failed to move listening history out of the library: \(error)")
+            }
+        }
+        return url
     }
 
     // MARK: - Persistence
+
+    init(librariesDirectory: URL = ListeningStore.defaultLibrariesDirectory) {
+        self.librariesDirectory = librariesDirectory
+        // Detached save tasks don't get a chance to run once the app begins
+        // tearing down, so flush synchronously at quit — otherwise the last
+        // track's play event could be lost.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.saveNow() }
+        }
+    }
 
     /// Point the store at `libraryRootURL` and replace in-memory events with
     /// that library's history (empty when the library has none). Switching back
     /// to a previous library restores its events intact.
     func load(from libraryRootURL: URL) {
-        currentRootURL = libraryRootURL
-        events = []
-        recentContexts = []
+        let url = Self.historyURL(for: libraryRootURL, librariesDirectory: librariesDirectory)
+        let loaded = Self.read(url)
+        fileURL = url
+        events = loaded?.events ?? []
+        recentContexts = loaded?.contexts ?? []
+    }
 
-        guard let url = fileURL, FileManager.default.fileExists(atPath: url.path) else { return }
+    /// Async variant of `load(from:)` for app bootstrap: locating, migrating,
+    /// reading and decoding run off the main actor. The listening log grows
+    /// with use, so the synchronous decode was a launch stall that scales with
+    /// history. State is assigned only after the decode resolves, so nothing
+    /// can observe (or save over) a half-switched store during the await.
+    func loadAsync(from libraryRootURL: URL) async {
+        let librariesDirectory = self.librariesDirectory
+        let (url, loaded) = await Task.detached(priority: .userInitiated) {
+            let url = Self.historyURL(for: libraryRootURL, librariesDirectory: librariesDirectory)
+            return (url, Self.read(url))
+        }.value
+        fileURL = url
+        events = loaded?.events ?? []
+        recentContexts = loaded?.contexts ?? []
+    }
+
+    nonisolated private static func read(_ url: URL) -> PersistedData? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         do {
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             if let container = try? decoder.decode(PersistedData.self, from: data) {
-                events = container.events
-                recentContexts = container.contexts
-            } else {
-                // Legacy format: a bare array of events with no recent contexts.
-                events = try decoder.decode([PlayEvent].self, from: data)
+                return container
             }
+            // Legacy format: a bare array of events with no recent contexts.
+            return PersistedData(events: try decoder.decode([PlayEvent].self, from: data), contexts: [])
         } catch {
             print("[ListeningStore] Failed to load listening history: \(error)")
+            return nil
         }
     }
 
-    /// Async variant of `load(from:)` for app bootstrap: file read + JSON
-    /// decode run off the main actor. The listening log grows with use, so
-    /// the synchronous decode was a launch stall that scales with history.
-    /// State is assigned only after the decode resolves, so nothing can
-    /// observe (or save over) a half-switched store during the await.
-    func loadAsync(from libraryRootURL: URL) async {
-        let url = libraryRootURL
-            .appendingPathComponent(".flactastic", isDirectory: true)
-            .appendingPathComponent("listening.json")
-        let loaded: PersistedData? = await Task.detached(priority: .userInitiated) {
-            guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-            do {
-                let data = try Data(contentsOf: url)
-                let decoder = JSONDecoder()
-                if let container = try? decoder.decode(PersistedData.self, from: data) {
-                    return container
-                }
-                // Legacy format: a bare array of events with no recent contexts.
-                return PersistedData(events: try decoder.decode([PlayEvent].self, from: data), contexts: [])
-            } catch {
-                print("[ListeningStore] Failed to load listening history: \(error)")
-                return nil
-            }
-        }.value
-        currentRootURL = libraryRootURL
-        events = loaded?.events ?? []
-        recentContexts = loaded?.contexts ?? []
+    /// Atomic write, then owner-only permissions: an atomic write replaces the
+    /// file, so the permissions are set again every time.
+    nonisolated private static func write(_ snapshot: PersistedData, to url: URL) {
+        do {
+            let data = try JSONEncoder().encode(snapshot)
+            try data.write(to: url, options: .atomic)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch {
+            print("[ListeningStore] Failed to save listening history: \(error)")
+        }
     }
 
     /// Serializes background writes: encode + atomic write happen off the
@@ -157,28 +211,12 @@ final class ListeningStore {
         func write(_ snapshot: PersistedData, generation: UInt64, to url: URL) {
             guard generation > latestGeneration else { return }
             latestGeneration = generation
-            do {
-                let data = try JSONEncoder().encode(snapshot)
-                try data.write(to: url, options: .atomic)
-            } catch {
-                print("[ListeningStore] Failed to save listening history: \(error)")
-            }
+            ListeningStore.write(snapshot, to: url)
         }
     }
 
     private let persister = Persister()
     @ObservationIgnored private var saveGeneration: UInt64 = 0
-
-    init() {
-        // Detached save tasks don't get a chance to run once the app begins
-        // tearing down, so flush synchronously at quit — otherwise the last
-        // track's play event could be lost.
-        NotificationCenter.default.addObserver(
-            forName: NSApplication.willTerminateNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.saveNow() }
-        }
-    }
 
     /// Snapshot current state and persist it off the main actor. The events
     /// array grows unboundedly with listening history, so encoding it
@@ -198,12 +236,7 @@ final class ListeningStore {
     private func saveNow() {
         guard let url = fileURL else { return }
         saveGeneration &+= 1
-        do {
-            let data = try JSONEncoder().encode(PersistedData(events: events, contexts: recentContexts))
-            try data.write(to: url, options: .atomic)
-        } catch {
-            print("[ListeningStore] Failed to save listening history: \(error)")
-        }
+        Self.write(PersistedData(events: events, contexts: recentContexts), to: url)
     }
 
     // MARK: - Recording
