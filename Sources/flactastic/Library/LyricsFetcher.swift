@@ -248,21 +248,7 @@ final class LyricsFetcher {
         guard let raw else { return nil }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
-        // Honour the app's explicit storage delimiters first.
-        if let pieces = ArtistResolver.explicitlySeparated(trimmed),
-           let first = pieces.first {
-            return first
-        }
-        // Heuristic: split on common collaboration tokens.
-        let separators = [", ", " & ", " feat. ", " feat ", " ft. ", " ft ",
-                          " x ", " X ", " vs. ", " vs "]
-        var head = trimmed
-        for sep in separators {
-            if let range = head.range(of: sep, options: .caseInsensitive) {
-                head = String(head[..<range.lowerBound])
-            }
-        }
-        return head.trimmingCharacters(in: .whitespacesAndNewlines)
+        return MultiValueParser.leadArtistGuess(trimmed)
     }
 
     /// Warm the cache for the tracks the user is likely to hear next. Runs

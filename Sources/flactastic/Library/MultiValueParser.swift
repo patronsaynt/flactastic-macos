@@ -102,6 +102,21 @@ enum MultiValueParser {
         (splitSafe(raw) ?? [raw]).flatMap(splitAmbiguous)
     }
 
+    /// A best guess at the lead artist of a credit for a lookup that wants one
+    /// name (lyrics search), with no library to confirm against: an explicit
+    /// list's first entry, else everything before the first spaced
+    /// collaboration token. Unspaced "&", "," and "/" never cut, so "AC/DC"
+    /// survives. Never used for display.
+    static func leadArtistGuess(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let first = splitSafe(trimmed)?.first { return first }
+        var head = Substring(trimmed)
+        for token in ambiguousSeparators where token.first == " " || token == ", " {
+            if let range = head.range(of: token, options: .caseInsensitive) { head = head[..<range.lowerBound] }
+        }
+        return head.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// Splits a MusicBrainz ID list. MBIDs are UUIDs, so any separator or
     /// whitespace is safe here.
     static func splitIdentifiers(_ values: [String]) -> [String] {

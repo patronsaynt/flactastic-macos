@@ -70,13 +70,20 @@ extension LibraryStore {
     func refreshSplitReview() {
         let resolver = makeArtistResolver()
         var counts: [String: Int] = [:]
+        // Most credits repeat across an album; resolve each string once.
+        var verdicts: [String: Bool] = [:]
         for track in tracks {
             var seen = Set<String>()
             for raw in [track.artist, track.albumArtist] {
                 guard let raw else { continue }
                 let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard seen.insert(trimmed).inserted, resolver.needsReview(trimmed) else { continue }
-                counts[trimmed, default: 0] += 1
+                guard seen.insert(trimmed).inserted else { continue }
+                let needs = verdicts[trimmed] ?? {
+                    let v = resolver.needsReview(trimmed)
+                    verdicts[trimmed] = v
+                    return v
+                }()
+                if needs { counts[trimmed, default: 0] += 1 }
             }
         }
         let items = counts

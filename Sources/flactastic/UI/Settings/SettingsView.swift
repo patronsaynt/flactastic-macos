@@ -307,6 +307,10 @@ private struct LibrarySettingsPane: View {
                 CreditReviewRow()
                     .padding(.horizontal, Theme.Spacing.lg)
                     .padding(.vertical, Theme.Spacing.md)
+                GroupDivider()
+                TagUpgradeRow()
+                    .padding(.horizontal, Theme.Spacing.lg)
+                    .padding(.vertical, Theme.Spacing.md)
             }
 
             // Collection ───────────────────────────────────────────────────
@@ -771,6 +775,117 @@ private struct CreditReviewRow: View {
         .sheet(isPresented: $isReviewing) {
             SplitReviewSheet()
         }
+    }
+}
+
+/// Upgrade Tags: also writes multi-artist and multi-genre fields as real
+/// lists, after a backup; Restore puts a backup's values back.
+private struct TagUpgradeRow: View {
+    @Environment(LibraryStore.self) private var library
+    @State private var confirmingUpgrade = false
+    /// Counted once per library change, not on every progress redraw.
+    @State private var count = 0
+
+    var body: some View {
+        let upgrader = TagUpgrader.shared
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: Theme.Spacing.lg) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Upgrade Tags")
+                        .font(Theme.Font.body)
+                        .foregroundStyle(Theme.textPrimary)
+                    Text(detail(count))
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textTertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer()
+                if upgrader.isRunning {
+                    Button("Stop") { upgrader.cancel() }
+                        .buttonStyle(PillButtonStyle())
+                } else {
+                    Button("Restore…", action: pickBackup)
+                        .buttonStyle(PillButtonStyle())
+                        .disabled(!library.hasFinishedLaunchWork)
+                    Button("Upgrade…") { confirmingUpgrade = true }
+                        .buttonStyle(PillButtonStyle())
+                        .disabled(count == 0 || !library.hasFinishedLaunchWork)
+                }
+            }
+            if let progress = upgrader.progress {
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: Double(progress.done), total: Double(max(progress.total, 1)))
+                        .progressViewStyle(.linear)
+                        .tint(Theme.textPrimary)
+                    Text("\(progress.isRestore ? "Restoring" : "Upgrading") · \(progress.done) of \(progress.total)")
+                        .font(Theme.Font.caption.monospacedDigit())
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                .animation(.easeOut(duration: 0.2), value: progress.done)
+            }
+        }
+        .task(id: library.tracksRevision) {
+            count = TagUpgrader.candidates(in: library.tracks).count
+        }
+        .confirmationDialog(
+            "Upgrade tags in \(count == 1 ? "1 file" : "\(count) files")?",
+            isPresented: $confirmingUpgrade, titleVisibility: .visible
+        ) {
+            Button("Upgrade \(count == 1 ? "1 File" : "\(count) Files")") { upgrader.upgrade(library: library) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Artists and genres are also written as lists that other players read. The library looks the same. The original tags are backed up first, and each file is rewritten through a checked copy.")
+        }
+        .alert(summaryTitle, isPresented: Binding(
+            get: { upgrader.pendingSummary != nil },
+            set: { if !$0 { upgrader.pendingSummary = nil } }
+        )) {
+            Button("OK") { upgrader.pendingSummary = nil }
+        } message: {
+            Text(summaryMessage)
+        }
+    }
+
+    private func detail(_ count: Int) -> String {
+        if count == 0 { return "Every file already stores its artists and genres as lists." }
+        let files = count == 1 ? "1 file stores" : "\(count) files store"
+        return "\(files) several artists or genres in one tag. Upgrading also writes them as lists that other players read, after backing up the original tags."
+    }
+
+    private var summaryTitle: String {
+        guard let s = TagUpgrader.shared.pendingSummary else { return "" }
+        let verb = s.isRestore ? "Restore" : "Upgrade"
+        return s.stopped ? "\(verb) Stopped" : "\(verb) Complete"
+    }
+
+    private var summaryMessage: String {
+        guard let s = TagUpgrader.shared.pendingSummary else { return "" }
+        var lines = ["\(s.isRestore ? "Restored" : "Upgraded") \(s.changed == 1 ? "1 file" : "\(s.changed) files")."]
+        if s.skipped > 0 { lines.append("\(s.skipped == 1 ? "1 file needed" : "\(s.skipped) files needed") no change.") }
+        if !s.failures.isEmpty {
+            lines.append("\(s.failures.count == 1 ? "1 file" : "\(s.failures.count) files") couldn't be changed and \(s.failures.count == 1 ? "was" : "were") left as \(s.failures.count == 1 ? "it was" : "they were"):")
+            lines.append(contentsOf: s.failures.prefix(5))
+            if s.failures.count > 5 { lines.append("…and \(s.failures.count - 5) more.") }
+        }
+        if !s.isRestore, let backup = s.backupURL, s.changed > 0 {
+            lines.append("Backup: \(backup.lastPathComponent)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    /// Picks a backup from the backups folder and restores it.
+    private func pickBackup() {
+        let panel = NSOpenPanel()
+        panel.title = "Restore Tags"
+        panel.message = "Choose a tag backup to put back."
+        panel.prompt = "Restore"
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        try? FileManager.default.createDirectory(at: TagUpgrader.backupDirectory, withIntermediateDirectories: true)
+        panel.directoryURL = TagUpgrader.backupDirectory
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        TagUpgrader.shared.restore(from: url, library: library)
     }
 }
 

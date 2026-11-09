@@ -430,6 +430,9 @@ actor MetadataWriter {
         let currentPlural = LibraryScanner.propertyList(file, plural)
         let current = MultiValueParser.storedCredit(plural: currentPlural, native: currentSingular)
         let alreadyStored = MultiValueParser.values(ofStored: current.value) == desired
+        // Native repeated values already hold exactly this list (another
+        // tagger's ARTIST=A, ARTIST=B): that's the best form there is.
+        if alreadyStored, currentSingular.count > 1, MultiValueParser.normalize(currentSingular) == desired { return }
 
         if !alreadyStored || currentSingular.count != 1 {
             // One value: exactly as given. Several: the app's list form.
