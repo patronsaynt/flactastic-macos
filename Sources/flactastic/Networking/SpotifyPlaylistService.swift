@@ -263,16 +263,20 @@ actor SpotifyPlaylistService {
 
     /// Pull the playlist id out of an https URL or a `spotify:playlist:` URI.
     static func playlistID(from url: URL) -> String? {
+        let id: String
         if url.scheme == "spotify" {
             let parts = url.absoluteString.split(separator: ":")
-            if parts.count == 3, parts[1] == "playlist" { return String(parts[2]) }
-            return nil
+            guard parts.count == 3, parts[1] == "playlist" else { return nil }
+            id = String(parts[2].prefix { $0 != "?" })
+        } else {
+            guard let host = url.host?.lowercased(),
+                  host == "open.spotify.com" || host == "spotify.com" else { return nil }
+            let comps = url.pathComponents.filter { $0 != "/" }
+            guard let idx = comps.firstIndex(of: "playlist"), idx + 1 < comps.count else { return nil }
+            id = comps[idx + 1]
         }
-        guard let host = url.host?.lowercased(),
-              host == "open.spotify.com" || host == "spotify.com" else { return nil }
-        let comps = url.pathComponents.filter { $0 != "/" }
-        guard let idx = comps.firstIndex(of: "playlist"), idx + 1 < comps.count else { return nil }
-        return comps[idx + 1]
+        // Spotify IDs are base62; anything else would be spliced into API paths.
+        return !id.isEmpty && id.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) } ? id : nil
     }
 
     private static func extractNextData(from html: String) -> [String: Any]? {
