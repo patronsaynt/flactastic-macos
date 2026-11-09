@@ -39,7 +39,11 @@ struct OnboardingView: View {
     @State private var revealTask: Task<Void, Never>?
     @State private var windowSize: CGSize = CGSize(width: 1200, height: 760)
 
-    private static let trackWidth: CGFloat = 372
+    /// The tracklist's width: 372, narrowing to 300 in small windows to
+    /// leave the case room.
+    private static func trackWidth(in size: CGSize) -> CGFloat {
+        min(372, max(300, size.width * 0.3)).rounded()
+    }
     private static let ease = Animation.timingCurve(0.16, 1, 0.3, 1, duration: 0.8)
 
     var body: some View {
@@ -81,7 +85,7 @@ struct OnboardingView: View {
     /// Everything on screen, on its background: drawn a second time in the
     /// old look while a theme change pours in.
     private func scene(in size: CGSize) -> some View {
-        let caseSize = min(240, size.height * 0.32).rounded()
+        let caseSize = Self.caseSize(in: size)
         let anchor = caseAnchor(in: size)
         return ZStack(alignment: .topLeading) {
             introMark
@@ -107,7 +111,7 @@ struct OnboardingView: View {
 
             HStack(spacing: 0) {
                 OnboardingTracklist(flow: flow) { i in Task { await go(to: i) } }
-                    .frame(width: Self.trackWidth)
+                    .frame(width: Self.trackWidth(in: size))
                 stage(in: size)
             }
         }
@@ -115,10 +119,31 @@ struct OnboardingView: View {
         .background(Theme.background)
     }
 
-    /// Where the case's mark sits: on the right of the stage.
+    /// The step's column: wide enough for the scan's counts, at most 450.
+    private static func bodyWidth(in size: CGSize) -> CGFloat {
+        min(450, max(330, (size.width - trackWidth(in: size)) * 0.5))
+    }
+
+    /// The room right of the step's column, where the case lives.
+    private static func caseRoom(in size: CGSize) -> (left: CGFloat, width: CGFloat) {
+        let left = trackWidth(in: size) + 68 + bodyWidth(in: size) + 24
+        return (left, max(0, size.width - 28 - left))
+    }
+
+    /// As big as the room beside the column allows. The case with its disc
+    /// slid out spans about 1.5 times its size, so it never reaches the
+    /// step's content or the window's edge.
+    private static func caseSize(in size: CGSize) -> CGFloat {
+        min(240, size.height * 0.32, max(90, caseRoom(in: size).width / 1.55)).rounded()
+    }
+
+    /// Where the case's mark sits: centred in that room, allowing for the
+    /// disc sliding out to the right.
     private func caseAnchor(in size: CGSize) -> CGPoint {
-        let stage = size.width - Self.trackWidth
-        return CGPoint(x: Self.trackWidth + stage * 0.74, y: size.height * 0.52)
+        let room = Self.caseRoom(in: size)
+        let caseSize = Self.caseSize(in: size)
+        let span = caseSize * 1.46
+        return CGPoint(x: room.left + max(0, room.width - span) / 2 + caseSize * 0.5, y: size.height * 0.52)
     }
 
     private var copy: OnboardingCopy {
@@ -150,9 +175,9 @@ struct OnboardingView: View {
     }
 
     private func stage(in size: CGSize) -> some View {
-        let stageWidth = size.width - Self.trackWidth
+        let stageWidth = size.width - Self.trackWidth(in: size)
         let titleSize = min(76, max(56, size.height * 0.1)).rounded()
-        let bodyWidth = min(450, stageWidth * 0.5)
+        let bodyWidth = Self.bodyWidth(in: size)
         let copy = copy
         let cut = flow.cut
         return VStack(alignment: .leading, spacing: 0) {
@@ -197,7 +222,8 @@ struct OnboardingView: View {
         }
         .padding(.leading, 68)
         .padding(.trailing, 64)
-        .padding(.top, (size.height * 0.147).rounded())
+        // Less air above the title in short windows, so the scan fits.
+        .padding(.top, max(64, size.height * 0.147 - max(0, 760 - size.height) * 0.25).rounded())
         .padding(.bottom, 34)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay { laser }

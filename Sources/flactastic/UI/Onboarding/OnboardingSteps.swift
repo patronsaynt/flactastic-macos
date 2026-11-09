@@ -255,20 +255,23 @@ struct OnboardingScanReveal: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // The newest covers, sliding along as each arrives.
-            HStack(spacing: 8) {
-                ForEach(arrived.suffix(9).reversed(), id: \.id) { album in
-                    ArtworkView(data: album.artwork, size: 52, id: "album:\(album.id)", showsShadow: false, alwaysSquare: true)
-                        .frame(width: 52, height: 52)
-                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .shadow(color: .black.opacity(0.3), radius: 7, y: 6)
-                        .transition(.asymmetric(
-                            insertion: .modifier(active: CoverDrop(on: false), identity: CoverDrop(on: true)),
-                            removal: .opacity))
+            // The newest covers, sliding along as each arrives: as many as
+            // fit the column, so none slide under the case.
+            GeometryReader { geo in
+                HStack(spacing: 8) {
+                    ForEach(arrived.suffix(max(1, Int((geo.size.width + 8) / 60))).reversed(), id: \.id) { album in
+                        ArtworkView(data: album.artwork, size: 52, id: "album:\(album.id)", showsShadow: false, alwaysSquare: true)
+                            .frame(width: 52, height: 52)
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .shadow(color: .black.opacity(0.3), radius: 7, y: 6)
+                            .transition(.asymmetric(
+                                insertion: .modifier(active: CoverDrop(on: false), identity: CoverDrop(on: true)),
+                                removal: .opacity))
+                    }
                 }
+                .frame(width: geo.size.width, height: 58, alignment: .leading)
             }
-            .frame(height: 58, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 58)
             .mask(LinearGradient(stops: [.init(color: .black, location: 0.7), .init(color: .clear, location: 1)], startPoint: .leading, endPoint: .trailing))
             .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.55), value: arrived.count)
 
