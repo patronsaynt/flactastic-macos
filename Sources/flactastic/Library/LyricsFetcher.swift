@@ -68,6 +68,7 @@ final class LyricsFetcher {
         return !inFlight.contains(key)
     }
 
+    @discardableResult
     func ensureLyrics(
         for track: Track?,
         enabled: Bool,

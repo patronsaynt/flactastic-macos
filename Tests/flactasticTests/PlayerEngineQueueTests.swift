@@ -28,14 +28,19 @@ private final class ClockGraph: AudioGraphProtocol, @unchecked Sendable {
     }
     var isNodePlaying: Bool { true }
     func currentPlayerSampleTime() -> AVAudioFramePosition? { lock.lock(); defer { lock.unlock() }; return sampleTime }
-    /// Advance playback, never past what's been scheduled.
-    func advance(seconds: Double) {
+    /// Advance playback, never past what's been scheduled. Returns the
+    /// frames actually played.
+    @discardableResult
+    func advance(frames: AVAudioFramePosition) -> AVAudioFramePosition {
         lock.lock()
-        sampleTime = min(sampleTime + AVAudioFramePosition(seconds * 44_100), scheduledEnd)
+        let start = sampleTime
+        sampleTime = min(sampleTime + frames, scheduledEnd)
         let done = pending.filter { $0.0 <= sampleTime }
         pending.removeAll { $0.0 <= sampleTime }
+        let played = sampleTime - start
         lock.unlock()
         for (_, h) in done { h(.dataConsumed) }
+        return played
     }
     func setOutputVolume(_ volume: Float) {}
     func onConfigurationChange(_ handler: @escaping @Sendable () -> Void) {}
@@ -64,16 +69,34 @@ private func track(_ name: String, _ seconds: Double, rate: Double = 44_100) thr
     Track(url: try makeWAV(name, seconds: seconds, rate: rate), title: name, duration: seconds, fileFormat: .wav)
 }
 
+/// Plays `seconds` of audio, waiting for the decoder whenever the clock
+/// catches up with what it has scheduled (it lags under load), so no time is
+/// lost. Gives up after 2 s without progress: the queue has played out.
 @MainActor
 private func play(_ engine: PlayerEngine, _ graph: ClockGraph, seconds: Double) async {
-    var left = seconds
+    var left = AVAudioFramePosition(seconds * 44_100)
+    var lastProgress = ContinuousClock.now
     while left > 0 {
-        let step = min(0.25, left)
-        graph.advance(seconds: step)
-        left -= step
+        let played = graph.advance(frames: min(11_025, left))
+        left -= played
+        if played > 0 {
+            lastProgress = .now
+        } else if ContinuousClock.now - lastProgress > .seconds(2) {
+            break
+        }
         try? await Task.sleep(for: .milliseconds(15))
     }
     try? await Task.sleep(for: .milliseconds(120))
+}
+
+/// Waits up to 2 s for `condition`, for state the engine's 50 ms tick or
+/// its decode task publishes a little late under load.
+@MainActor
+private func waitUntil(_ condition: () -> Bool) async {
+    let deadline = ContinuousClock.now + .seconds(2)
+    while !condition(), ContinuousClock.now < deadline {
+        try? await Task.sleep(for: .milliseconds(10))
+    }
 }
 
 /// Adding to the queue while the last track's tail is already buffered
@@ -93,6 +116,7 @@ private func play(_ engine: PlayerEngine, _ graph: ClockGraph, seconds: Double) 
     engine.appendTracks([try track("Long", 120)])
     try? await Task.sleep(for: .milliseconds(300))
     await play(engine, graph, seconds: 0.5)
+    await waitUntil { abs(engine.currentTime - 55.5) < 0.1 }
 
     #expect(engine.currentTrack?.title == "A")
     #expect(engine.duration == 60)
@@ -100,6 +124,7 @@ private func play(_ engine: PlayerEngine, _ graph: ClockGraph, seconds: Double) 
 
     // Once playback crosses into the queued track, its duration takes over.
     await play(engine, graph, seconds: 10)
+    await waitUntil { engine.currentTrack?.title == "Long" }
     #expect(engine.currentTrack?.title == "Long")
     #expect(engine.duration == 120)
     engine.pause()
@@ -213,6 +238,7 @@ private func organize(_ tracks: [Track]) throws -> [String: URL] {
     var wroteB = false
     guardian.whenFree(b.url) { wroteB = true }
     await play(engine, graph, seconds: 5)
+    await waitUntil { engine.currentTrack?.title == "UseB" }
     #expect(engine.currentTrack?.title == "UseB")
     guardian.release()
     try? await Task.sleep(for: .milliseconds(50))
