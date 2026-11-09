@@ -56,8 +56,15 @@ protocol CatalogSearching: Sendable {
 
 enum CatalogSearchError: LocalizedError {
     case unreachable
+    /// Deezer's rate limit, still hit after waiting and retrying.
+    case busy
 
-    var errorDescription: String? { "Check your connection and try again." }
+    var errorDescription: String? {
+        switch self {
+        case .unreachable: return "Check your connection and try again."
+        case .busy: return "Deezer is busy right now. Try again in a few seconds."
+        }
+    }
 }
 
 // MARK: - Deezer
@@ -274,17 +281,15 @@ actor DeezerCatalogSearch: CatalogSearching {
             components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
         let data: Data
-        let response: URLResponse
         do {
-            (data, response) = try await session.data(from: components.url!)
+            data = try await DeezerAPI.get(components.url!, session: session, priority: .interactive)
+        } catch let failure as DeezerAPI.Failure where failure.isRateLimit || failure.httpStatus == 429 {
+            throw CatalogSearchError.busy
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as URLError where error.code == .cancelled {
             throw CancellationError()
         } catch {
-            throw CatalogSearchError.unreachable
-        }
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw CatalogSearchError.unreachable
         }
         return try JSONDecoder().decode(T.self, from: data)

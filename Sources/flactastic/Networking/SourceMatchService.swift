@@ -58,26 +58,39 @@ actor SourceMatchService {
         if let cached = cache[key] { return cached }
         let match: URL?
         switch service {
-        case .deezer:     match = await deezerURL(for: track)
+        case .deezer:
+            // A failed lookup (rate limit, network) isn't a miss: leave it
+            // uncached so the next round asks again.
+            switch await deezerURL(for: track) {
+            case .failed: return nil
+            case .noMatch: match = nil
+            case .found(let url): match = url
+            }
         case .appleMusic: match = await appleMusicURL(for: track)
         }
         cache[key] = match
         return match
     }
 
-    private func deezerURL(for track: RemoteTrack) async -> URL? {
+    private enum Lookup { case found(URL), noMatch, failed }
+
+    /// `.failed` when the lookup itself failed (rate limit, network), as
+    /// opposed to Deezer answering without a confident match.
+    private func deezerURL(for track: RemoteTrack) async -> Lookup {
         var components = URLComponents(string: "https://api.deezer.com/search")
         components?.queryItems = [
             URLQueryItem(name: "q", value: Self.query(for: track)),
             URLQueryItem(name: "limit", value: "10"),
         ]
-        guard let payload = await fetch(components?.url, as: DeezerSearch.self, service: .deezer)
-        else { return nil }
+        guard let endpoint = components?.url,
+              let data = try? await DeezerAPI.get(endpoint, session: session, priority: .background),
+              let payload = try? JSONDecoder().decode(DeezerSearch.self, from: data)
+        else { return .failed }
         let best = payload.data?.first {
             Self.matches(title: [$0.title, $0.title_short], artist: $0.artist?.name,
                          seconds: $0.duration.map(Double.init), track: track)
         }
-        return best?.link.flatMap(URL.init(string:))
+        return best?.link.flatMap(URL.init(string:)).map(Lookup.found) ?? .noMatch
     }
 
     private func appleMusicURL(for track: RemoteTrack) async -> URL? {

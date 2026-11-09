@@ -43,15 +43,7 @@ actor DeezerClient {
             throw DeezerClientError.invalidQuery
         }
 
-        await semaphore.wait()
-        defer { Task { await semaphore.signal() } }
-
-        let (data, response) = try await session.data(from: url)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw DeezerClientError.badResponse
-        }
-
-        let decoded = try JSONDecoder().decode(SearchResponse.self, from: data)
+        let decoded = try JSONDecoder().decode(SearchResponse.self, from: try await data(url))
         let needle = ArtistResolver.key(for: trimmed)
         let match = decoded.data.first { ArtistResolver.key(for: $0.name) == needle }
                    ?? decoded.data.first
@@ -110,14 +102,12 @@ actor DeezerClient {
         return (detail.isrc, detail.album?.id ?? hit.album?.id)
     }
 
+    /// An API call: at most four at once here, and within Deezer's shared
+    /// rate limit. Everything this client looks up is background work.
     private func data(_ url: URL) async throws -> Data {
         await semaphore.wait()
         defer { Task { await semaphore.signal() } }
-        let (data, response) = try await session.data(from: url)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw DeezerClientError.badResponse
-        }
-        return data
+        return try await DeezerAPI.get(url, session: session, priority: .background)
     }
 
     private struct AlbumSearch: Decodable {
@@ -153,16 +143,11 @@ actor DeezerClient {
         guard let url = URL(string: "https://api.deezer.com/artist/\(id)/related?limit=50") else {
             throw DeezerClientError.invalidQuery
         }
-        await semaphore.wait()
-        defer { Task { await semaphore.signal() } }
-        let (data, response) = try await session.data(from: url)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw DeezerClientError.badResponse
-        }
-        return try JSONDecoder().decode(RelatedResponse.self, from: data).data.map(\.name)
+        return try JSONDecoder().decode(RelatedResponse.self, from: try await data(url)).data.map(\.name)
     }
 
-    /// Download raw image bytes for a known URL.
+    /// Download raw image bytes for a known URL. Images come from Deezer's
+    /// CDN, not the API, so they don't count against its rate limit.
     func downloadImage(url: URL) async throws -> Data {
         await semaphore.wait()
         defer { Task { await semaphore.signal() } }

@@ -108,7 +108,8 @@ actor ArtworkFinder {
             let cover_medium: String?
             let cover_xl: String?
         }
-        let response: Response = try await json(c.url!)
+        let data = try await DeezerAPI.get(request(c.url!), session: session, priority: .interactive)
+        let response = try JSONDecoder().decode(Response.self, from: data)
         return response.data.compactMap { hit in
             guard let xl = hit.cover_xl.flatMap(URL.init(string:)),
                   let thumb = (hit.cover_medium ?? hit.cover_xl).flatMap(URL.init(string:)) else { return nil }
