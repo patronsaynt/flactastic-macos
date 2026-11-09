@@ -231,6 +231,40 @@ enum MultiValueParser {
         return GenreResolver.split(single.map(capped))
     }
 
+    // MARK: - Display separator
+
+    /// Separators a user can choose for the single-line ARTIST string that
+    /// FLACtastic composes (Settings → Library → Artist Credits).
+    static let displaySeparatorChoices = [", ", "; ", " ; ", " / ", " & "]
+    static let defaultDisplaySeparator = ", "
+    static let displaySeparatorDefaultsKey = "flactastic.artistSeparator"
+
+    /// The user's chosen separator, read straight from defaults so the
+    /// off-main writer can use it. Anything unexpected falls back to ", ".
+    static var preferredDisplaySeparator: String {
+        let stored = UserDefaults.standard.string(forKey: displaySeparatorDefaultsKey)
+        return stored.flatMap { displaySeparatorChoices.contains($0) ? $0 : nil } ?? defaultDisplaySeparator
+    }
+
+    /// Separators recognised in a file's existing display string, so a rewrite
+    /// can keep the look the user gave it. Collaboration words ("feat.",
+    /// "with", "vs") aren't list separators and aren't kept.
+    private static let keepableSeparators = [
+        " ; ", "; ", ";", " / ", "/", ", ", ",", " & ", "&", " + ", " x ", " \\ ", "\\\\", "\\",
+    ]
+
+    /// The text between the first two of `values` in `display`, when it's a
+    /// recognisable list separator.
+    static func separator(in display: String, joining values: [String]) -> String? {
+        guard values.count > 1 else { return nil }
+        let s = display.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let first = s.range(of: values[0], options: [.caseInsensitive, .anchored]) else { return nil }
+        let rest = s[first.upperBound...]
+        guard let second = rest.range(of: values[1], options: .caseInsensitive) else { return nil }
+        let between = String(rest[..<second.lowerBound])
+        return keepableSeparators.contains(between) ? between : nil
+    }
+
     /// The list form FLACtastic stores and writes: `" ; "` between values.
     static func joinList(_ values: [String]) -> String {
         values.joined(separator: " ; ")

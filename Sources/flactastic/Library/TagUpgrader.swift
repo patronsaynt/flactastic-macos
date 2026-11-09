@@ -4,10 +4,11 @@ import os
 import CTagLib
 
 /// The optional "Upgrade Tags" tool (Settings → Library → Artist Credits):
-/// rewrites files whose artists, album artists or genres are packed into one
-/// string ("A ; B") so they also hold real lists (ARTISTS, native GENRE
-/// values, FLACTASTIC_TAGVERSION=2), the way an edit in the app writes them.
-/// What the library shows doesn't change; other players gain the lists.
+/// for files that hold several artists or album artists in one string
+/// ("A ; B", "A / B"), adds ARTISTS / ALBUMARTISTS lists and the
+/// FLACTASTIC_TAGVERSION=2 marker. Append only: the user's own ARTIST,
+/// ALBUMARTIST and GENRE strings are never rewritten, so files look exactly as
+/// they were kept. What the library shows doesn't change either.
 ///
 /// Safety, in order:
 /// 1. Before any file changes, the original values of every key it may touch
@@ -52,13 +53,13 @@ final class TagUpgrader {
     nonisolated static let touchedKeys = ["ARTIST", "ARTISTS", "ALBUMARTIST", "ALBUMARTISTS", "GENRE", "FLACTASTIC_TAGVERSION"]
 
     /// Tracks an upgrade would look at: not yet at the current tag version,
-    /// with two or more values in at least one field.
+    /// with two or more artists or album artists. (Genres have no standard
+    /// plural tag to add, and their strings are left alone.)
     static func candidates(in tracks: [Track]) -> [Track] {
         tracks.filter { t in
             guard t.tagVersion != MetadataWriter.currentTagVersion else { return false }
             return MultiValueParser.values(ofStored: t.artist).count > 1
                 || MultiValueParser.values(ofStored: t.albumArtist).count > 1
-                || !t.secondaryGenres.isEmpty
         }
     }
 
@@ -214,13 +215,13 @@ final class TagUpgrader {
               raw.values.allSatisfy({ $0.count <= MultiValueParser.maxValues }) else { return false }
         let artist = MultiValueParser.values(ofStored: before.artist.value).count > 1 ? before.artist.value : nil
         let albumArtist = MultiValueParser.values(ofStored: before.albumArtist.value).count > 1 ? before.albumArtist.value : nil
-        let genres = before.genres.secondary.isEmpty ? nil : before.genres
-        guard artist != nil || albumArtist != nil || genres != nil else { return false }
+        guard artist != nil || albumArtist != nil else { return false }
 
         return try replaceVerified(url) { file in
             let original = keyValues(file, touchedKeys.filter { $0 != "FLACTASTIC_TAGVERSION" })
             MetadataWriter.writeMultiValueFields(
-                file, artist: artist.map { .some($0) }, albumArtist: albumArtist.map { .some($0) }, genres: genres)
+                file, artist: artist.map { .some($0) }, albumArtist: albumArtist.map { .some($0) }, genres: nil,
+                appendOnly: true)
             // The lists were already there (native values): don't rewrite the
             // file just to add the marker.
             return keyValues(file, touchedKeys.filter { $0 != "FLACTASTIC_TAGVERSION" }) != original

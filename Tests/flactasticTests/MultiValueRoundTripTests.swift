@@ -142,3 +142,77 @@ struct MultiValueRoundTripTests {
         #expect(reread.artist == "C")
     }
 }
+
+/// Writes `artists` through the writer's list code to a fresh FLAC that
+/// first holds `props`, and returns the file.
+private func writeArtists(_ artists: [String], over props: [(String, [String])], separator: String = ", ",
+                          appendOnly: Bool = false, in dir: URL) throws -> URL {
+    let url = try #require(try FixtureSupport.makeSilentAudio(ext: "flac", in: dir, name: UUID().uuidString))
+    if !props.isEmpty { #expect(writeRawProperties(url, props)) }
+    let saved: Bool = url.path.withCString { path in
+        guard let file = taglib_file_new(path) else { return false }
+        defer { taglib_file_free(file) }
+        MetadataWriter.writeMultiValueFields(file, artist: .some(MultiValueParser.joinList(artists)), albumArtist: nil,
+                                             genres: nil, appendOnly: appendOnly, separator: separator)
+        return taglib_file_save(file) != 0
+    }
+    #expect(saved)
+    return url
+}
+
+struct DisplaySeparatorTests {
+    @Test func newFileUsesChosenSeparator() async throws {
+        let dir = try FixtureSupport.makeTempDir("sep")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let comma = try writeArtists(["Daft Punk", "Pharrell Williams"], over: [], in: dir)
+        #expect(readPropertyList(comma, "ARTIST") == ["Daft Punk, Pharrell Williams"])
+        #expect(readPropertyList(comma, "ARTISTS") == ["Daft Punk", "Pharrell Williams"])
+        let slash = try writeArtists(["Daft Punk", "Pharrell Williams"], over: [], separator: " / ", in: dir)
+        #expect(readPropertyList(slash, "ARTIST") == ["Daft Punk / Pharrell Williams"])
+
+        // FLACtastic reads the list, and shows it as it always has.
+        let track = await LibraryScanner().loadMetadata(for: try #require(Track.makeFromURL(comma)))
+        #expect(track.artist == "Daft Punk ; Pharrell Williams")
+        #expect(ArtistResolver.displayString(track.artist) == "Daft Punk, Pharrell Williams")
+    }
+
+    @Test func rewriteKeepsTheFilesOwnSeparator() throws {
+        let dir = try FixtureSupport.makeTempDir("sep-keep")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let slash = try writeArtists(["A", "B", "C"], over: [("ARTIST", ["A / B"])], in: dir)
+        #expect(readPropertyList(slash, "ARTIST") == ["A / B / C"])
+        let semi = try writeArtists(["A", "B", "C"], over: [("ARTIST", ["A; B"])], in: dir)
+        #expect(readPropertyList(semi, "ARTIST") == ["A; B; C"])
+        // "Host & Guest" was a list after all: the new artist joins it the same way.
+        let amp = try writeArtists(["Host", "Guest", "Third"], over: [("ARTIST", ["Host & Guest"])], in: dir)
+        #expect(readPropertyList(amp, "ARTIST") == ["Host & Guest & Third"])
+        // "feat." isn't a list separator: the chosen one is used instead.
+        let feat = try writeArtists(["A", "B", "C"], over: [("ARTIST", ["A feat. B"]), ("ARTISTS", ["A", "B"])], in: dir)
+        #expect(readPropertyList(feat, "ARTIST") == ["A, B, C"])
+        #expect(readPropertyList(feat, "ARTISTS") == ["A", "B", "C"])
+    }
+
+    @Test func unchangedArtistsLeaveTheStringAlone() throws {
+        let dir = try FixtureSupport.makeTempDir("sep-same")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = try writeArtists(["A", "B"], over: [("ARTIST", ["A ; B"])], in: dir)
+        #expect(readPropertyList(url, "ARTIST") == ["A ; B"])
+        #expect(readPropertyList(url, "ARTISTS") == ["A", "B"])
+    }
+
+    @Test func appendOnlyNeverTouchesTheSingularTag() throws {
+        let dir = try FixtureSupport.makeTempDir("sep-append")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = try writeArtists(["Calvin Harris", "Dua Lipa"], over: [("ARTIST", ["Calvin Harris & Dua Lipa"])],
+                                   appendOnly: true, in: dir)
+        #expect(readPropertyList(url, "ARTIST") == ["Calvin Harris & Dua Lipa"])
+        #expect(readPropertyList(url, "ARTISTS") == ["Calvin Harris", "Dua Lipa"])
+    }
+
+    @Test func separatorDetection() {
+        #expect(MultiValueParser.separator(in: "A / B", joining: ["A", "B"]) == " / ")
+        #expect(MultiValueParser.separator(in: "A;B", joining: ["A", "B"]) == ";")
+        #expect(MultiValueParser.separator(in: "A feat. B", joining: ["A", "B"]) == nil)
+        #expect(MultiValueParser.separator(in: "A", joining: ["A"]) == nil)
+    }
+}

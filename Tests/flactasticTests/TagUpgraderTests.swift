@@ -75,6 +75,18 @@ struct TagUpgraderTests {
         #expect(upgraded.contains("cur-aa-diff.mp3"))
         // Native multi-values are already lists: untouched.
         #expect(!upgraded.contains("ext-native.flac"))
+        #expect(upgraded.contains("ext-mbid.flac"))
+
+        // Append only: every file's own ARTIST, ALBUMARTIST and GENRE strings
+        // are exactly as they were; only the plural tags and marker are new.
+        for url in files {
+            let now = fullPropertyMap(url), before = originals[url.lastPathComponent] ?? [:]
+            for key in ["ARTIST", "ALBUMARTIST", "GENRE"] {
+                #expect(now[key] == before[key], "\(url.lastPathComponent) \(key) changed")
+            }
+            let added = Set(now.keys).subtracting(before.keys)
+            #expect(added.isSubset(of: ["ARTISTS", "ALBUMARTISTS", "FLACTASTIC_TAGVERSION"]), "\(url.lastPathComponent) gained \(added)")
+        }
 
         // The display is exactly the baseline.
         DisplayBaseline.expectMatches(DisplayBaseline.capture(try await FixtureSupport.scan(dir)), try DisplayBaseline.load())
@@ -83,7 +95,10 @@ struct TagUpgraderTests {
         let multi = dir.appendingPathComponent("cur-multi.flac")
         #expect(readPropertyList(multi, "ARTISTS") == ["Deadmau5", "Rob Swire"])
         #expect(readPropertyList(multi, "ARTIST") == ["Deadmau5 ; Rob Swire"])
-        #expect(readPropertyList(multi, "GENRE") == ["Electronic", "House", "Progressive House"])
+        #expect(readPropertyList(multi, "GENRE") == ["Electronic ; House ; Progressive House"])
+        let mbid = dir.appendingPathComponent("ext-mbid.flac")
+        #expect(readPropertyList(mbid, "ARTIST") == ["Calvin Harris & Dua Lipa"])
+        #expect(readPropertyList(mbid, "ARTISTS") == ["Calvin Harris", "Dua Lipa"])
         #expect(readPropertyList(multi, "FLACTASTIC_TAGVERSION") == ["2"])
         let download = dir.appendingPathComponent("cur-dl.flac")
         #expect(readPropertyList(download, "ARTIST") == ["Deadmau5; Kaskade"])

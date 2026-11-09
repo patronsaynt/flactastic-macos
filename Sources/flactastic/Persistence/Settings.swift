@@ -47,6 +47,13 @@ final class Settings {
         didSet { UserDefaults.standard.set(hasCompletedOnboarding, forKey: "flactastic.hasCompletedOnboarding") }
     }
 
+    /// The separator FLACtastic uses when it writes several artists into one
+    /// ARTIST / ALBUMARTIST string and the file has no separator of its own.
+    /// The ARTISTS / ALBUMARTISTS lists are written as well either way.
+    var artistSeparator: String {
+        didSet { UserDefaults.standard.set(artistSeparator, forKey: MultiValueParser.displaySeparatorDefaultsKey) }
+    }
+
     /// Whether the ambiguous-credit review has been offered after the first
     /// full scan. Later reviews open from Settings → Library.
     var hasShownSplitReview: Bool {
@@ -314,6 +321,7 @@ final class Settings {
         fadeAnimationDirection = storedDir.flatMap(FadeAnimationDirection.init(rawValue:)) ?? .up
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "flactastic.hasCompletedOnboarding")
         hasShownSplitReview = UserDefaults.standard.bool(forKey: "flactastic.hasShownSplitReview")
+        artistSeparator = MultiValueParser.preferredDisplaySeparator
         seenTutorials = Set(UserDefaults.standard.stringArray(forKey: "flactastic.seenTutorials") ?? [])
         showAllArtists = UserDefaults.standard.bool(forKey: "flactastic.showAllArtists")
         hideSinglesInAlbums = (UserDefaults.standard.object(forKey: "flactastic.hideSinglesInAlbums") as? Bool) ?? true

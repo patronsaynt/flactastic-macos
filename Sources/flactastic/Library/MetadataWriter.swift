@@ -272,11 +272,12 @@ actor MetadataWriter {
         guard taglib_file_is_valid(file) != 0, let tag = taglib_file_tag(file) else { throw WriteError.fileOpenFailed(url) }
         let existing = taglib_tag_genre(tag).map { String(cString: $0) } ?? ""
         guard existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        guard let value = GenreResolver.join(primary: primary, secondary: secondary) else { return nil }
-        value.withCString { taglib_tag_set_genre(tag, $0) }
+        guard GenreResolver.join(primary: primary, secondary: secondary) != nil else { return nil }
+        // The field is empty, so this only adds: genres as native values.
+        Self.writeGenres(file, primary: primary, secondary: secondary)
         guard taglib_file_save(file) != 0 else { throw WriteError.saveFailed(url) }
         var updated = track
-        let parsed = GenreResolver.split(value)
+        let parsed = MultiValueParser.storedGenres(native: LibraryScanner.propertyList(file, "GENRE"))
         updated.genre = parsed.primary
         updated.secondaryGenres = parsed.secondary
         return updated
@@ -411,46 +412,87 @@ actor MetadataWriter {
         _ file: UnsafeMutablePointer<TagLib_File>,
         artist: String??,
         albumArtist: String??,
-        genres: (primary: String?, secondary: [String])?
+        genres: (primary: String?, secondary: [String])?,
+        appendOnly: Bool = false,
+        separator: String? = nil
     ) {
-        if let artist { writeCredit(file, singular: "ARTIST", plural: "ARTISTS", value: artist) }
-        if let albumArtist { writeCredit(file, singular: "ALBUMARTIST", plural: "ALBUMARTISTS", value: albumArtist) }
-        if let genres { writeGenres(file, primary: genres.primary, secondary: genres.secondary) }
+        let separator = separator ?? MultiValueParser.preferredDisplaySeparator
+        if let artist {
+            writeCredit(file, singular: "ARTIST", plural: "ARTISTS", value: artist, appendOnly: appendOnly, separator: separator)
+        }
+        if let albumArtist {
+            writeCredit(file, singular: "ALBUMARTIST", plural: "ALBUMARTISTS", value: albumArtist, appendOnly: appendOnly, separator: separator)
+        }
+        if let genres, !appendOnly { writeGenres(file, primary: genres.primary, secondary: genres.secondary) }
         setList(file, "FLACTASTIC_TAGVERSION", [String(currentTagVersion)])
     }
 
-    private static func writeCredit(_ file: UnsafeMutablePointer<TagLib_File>, singular: String, plural: String, value: String?) {
+    /// One credit field. The plural tag holds the list; the singular tag is a
+    /// display string for people and other players, rewritten only when the
+    /// artists change: joined with the separator the file already uses, or
+    /// the user's chosen one when it has none. `appendOnly` (Upgrade Tags)
+    /// never touches the singular tag at all, only adds the plural.
+    private static func writeCredit(
+        _ file: UnsafeMutablePointer<TagLib_File>, singular: String, plural: String, value: String?,
+        appendOnly: Bool, separator preferred: String
+    ) {
         let desired = MultiValueParser.values(ofStored: value)
+        let currentSingular = LibraryScanner.propertyList(file, singular)
+        let currentPlural = LibraryScanner.propertyList(file, plural)
+        // Native repeated values already hold exactly this list (another
+        // tagger's ARTIST=A, ARTIST=B): that's the best form there is.
+        if currentSingular.count > 1, MultiValueParser.normalize(currentSingular) == desired { return }
+
+        if appendOnly {
+            guard desired.count > 1, MultiValueParser.normalize(currentPlural) != desired else { return }
+            setList(file, plural, desired)
+            if LibraryScanner.propertyList(file, plural) != desired { setList(file, plural, []) }
+            return
+        }
+
         guard !desired.isEmpty else {
             setList(file, singular, [])
             setList(file, plural, [])
             return
         }
-        let currentSingular = LibraryScanner.propertyList(file, singular)
-        let currentPlural = LibraryScanner.propertyList(file, plural)
         let current = MultiValueParser.storedCredit(plural: currentPlural, native: currentSingular)
-        let alreadyStored = MultiValueParser.values(ofStored: current.value) == desired
-        // Native repeated values already hold exactly this list (another
-        // tagger's ARTIST=A, ARTIST=B): that's the best form there is.
-        if alreadyStored, currentSingular.count > 1, MultiValueParser.normalize(currentSingular) == desired { return }
-
-        if !alreadyStored || currentSingular.count != 1 {
-            // One value: exactly as given. Several: the app's list form.
-            let display = desired.count == 1
+        let currentValues = MultiValueParser.values(ofStored: current.value)
+        var display: String?
+        if currentValues != desired || currentSingular.count != 1 {
+            display = desired.count == 1
                 ? (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-                : MultiValueParser.joinList(desired)
-            setList(file, singular, [display])
+                : desired.joined(separator: displaySeparator(existing: currentSingular, currentValues: currentValues,
+                                                             desired: desired, preferred: preferred))
+            setList(file, singular, display.map { [$0] } ?? [])
         }
         if desired.count > 1 {
             if MultiValueParser.normalize(currentPlural) != desired {
                 setList(file, plural, desired)
-                // A container that can't hold the plural keeps the joined
-                // singular, which already reads back as the same list.
-                if LibraryScanner.propertyList(file, plural) != desired { setList(file, plural, []) }
+                if LibraryScanner.propertyList(file, plural) != desired {
+                    // The container can't hold the plural: the singular must
+                    // then carry the list itself, so it falls back to " ; ".
+                    setList(file, plural, [])
+                    if let display, MultiValueParser.values(ofStored: display) != desired {
+                        setList(file, singular, [MultiValueParser.joinList(desired)])
+                    }
+                }
             }
         } else if !currentPlural.isEmpty {
             setList(file, plural, [])
         }
+    }
+
+    /// The separator for a rewritten display string: the one the file's
+    /// current string uses between artists, when it was really a list (or the
+    /// new list confirms its parts are separate artists), else `preferred`.
+    private static func displaySeparator(existing: [String], currentValues: [String], desired: [String], preferred: String) -> String {
+        guard existing.count == 1 else { return preferred }
+        let raw = existing[0]
+        let parts = currentValues.count > 1 ? currentValues : MultiValueParser.normalize(MultiValueParser.splitAmbiguous(raw))
+        let isList = currentValues.count > 1
+            || (parts.count > 1 && parts.allSatisfy { p in desired.contains { $0.caseInsensitiveCompare(p) == .orderedSame } })
+        guard isList, let kept = MultiValueParser.separator(in: raw, joining: parts) else { return preferred }
+        return kept
     }
 
     private static func writeGenres(_ file: UnsafeMutablePointer<TagLib_File>, primary: String?, secondary: [String]) {

@@ -308,6 +308,17 @@ private struct LibrarySettingsPane: View {
                     .padding(.horizontal, Theme.Spacing.lg)
                     .padding(.vertical, Theme.Spacing.md)
                 GroupDivider()
+                PickerRow(
+                    label: "Artist Separator",
+                    subtitle: "Joins several artists in the ARTIST tag when FLACtastic writes one and the file has no separator of its own. Each artist is also saved separately."
+                ) {
+                    Picker("Artist Separator", selection: $settings.artistSeparator) {
+                        ForEach(MultiValueParser.displaySeparatorChoices, id: \.self) { sep in
+                            Text("Artist A\(sep)Artist B").tag(sep)
+                        }
+                    }
+                }
+                GroupDivider()
                 TagUpgradeRow()
                     .padding(.horizontal, Theme.Spacing.lg)
                     .padding(.vertical, Theme.Spacing.md)
@@ -834,7 +845,7 @@ private struct TagUpgradeRow: View {
             Button("Upgrade \(count == 1 ? "1 File" : "\(count) Files")") { upgrader.upgrade(library: library) }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Artists and genres are also written as lists that other players read. The library looks the same. The original tags are backed up first, and each file is rewritten through a checked copy.")
+            Text("A list of each file's artists is added next to its existing tags, which stay exactly as they are. The library looks the same. The original tags are backed up first, and each file is saved through a checked copy.")
         }
         .alert(summaryTitle, isPresented: Binding(
             get: { upgrader.pendingSummary != nil },
@@ -847,9 +858,9 @@ private struct TagUpgradeRow: View {
     }
 
     private func detail(_ count: Int) -> String {
-        if count == 0 { return "Every file already stores its artists and genres as lists." }
-        let files = count == 1 ? "1 file stores" : "\(count) files store"
-        return "\(files) several artists or genres in one tag. Upgrading also writes them as lists that other players read, after backing up the original tags."
+        if count == 0 { return "Every file already stores its artists as lists." }
+        let files = count == 1 ? "1 file keeps" : "\(count) files keep"
+        return "\(files) several artists in one tag. Upgrading adds a separate list of them that other players read, after backing up the original tags. Your existing tags aren't changed."
     }
 
     private var summaryTitle: String {
