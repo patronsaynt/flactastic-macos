@@ -105,3 +105,23 @@ func rejectsSilentVideo() async throws {
         try await AudioContainerNormalizer.normalize(mp4)
     }
 }
+
+@Test("Re-containerizing keeps the multi-value tag fields",
+      .enabled(if: ffmpegPath != nil, "ffmpeg not installed"))
+func keepsMultiValueFields() async throws {
+    let dir = try makeTempDir()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let mp4 = dir.appendingPathComponent("video.mp4")
+    try run(ffmpegPath!, ["-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=1",
+                          "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+                          "-c:v", "libx264", "-c:a", "aac", "-b:a", "256k",
+                          "-shortest", mp4.path])
+    #expect(writeRawProperties(mp4, [("ARTIST", ["A ; B"]), ("ARTISTS", ["A", "B"]),
+                                     ("GENRE", ["House", "Techno"]), ("FLACTASTIC_TAGVERSION", ["2"])]))
+
+    let result = try await AudioContainerNormalizer.normalize(mp4)
+    #expect(readPropertyList(result, "ARTIST") == ["A ; B"])
+    #expect(readPropertyList(result, "ARTISTS") == ["A", "B"])
+    #expect(readPropertyList(result, "GENRE") == ["House", "Techno"])
+    #expect(readPropertyList(result, "FLACTASTIC_TAGVERSION") == ["2"])
+}

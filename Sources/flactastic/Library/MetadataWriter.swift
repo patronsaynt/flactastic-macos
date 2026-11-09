@@ -124,21 +124,15 @@ actor MetadataWriter {
         // --- Text fields ---
         // Empty string clears a field in TagLib; 0 clears numeric fields.
         title.withCString            { taglib_tag_set_title(tag, $0) }
-        (artist      ?? "").withCString { taglib_tag_set_artist(tag, $0) }
         (album       ?? "").withCString { taglib_tag_set_album(tag, $0) }
-        // Primary + secondary genres pack into the one GENRE tag string.
-        let genreTagString = GenreResolver.join(primary: genre, secondary: secondaryGenres)
-        (genreTagString ?? "").withCString { taglib_tag_set_genre(tag, $0) }
         taglib_tag_set_year(tag,  UInt32(max(0, year        ?? 0)))
         taglib_tag_set_track(tag, UInt32(max(0, trackNumber ?? 0)))
 
-        // --- Album artist (via property API / custom helper) ---
-        switch albumArtistChange {
-        case .unchanged:
-            break
-        case .set(let value):
-            (value ?? "").withCString { taglib_helper_set_album_artist(file, $0) }
-        }
+        // --- Artist, album artist and genre, as real lists ---
+        var albumArtistValue: String??
+        if case .set(let value) = albumArtistChange { albumArtistValue = .some(value) }
+        Self.writeMultiValueFields(file, artist: .some(artist), albumArtist: albumArtistValue,
+                                   genres: (genre, secondaryGenres))
 
         // --- Compilation flag ---
         // Compilation and Mix Compilation are mutually exclusive; whichever is
@@ -216,22 +210,25 @@ actor MetadataWriter {
         }
 
         // --- Build updated Track value ---
+        // Artist, album artist and genre are read back from the tags as they
+        // now stand, through the scanner's own code, so `updated` is exactly
+        // what a fresh LibraryScanner read will produce.
+        let fields = LibraryScanner.multiValueFields(file, tag: tag)
         var updated = track
         updated.title       = title.isEmpty ? track.title : title
-        updated.artist      = artist.flatMap      { $0.isEmpty ? nil : $0 }
+        updated.artist      = fields.artist.value
+        updated.artistIsList = fields.artist.isList
         updated.album       = album.flatMap       { $0.isEmpty ? nil : $0 }
-        // Re-derive from the string we actually just wrote, not the raw caller
-        // input — guarantees `updated` matches what a fresh LibraryScanner read
-        // would produce (cap/dedup/case-folding applied consistently).
-        let (resolvedGenre, resolvedSecondary) = GenreResolver.split(genreTagString)
-        updated.genre           = resolvedGenre
-        updated.secondaryGenres = resolvedSecondary
+        updated.genre           = fields.genres.primary
+        updated.secondaryGenres = fields.genres.secondary
+        updated.tagVersion  = fields.tagVersion
         updated.year        = year
         updated.trackNumber = trackNumber
         switch albumArtistChange {
         case .unchanged:        break
-        case .set(let value):
-            updated.albumArtist = (value?.isEmpty ?? true) ? nil : value
+        case .set:
+            updated.albumArtist = fields.albumArtist.value
+            updated.albumArtistIsList = fields.albumArtist.isList
         }
         switch compilationChange {
         case .unchanged:        break
@@ -391,6 +388,91 @@ actor MetadataWriter {
         defer { free(cstr) }
         let raw = String(cString: cstr)
         return raw.isEmpty ? [] : CueSheet.decode(raw)
+    }
+
+    // MARK: - Multi-value fields
+
+    /// The FLACTASTIC_TAGVERSION written once a file's artist, album artist
+    /// and genre are stored as real lists.
+    static let currentTagVersion = 2
+
+    /// Writes artist, album artist and genre to an open file as real lists,
+    /// then marks it FLACTASTIC_TAGVERSION=2. Doesn't save. Pass `nil` for a
+    /// field to leave it alone; `.some(nil)` clears it.
+    ///
+    /// Credits ("A ; B" as the editor joins them): the singular tag keeps the
+    /// display string, and the plural tag (ARTISTS / ALBUMARTISTS) holds one
+    /// value per artist when there are two or more. A singular tag that
+    /// already reads as the same list is left as it is, so another tagger's
+    /// "A feat. B" survives next to the plural tag. Genres are written as
+    /// repeated native values. Every list is read back; a container that
+    /// drops it gets the joined `" ; "` string instead.
+    static func writeMultiValueFields(
+        _ file: UnsafeMutablePointer<TagLib_File>,
+        artist: String??,
+        albumArtist: String??,
+        genres: (primary: String?, secondary: [String])?
+    ) {
+        if let artist { writeCredit(file, singular: "ARTIST", plural: "ARTISTS", value: artist) }
+        if let albumArtist { writeCredit(file, singular: "ALBUMARTIST", plural: "ALBUMARTISTS", value: albumArtist) }
+        if let genres { writeGenres(file, primary: genres.primary, secondary: genres.secondary) }
+        setList(file, "FLACTASTIC_TAGVERSION", [String(currentTagVersion)])
+    }
+
+    private static func writeCredit(_ file: UnsafeMutablePointer<TagLib_File>, singular: String, plural: String, value: String?) {
+        let desired = MultiValueParser.values(ofStored: value)
+        guard !desired.isEmpty else {
+            setList(file, singular, [])
+            setList(file, plural, [])
+            return
+        }
+        let currentSingular = LibraryScanner.propertyList(file, singular)
+        let currentPlural = LibraryScanner.propertyList(file, plural)
+        let current = MultiValueParser.storedCredit(plural: currentPlural, native: currentSingular)
+        let alreadyStored = MultiValueParser.values(ofStored: current.value) == desired
+
+        if !alreadyStored || currentSingular.count != 1 {
+            // One value: exactly as given. Several: the app's list form.
+            let display = desired.count == 1
+                ? (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                : MultiValueParser.joinList(desired)
+            setList(file, singular, [display])
+        }
+        if desired.count > 1 {
+            if MultiValueParser.normalize(currentPlural) != desired {
+                setList(file, plural, desired)
+                // A container that can't hold the plural keeps the joined
+                // singular, which already reads back as the same list.
+                if LibraryScanner.propertyList(file, plural) != desired { setList(file, plural, []) }
+            }
+        } else if !currentPlural.isEmpty {
+            setList(file, plural, [])
+        }
+    }
+
+    private static func writeGenres(_ file: UnsafeMutablePointer<TagLib_File>, primary: String?, secondary: [String]) {
+        let joined = GenreResolver.join(primary: primary, secondary: secondary)
+        let desired = MultiValueParser.values(ofStored: joined)
+        // Already stored as these exact native values: leave it.
+        if LibraryScanner.propertyList(file, "GENRE") == desired { return }
+        setList(file, "GENRE", desired)
+        if desired.count > 1, LibraryScanner.propertyList(file, "GENRE") != desired {
+            setList(file, "GENRE", joined.map { [$0] } ?? [])
+        }
+    }
+
+    /// Replaces every value of `key` with `values`; empty removes the key.
+    private static func setList(_ file: UnsafeMutablePointer<TagLib_File>, _ key: String, _ values: [String]) {
+        key.withCString { k in
+            guard let first = values.first else {
+                taglib_property_set(file, k, nil)
+                return
+            }
+            first.withCString { taglib_property_set(file, k, $0) }
+            for value in values.dropFirst() {
+                value.withCString { taglib_property_set_append(file, k, $0) }
+            }
+        }
     }
 
     // MARK: - Helpers

@@ -47,6 +47,12 @@ final class Settings {
         didSet { UserDefaults.standard.set(hasCompletedOnboarding, forKey: "flactastic.hasCompletedOnboarding") }
     }
 
+    /// Whether the ambiguous-credit review has been offered after the first
+    /// full scan. Later reviews open from Settings → Library.
+    var hasShownSplitReview: Bool {
+        didSet { UserDefaults.standard.set(hasShownSplitReview, forKey: "flactastic.hasShownSplitReview") }
+    }
+
     /// Tabs whose one-time tutorial card has been dismissed (`AppTab` raw
     /// values). A tab in here never shows its tutorial again, unless
     /// Settings → Debug → "Show tutorials on every visit" is on.
@@ -307,6 +313,7 @@ final class Settings {
         let storedDir = UserDefaults.standard.string(forKey: "flactastic.fadeAnimationDirection")
         fadeAnimationDirection = storedDir.flatMap(FadeAnimationDirection.init(rawValue:)) ?? .up
         hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "flactastic.hasCompletedOnboarding")
+        hasShownSplitReview = UserDefaults.standard.bool(forKey: "flactastic.hasShownSplitReview")
         seenTutorials = Set(UserDefaults.standard.stringArray(forKey: "flactastic.seenTutorials") ?? [])
         showAllArtists = UserDefaults.standard.bool(forKey: "flactastic.showAllArtists")
         hideSinglesInAlbums = (UserDefaults.standard.object(forKey: "flactastic.hideSinglesInAlbums") as? Bool) ?? true

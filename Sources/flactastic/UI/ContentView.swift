@@ -15,6 +15,8 @@ struct ContentView: View {
     @Environment(LyricsFetcher.self) private var lyricsFetcher
     /// On Organizer, the player starts tucked away past the window edge.
     @State private var isPuckTucked = true
+    /// The ambiguous-credit review, offered once after the first full scan.
+    @State private var showSplitReview = false
     @Environment(\.metadataWriter) private var metadataWriter
 
     /// Mirrors the hosting window's fullscreen state. The custom top bar is
@@ -89,6 +91,12 @@ struct ContentView: View {
         .background(Theme.background)
         .sheet(isPresented: $router.showSettings) {
             SettingsView()
+        }
+        .sheet(isPresented: $showSplitReview) {
+            SplitReviewSheet()
+        }
+        .onChange(of: library.hasFinishedLaunchWork, initial: true) { _, finished in
+            offerSplitReviewIfNeeded(finished: finished)
         }
         .sheet(item: Binding(
             get: { importCoordinator.active },
@@ -388,6 +396,15 @@ struct ContentView: View {
             .filter { settings.showAllArtists || !$0.albums.isEmpty || !$0.singles.isEmpty }
         let artists = summaries.map { (key: $0.id, displayName: $0.displayName) }
         artistImageFetcher.prefetchAll(artists)
+    }
+
+    /// Opens the credit review once, after the first scan and its artist
+    /// pass finish, when something is waiting for an answer.
+    private func offerSplitReviewIfNeeded(finished: Bool) {
+        guard finished, !settings.hasShownSplitReview, !library.pendingSplitReview.isEmpty,
+              !router.showSettings else { return }
+        settings.hasShownSplitReview = true
+        showSplitReview = true
     }
 
     private var duplicateDialogTitle: String {

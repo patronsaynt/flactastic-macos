@@ -302,6 +302,13 @@ private struct LibrarySettingsPane: View {
                     .padding(.vertical, Theme.Spacing.md)
             }
 
+            // Artist Credits ───────────────────────────────────────────────
+            SettingsGroup(title: "Artist Credits") {
+                CreditReviewRow()
+                    .padding(.horizontal, Theme.Spacing.lg)
+                    .padding(.vertical, Theme.Spacing.md)
+            }
+
             // Collection ───────────────────────────────────────────────────
             // Grid/list layout is chosen in-page on the Collection and
             // Playlists tabs, so it doesn't appear here.
@@ -732,6 +739,38 @@ private struct GenreScanRow: View {
         if minutes < 60 { return "About \(minutes) min left" }
         let hours = minutes / 60, rest = minutes % 60
         return rest == 0 ? "About \(hours) h left" : "About \(hours) h \(rest) min left"
+    }
+}
+
+// MARK: - Artist credits
+
+/// Reopens the credit review for ambiguous credits that later scans found.
+private struct CreditReviewRow: View {
+    @Environment(LibraryStore.self) private var library
+    @State private var isReviewing = false
+
+    var body: some View {
+        let count = library.pendingSplitReview.count
+        HStack(alignment: .center, spacing: Theme.Spacing.lg) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Review Ambiguous Credits")
+                    .font(Theme.Font.body)
+                    .foregroundStyle(Theme.textPrimary)
+                Text(count == 0
+                     ? "Every credit like \u{201C}A & B\u{201D} is settled."
+                     : "\(count == 1 ? "1 credit" : "\(count) credits") like \u{201C}A & B\u{201D} could be one artist or several. Decide which, without changing your files.")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Review") { isReviewing = true }
+                .buttonStyle(PillButtonStyle())
+                .disabled(count == 0 || !library.hasCompletedInitialLoad)
+        }
+        .sheet(isPresented: $isReviewing) {
+            SplitReviewSheet()
+        }
     }
 }
 
