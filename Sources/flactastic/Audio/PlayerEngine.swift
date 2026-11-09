@@ -636,8 +636,11 @@ final class PlayerEngine {
                 // tracks are picked up without restarting the decode task.
                 // Also atomically clear isDecoding when the queue is exhausted so
                 // appendTracks() on the main actor can reliably detect idle.
+                // Every hop to the main actor re-checks the generation there: a
+                // seek or skip can replace this pass while it waits to hop, and
+                // a stale pass must not touch the new one's state.
                 let nextTrack: Track? = await MainActor.run { [weak self] () -> Track? in
-                    guard let self else { return nil }
+                    guard let self, generation.withLock({ $0 }) == myGeneration else { return nil }
                     if trackIndex >= self._queue.count {
                         self.isDecoding = false
                         return nil
@@ -670,6 +673,7 @@ final class PlayerEngine {
                     let fileDuration = Double(file.length) / sourceFormat.sampleRate
                     if isFirstTrack && startsAtCurrentTrack && resume == nil {
                         await MainActor.run { [weak self] in
+                            guard generation.withLock({ $0 }) == myGeneration else { return }
                             self?.duration = fileDuration
                         }
                     }
@@ -701,7 +705,7 @@ final class PlayerEngine {
                     // below can compute the correct absolute endFrame for the existing entry.
                     if resume == nil {
                         startFrame = await MainActor.run { [weak self] () -> AVAudioFramePosition in
-                            guard let self else { return 0 }
+                            guard let self, generation.withLock({ $0 }) == myGeneration else { return -1 }
                             let sf = self.nextScheduleFrame
                             if appendingEntry && isFirstTrack {
                                 // Continuation: no new entry. Just update the live pointer.
@@ -713,6 +717,7 @@ final class PlayerEngine {
                             }
                             return sf
                         }
+                        if startFrame < 0 { return }
                     }
                     entryOpened = true
                     let startFrame = startFrame
