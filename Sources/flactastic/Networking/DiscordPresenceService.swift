@@ -105,6 +105,18 @@ final class DiscordPresenceService {
         }
     }
 
+    /// The artist line Discord shows for `track`.
+    nonisolated static func artistLine(for track: Track) -> String {
+        // FLAC/Vorbis tags commonly join multiple artists with " ; " or ";".
+        // Normalise to ", " so Discord shows "Artist1, Artist2" instead.
+        let rawTag = track.artist ?? track.albumArtist ?? ""
+        return rawTag
+            .components(separatedBy: ";")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+    }
+
     private func makeSnapshot() -> Snapshot {
         let enabled = settings?.discordRichPresenceEnabled ?? true
         guard let p = player, let track = p.currentTrack, p.isPlaying else {
@@ -124,14 +136,7 @@ final class DiscordPresenceService {
             startMs = s
             endMs = s + Int64(dur * 1000)
         }
-        // FLAC/Vorbis tags commonly join multiple artists with " ; " or ";".
-        // Normalise to ", " so Discord shows "Artist1, Artist2" instead.
-        let rawTag = track.artist ?? track.albumArtist ?? ""
-        let artist = rawTag
-            .components(separatedBy: ";")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .joined(separator: ", ")
+        let artist = Self.artistLine(for: track)
         let album = track.album ?? ""
         // Keep the artist on the state line; album shows below as the large_text
         // (Discord renders it under the artwork), so duplicating it here is clutter.
