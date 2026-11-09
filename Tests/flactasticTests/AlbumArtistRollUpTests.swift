@@ -20,7 +20,7 @@ import Testing
 }
 
 /// The narrow delimiter set is the point: names containing a comma or an "x"
-/// must survive intact, which is why this doesn't reuse `splitOnSeparators`.
+/// must survive intact, which is why this doesn't reuse `MultiValueParser.splitAmbiguous`.
 @Test func primaryCreditLeavesCommaNamesIntact() {
     #expect(ArtistResolver.primaryCredit("Tyler, The Creator") == "Tyler, The Creator")
     #expect(ArtistResolver.primaryCredit("AC/DC") == "AC/DC")

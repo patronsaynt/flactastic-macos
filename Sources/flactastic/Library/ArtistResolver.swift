@@ -129,7 +129,7 @@ struct ArtistResolver: Sendable {
     /// The lead credit of a multi-artist string, using only the explicit
     /// storage delimiters — `"Deadmau5 ; Rob Swire"` → `"Deadmau5"`.
     ///
-    /// Deliberately narrower than `splitOnSeparators`: that splits on `", "`
+    /// Deliberately narrower than `MultiValueParser.splitAmbiguous`: that splits on `", "`
     /// and `" x "` too, which would maul legitimate names like
     /// "Tyler, The Creator". Only the unambiguous delimiters the app itself
     /// writes are honoured here.
@@ -170,15 +170,5 @@ struct ArtistResolver: Sendable {
             if seen.insert(k).inserted { out.append(k) }
         }
         return out
-    }
-
-    // MARK: - Separator handling
-
-    static func containsSeparator(_ s: String) -> Bool {
-        MultiValueParser.hasAmbiguousSeparator(s)
-    }
-
-    static func splitOnSeparators(_ s: String) -> [String] {
-        MultiValueParser.splitAmbiguous(s)
     }
 }

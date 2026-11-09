@@ -36,9 +36,6 @@ final class PlaybackFileGuard {
         watch()
     }
 
-    /// How many writes are waiting (for tests and debugging).
-    var heldCount: Int { held.count }
-
     /// Checks once a second while anything is held; idle otherwise.
     private func watch() {
         guard watcher == nil else { return }

@@ -98,8 +98,6 @@ final class MixSignals {
         revision += 1
     }
 
-    var analysedCount: Int { fingerprints.count }
-
     // MARK: Feedback
 
     /// Down-rating: remembered for every future build of this mix, and
