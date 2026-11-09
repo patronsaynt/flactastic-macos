@@ -48,6 +48,11 @@ final class LibraryStore {
     /// They run on the main actor and reassign `tracks`, so anything that
     /// animates at launch — Home's thrown case — waits for this to stay smooth.
     var hasFinishedLaunchWork: Bool = false
+    /// True from `openFolder` until that folder's tags have been read. Unlike
+    /// the two flags above, it's set again for every folder, so work that
+    /// reacts to new tracks can tell placeholders (title = file name, no
+    /// artist) from a finished library after switching folders mid-session.
+    var isLoadingFolder: Bool = false
 
     /// Ids that have already played their Collection album-grid or track-list
     /// entrance (`riseFadeIn`) animation at least once this run. Deliberately
@@ -389,6 +394,7 @@ final class LibraryStore {
         metadataTask?.cancel()
         rootURL = url
         scanState = .scanning
+        isLoadingFolder = true
         tracks = []
         Perf.event("Library load start")
 
@@ -414,6 +420,7 @@ final class LibraryStore {
             } catch {
                 if Task.isCancelled { return }
                 self.scanState = .failed(String(describing: error))
+                self.isLoadingFolder = false
                 self.hasCompletedInitialLoad = true
                 self.hasFinishedLaunchWork = true
             }
@@ -630,6 +637,7 @@ final class LibraryStore {
                 if !Task.isCancelled {
                     flush()
                     self.tracks = self.tracks.sortedForLibrary()
+                    self.isLoadingFolder = false
 
                     // Reveal the UI as soon as the grid is stable-sorted —
                     // i.e. the moment the Collection is genuinely populated.

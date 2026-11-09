@@ -226,6 +226,7 @@ struct ContentView: View {
             GenreScanner.shared.attach(library: library, writer: metadataWriter, lyrics: lyricsFetcher, settings: settings)
         }
         .onChange(of: library.tracksRevision) { _, _ in GenreScanner.shared.libraryChanged() }
+        .onChange(of: library.isLoadingFolder) { _, _ in GenreScanner.shared.libraryChanged() }
         .task(id: player.currentTrack?.id) {
             let queue = player.engine.queue
             let next = queue.indices.contains(player.engine.currentIndex + 1)

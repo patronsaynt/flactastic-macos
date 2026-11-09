@@ -121,6 +121,9 @@ final class GenreScanner {
     /// the first load) is treated as an import.
     func libraryChanged() {
         guard let library, library.hasCompletedInitialLoad else { return }
+        // A folder still loading holds placeholder tracks, not imports: start
+        // counting again once its tags are in.
+        guard !library.isLoadingFolder else { knownTrackIDs = nil; return }
         let ids = Set(library.tracks.map(\.id))
         guard let known = knownTrackIDs else { knownTrackIDs = ids; return }
         knownTrackIDs = ids
