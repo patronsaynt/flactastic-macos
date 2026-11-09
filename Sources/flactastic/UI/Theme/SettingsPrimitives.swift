@@ -95,6 +95,8 @@ struct SheetCloseButton: View {
 /// The sheets' action pills: Save solid in the accent, Cancel a quiet fill.
 struct SheetPillStyle: ButtonStyle {
     var isPrimary = false
+    /// Solid red with white text, for actions that delete things for good.
+    var isDestructive = false
     @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
@@ -102,10 +104,13 @@ struct SheetPillStyle: ButtonStyle {
             .font(.system(size: 14, weight: .semibold))
             .lineLimit(1)
             .fixedSize()
-            .foregroundStyle(isPrimary ? Theme.background : Theme.textPrimary)
+            .foregroundStyle(isDestructive ? Color.white : isPrimary ? Theme.background : Theme.textPrimary)
             .padding(.horizontal, 22)
             .frame(height: 40)
-            .background(Capsule().fill(isPrimary ? Theme.textPrimary : Theme.textPrimary.opacity(0.08)))
+            .background(Capsule().fill(
+                isDestructive ? Color(nsColor: .systemRed)
+                    : isPrimary ? Theme.textPrimary : Theme.textPrimary.opacity(0.08)
+            ))
             .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(.easeOut(duration: 0.08), value: configuration.isPressed)

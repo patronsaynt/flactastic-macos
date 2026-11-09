@@ -108,4 +108,18 @@ enum PeerKeyStore {
             throw StoreError.keychainFailure(status)
         }
     }
+
+    /// Revokes every paired peer at once. On macOS, SecItemDelete removes
+    /// all items matching the query, so leaving out the account matches
+    /// every key this app stored.
+    static func deleteAll() throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw StoreError.keychainFailure(status)
+        }
+    }
 }

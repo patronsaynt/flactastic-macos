@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import UniformTypeIdentifiers
 
 // MARK: - SettingsView
 
@@ -251,7 +252,252 @@ private struct GeneralSettingsPane: View {
                     )
                 )
             }
+
+            // User Data ────────────────────────────────────────────────────
+            SettingsGroup(title: "User Data") {
+                BackupRow()
+                GroupDivider()
+                ClearUserDataRow()
+            }
         }
+    }
+}
+
+/// "Back Up…" and "Restore…": the person's settings, history, edits and
+/// playlists in one `.flactastic` file, optionally password-protected. See
+/// `UserDataBackup` for what's included.
+private struct BackupRow: View {
+    @Environment(LibraryStore.self) private var library
+    @Environment(PlayerState.self) private var player
+
+    private enum Prompt { case backupPassword, restorePassword, confirmRestore }
+
+    @State private var prompt: Prompt?
+    @State private var password = ""
+    @State private var confirmPassword = ""
+    @State private var status: String?
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+    @State private var restoreData: Data?
+    @State private var restoreArchive: UserDataBackup.Archive?
+    @State private var restoreNotes: [String] = []
+
+    private static var backupType: UTType {
+        UTType(filenameExtension: UserDataBackup.fileExtension) ?? .data
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Theme.Spacing.lg) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Back Up User Data")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text(status ?? "Saves your settings, listening history, artist edits, spine designs and logos, mix feedback, and this library's playlists and track IDs into one .flactastic file, with an optional password. Music files, caches and sign-ins aren't included. Restoring replaces those things on this Mac, then FLACtastic quits.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Restore…", action: chooseBackupToRestore)
+                .buttonStyle(SheetPillStyle())
+                .disabled(isWorking)
+            Button("Back Up…") {
+                password = ""; confirmPassword = ""
+                prompt = .backupPassword
+            }
+            .buttonStyle(SheetPillStyle())
+            .disabled(isWorking)
+        }
+        .padding(.horizontal, Theme.Spacing.lg)
+        .padding(.vertical, Theme.Spacing.md)
+        .alert("Protect the backup with a password?", isPresented: isShowing(.backupPassword)) {
+            SecureField("Password (optional)", text: $password)
+            SecureField("Confirm password", text: $confirmPassword)
+            Button("Continue", action: chooseBackupDestination)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("With a password the backup is encrypted, and you'll need the password to restore it. If you forget it, the backup can't be opened. Leave both fields empty for no password.")
+        }
+        .alert("Enter the backup's password", isPresented: isShowing(.restorePassword)) {
+            SecureField("Password", text: $password)
+            Button("Open") { decodeRestore(password: password) }
+            Button("Cancel", role: .cancel) { restoreData = nil }
+        } message: {
+            Text("This backup is protected with a password.")
+        }
+        .alert("Restore this backup?", isPresented: isShowing(.confirmRestore)) {
+            Button("Restore and Quit", role: .destructive, action: applyRestore)
+            Button("Cancel", role: .cancel) { restoreArchive = nil }
+        } message: {
+            Text(restoreSummary)
+        }
+        .alert("Backup", isPresented: Binding(
+            get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } }
+        )) {
+            Button("OK") { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
+        .alert("Restored with some gaps", isPresented: Binding(
+            get: { !restoreNotes.isEmpty }, set: { if !$0 { UserDataEraser.quitWithoutSaving() } }
+        )) {
+            Button("Quit") { UserDataEraser.quitWithoutSaving() }
+        } message: {
+            Text(restoreNotes.joined(separator: "\n\n"))
+        }
+    }
+
+    private func isShowing(_ which: Prompt) -> Binding<Bool> {
+        Binding(get: { prompt == which }, set: { if !$0 && prompt == which { prompt = nil } })
+    }
+
+    // MARK: Backing up
+
+    private func chooseBackupDestination() {
+        guard password == confirmPassword else {
+            errorMessage = "The passwords don't match. Nothing was saved."
+            return
+        }
+        let panel = NSSavePanel()
+        panel.title = "Save Backup"
+        panel.allowedContentTypes = [Self.backupType]
+        let day = Date().formatted(.iso8601.year().month().day())
+        panel.nameFieldStringValue = "FLACtastic Backup \(day).\(UserDataBackup.fileExtension)"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        let root = library.rootURL
+        let password = self.password
+        self.password = ""; confirmPassword = ""
+        isWorking = true
+        status = "Backing up…"
+        Task {
+            let result = await Task.detached(priority: .userInitiated) { () -> Error? in
+                do {
+                    try UserDataBackup.write(libraryRoot: root, password: password, to: url)
+                    return nil
+                } catch { return error }
+            }.value
+            isWorking = false
+            if let result {
+                status = nil
+                errorMessage = "The backup couldn't be saved: \(result.localizedDescription)"
+            } else {
+                status = "Backed up to \(url.lastPathComponent)\(password.isEmpty ? "" : ", password-protected")."
+            }
+        }
+    }
+
+    // MARK: Restoring
+
+    private func chooseBackupToRestore() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose a FLACtastic Backup"
+        panel.allowedContentTypes = [Self.backupType]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let data = try Data(contentsOf: url)
+            restoreData = data
+            if try UserDataBackup.isEncrypted(data) {
+                password = ""
+                prompt = .restorePassword
+            } else {
+                decodeRestore(password: nil)
+            }
+        } catch {
+            restoreData = nil
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func decodeRestore(password: String?) {
+        guard let data = restoreData else { return }
+        self.password = ""
+        isWorking = true
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try UserDataBackup.decode(data, password: password) }
+            }.value
+            isWorking = false
+            restoreData = nil
+            switch result {
+            case .success(let archive):
+                restoreArchive = archive
+                prompt = .confirmRestore
+            case .failure(let error):
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private var restoreSummary: String {
+        guard let archive = restoreArchive else { return "" }
+        let made = archive.createdAt.formatted(date: .abbreviated, time: .shortened)
+        let folder = archive.libraryRootPath.map { "\n\nMusic folder: \(($0 as NSString).abbreviatingWithTildeInPath)" } ?? ""
+        return "Backup from \(made).\(folder)\n\nYour current settings, listening history, artist edits, spine designs, mixes and this library's playlists will be replaced by the backup's. This can't be undone. Caches, sign-ins and paired devices stay. FLACtastic quits when it's done."
+    }
+
+    private func applyRestore() {
+        guard let archive = restoreArchive else { return }
+        restoreArchive = nil
+        player.engine.pause()
+        do {
+            let notes = try UserDataBackup.restore(archive)
+            if notes.isEmpty { UserDataEraser.quitWithoutSaving() }
+            restoreNotes = notes
+        } catch {
+            errorMessage = "The restore didn't finish: \(error.localizedDescription) Restoring the same backup again should complete it."
+        }
+    }
+}
+
+/// The red "Clear User Data" button, with a confirmation before anything is
+/// deleted. See `UserDataEraser` for exactly what goes.
+private struct ClearUserDataRow: View {
+    @Environment(PlayerState.self) private var player
+    @State private var confirming = false
+    @State private var failures: [String] = []
+
+    var body: some View {
+        HStack(alignment: .center, spacing: Theme.Spacing.lg) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Clear User Data")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Theme.textPrimary)
+                Text("Destructive and can't be undone. Permanently deletes everything FLACtastic keeps on this Mac: settings, listening history, artist edits, spine designs and logos, mixes, tag backups, paired devices, the Spotify sign-in and all caches. FLACtastic then quits and starts fresh. Your music files, their tags and playlists stored in your music folder are not touched.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.textTertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button("Clear User Data…") { confirming = true }
+                .buttonStyle(SheetPillStyle(isDestructive: true))
+        }
+        .padding(.horizontal, Theme.Spacing.lg)
+        .padding(.vertical, Theme.Spacing.md)
+        .alert("Clear all user data?", isPresented: $confirming) {
+            Button("Clear User Data", role: .destructive, action: erase)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your settings, listening history, artist edits, spine designs, mixes, tag backups, paired devices and Spotify sign-in from this Mac. It can't be undone. FLACtastic will quit when it's done.\n\nYour music files and the playlists in your music folder are kept.")
+        }
+        .alert("Some data couldn't be deleted", isPresented: Binding(
+            get: { !failures.isEmpty },
+            set: { if !$0 { UserDataEraser.quitWithoutSaving() } }
+        )) {
+            Button("Quit") { UserDataEraser.quitWithoutSaving() }
+        } message: {
+            Text(failures.prefix(5).joined(separator: "\n"))
+        }
+    }
+
+    private func erase() {
+        // Nothing should be playing, and so recording a play, while the
+        // files are going.
+        player.engine.pause()
+        let failures = UserDataEraser.erase()
+        if failures.isEmpty { UserDataEraser.quitWithoutSaving() }
+        self.failures = failures
     }
 }
 
