@@ -55,6 +55,18 @@ func rejectsAbsolutePaths() {
     }
 }
 
+@Test("A separator or tilde hidden by a combining mark or whitespace is rejected")
+func rejectsSeparatorsHiddenInGraphemes() {
+    // Found by fuzzing the server's port: "/" + U+036F is one Character, so
+    // it passed as a component and the result began with "/"; " ~" was
+    // trimmed to "~" after the home-reference check.
+    for attack in ["/\u{036F}0", " ~"] {
+        #expect(throws: PathSanitizer.Rejection.self) {
+            try PathSanitizer.sanitizeRelativePath(attack)
+        }
+    }
+}
+
 @Test("Null bytes are rejected")
 func rejectsNullBytes() {
     #expect(throws: PathSanitizer.Rejection.self) {

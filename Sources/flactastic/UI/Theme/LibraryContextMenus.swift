@@ -27,6 +27,13 @@ struct LibraryMenus {
         if let open { manage.append(.button("Open Album", systemImage: "square.grid.2x2", action: open)) }
         if let edit { manage.append(.button("Edit...", systemImage: "pencil", action: edit)) }
         if let remove { manage.append(.button("Remove from Library", systemImage: "trash", action: remove)) }
+        if let offline = ServerSession.current.flatMap({ $0.isActive ? $0.offline : nil }) {
+            let kept = offline.isKept(album: album.id)
+            manage.append(.button(kept ? "Remove Offline Copy" : "Keep Offline",
+                                  systemImage: kept ? "icloud.slash" : "arrow.down.circle") {
+                offline.setAlbum(album.id, kept: !kept)
+            })
+        }
         if !manage.isEmpty {
             items.append(.divider)
             items.append(contentsOf: manage)

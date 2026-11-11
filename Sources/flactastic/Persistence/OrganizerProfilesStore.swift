@@ -16,7 +16,30 @@ final class OrganizerProfilesStore {
     }
 
     var selectedID: UUID {
-        didSet { UserDefaults.standard.set(selectedID.uuidString, forKey: Self.selectedKey) }
+        didSet {
+            if adopting { return }
+            if let remote { remote(profiles, selectedID); return }
+            UserDefaults.standard.set(selectedID.uuidString, forKey: Self.selectedKey)
+        }
+    }
+
+    /// Set while a server profile is the library: changes go to
+    /// `PUT /v2/organizer` (§12) instead of this Mac's defaults.
+    @ObservationIgnored var remote: (([OrganizerProfile], UUID) -> Void)?
+    @ObservationIgnored private var adopting = false
+
+    /// Shows the server's profiles without sending them back.
+    func adopt(_ list: [OrganizerProfile], selected: UUID?) {
+        adopting = true
+        defer { adopting = false }
+        profiles = list.isEmpty ? [OrganizerProfile.default] : list
+        selectedID = selected.flatMap { id in profiles.contains { $0.id == id } ? id : nil } ?? profiles[0].id
+    }
+
+    /// This Mac's own profiles, for the one-time offer to move them to a server.
+    static func localProfiles() -> [OrganizerProfile] {
+        UserDefaults.standard.data(forKey: profilesKey)
+            .flatMap { try? JSONDecoder().decode([OrganizerProfile].self, from: $0) } ?? []
     }
 
     var selected: OrganizerProfile {
@@ -75,6 +98,8 @@ final class OrganizerProfilesStore {
     }
 
     private func persistProfiles() {
+        if adopting { return }
+        if let remote { remote(profiles, selectedID); return }
         guard let data = try? JSONEncoder().encode(profiles) else { return }
         UserDefaults.standard.set(data, forKey: Self.profilesKey)
     }

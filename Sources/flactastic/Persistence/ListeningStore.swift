@@ -245,13 +245,53 @@ final class ListeningStore {
     /// for negligible listens (< 1 s) so momentary track flips don't pollute the
     /// log. Persists immediately — the volume of events is low (one per track
     /// played) so an atomic write per event is cheap.
+    /// Maps a played track to its library ID. Queued copies carry fresh IDs;
+    /// a server library needs the real one so other devices can match it.
+    @ObservationIgnored var libraryID: ((Track) -> UUID?)?
+    /// Told about each new play and context change (a server profile posts them).
+    @ObservationIgnored var onRecord: ((PlayEvent) -> Void)?
+    @ObservationIgnored var onContext: (() -> Void)?
+
+    /// Adds plays and contexts from other devices. Events are matched by ID,
+    /// so merging the same page twice changes nothing; for each context the
+    /// newest date wins.
+    func merge(events incoming: [PlayEvent], contexts: [RecentContext]) {
+        let known = Set(events.map(\.id))
+        let fresh = incoming.filter { !known.contains($0.id) }
+        var changed = false
+        if !fresh.isEmpty {
+            events = (events + fresh).sorted { $0.date < $1.date }
+            changed = true
+        }
+        for c in contexts {
+            if let i = recentContexts.firstIndex(where: { $0.kind == c.kind && $0.targetID == c.targetID }) {
+                guard recentContexts[i].date < c.date else { continue }
+                recentContexts.remove(at: i)
+            }
+            recentContexts.append(c)
+            changed = true
+        }
+        guard changed else { return }
+        recentContexts.sort { $0.date < $1.date }
+        if recentContexts.count > Self.maxRecentContexts {
+            recentContexts.removeFirst(recentContexts.count - Self.maxRecentContexts)
+        }
+        save()
+    }
+
+    /// Another library's history file, read without loading it.
+    nonisolated static func readHistory(_ url: URL) -> ([PlayEvent], [RecentContext]) {
+        let data = read(url)
+        return (data?.events ?? [], data?.contexts ?? [])
+    }
+
     func record(track: Track, startedAt: Date, secondsListened: Double, counted: Bool) {
         // Drop negligible listens that also didn't count, so momentary track
         // flips don't pollute the log. A counted play is always recorded.
         guard counted || secondsListened >= 1 else { return }
         let event = PlayEvent(
             date: startedAt,
-            trackID: track.id,
+            trackID: libraryID?(track) ?? track.id,
             title: track.title,
             artist: track.artist ?? track.albumArtist,
             albumID: Self.albumID(for: track),
@@ -263,6 +303,7 @@ final class ListeningStore {
         )
         events.append(event)
         save()
+        onRecord?(event)
     }
 
     /// Record that the user intentionally started playing a collection (an album
@@ -504,8 +545,39 @@ final class ListeningStore {
         return pick(days: week, headline: "This week last year you played")
     }
 
-    func topArtists(limit: Int, since: Date? = nil) -> [RankedItem] {
-        aggregate(key: { $0.artist }, since: since)
+    /// Artists ranked by minutes listened. Each play counts for every artist
+    /// on the track ("A, B" is A and B), split the way the artist pages are.
+    func topArtists(limit: Int, since: Date? = nil, resolver: ArtistResolver) -> [RankedItem] {
+        var keysByCredit: [String: [String]] = [:]
+        var names: [String: String] = [:]
+        var minutes: [String: Double] = [:]
+        var plays: [String: Int] = [:]
+        for event in filtered(since) {
+            guard let credit = event.artist, !credit.isEmpty else { continue }
+            let keys = keysByCredit[credit] ?? {
+                var k: [String] = []
+                for piece in resolver.split(credit) {
+                    let key = ArtistResolver.key(for: piece)
+                    guard !k.contains(key) else { continue }
+                    k.append(key)
+                    // The library's casing, else the play's own.
+                    if names[key] == nil { names[key] = resolver.canonicalByKey[key] ?? piece }
+                }
+                keysByCredit[credit] = k
+                return k
+            }()
+            for key in keys {
+                minutes[key, default: 0] += event.secondsListened / 60.0
+                if event.counted { plays[key, default: 0] += 1 }
+            }
+        }
+        return minutes
+            .map { RankedItem(name: names[$0.key] ?? $0.key, plays: plays[$0.key] ?? 0, minutes: $0.value) }
+            .sorted {
+                $0.minutes != $1.minutes
+                    ? $0.minutes > $1.minutes
+                    : $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
             .prefix(limit)
             .map { $0 }
     }
@@ -558,28 +630,6 @@ final class ListeningStore {
         }
         guard let top = counts.max(by: { $0.value < $1.value }) else { return nil }
         return (top.key, Double(top.value) / Double(counted.count))
-    }
-
-    /// Generic aggregation over a string key (e.g. artist), ranked purely by the
-    /// genuine minutes spent listening. `plays` is carried alongside for display.
-    private func aggregate(key: (PlayEvent) -> String?, since: Date?) -> [RankedItem] {
-        var minutes: [String: Double] = [:]
-        var plays: [String: Int] = [:]
-        for event in events {
-            if let since, event.date < since { continue }
-            guard let name = key(event), !name.isEmpty else { continue }
-            minutes[name, default: 0] += event.secondsListened / 60.0
-            if event.counted { plays[name, default: 0] += 1 }
-        }
-        return minutes
-            .map { RankedItem(name: $0.key, plays: plays[$0.key] ?? 0, minutes: $0.value) }
-            // Rank by minutes; break ties alphabetically so equal entries keep a
-            // stable order across recomputes rather than reshuffling.
-            .sorted {
-                $0.minutes != $1.minutes
-                    ? $0.minutes > $1.minutes
-                    : $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
-            }
     }
 }
 

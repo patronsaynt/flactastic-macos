@@ -139,7 +139,7 @@ struct HomeView: View {
         m.sessions = listening.sessionCount(since: since)
         m.topGenre = listening.topGenre(since: since)
         m.streakDays = listening.currentStreakDays
-        m.topArtists = listening.topArtists(limit: 5, since: since)
+        m.topArtists = listening.topArtists(limit: 5, since: since, resolver: library.makeArtistResolver())
         m.topAlbums = listening.topAlbums(limit: 5, since: since)
         m.footerAlbumCount = library.albums.count
         m.footerHours = Int((library.tracks.compactMap(\.duration).reduce(0, +) / 3600).rounded())
@@ -286,7 +286,8 @@ struct HomeView: View {
             AlbumMetadataEditorView(album: album)
                 .environment(library)
         }
-        .task(id: library.hasCompletedInitialLoad) {
+        // Again for each library and after each reset: its pinned highlight is its own.
+        .task(id: "\(library.hasCompletedInitialLoad)|\(library.rootURL?.path ?? "")|\(highlight.resets)") {
             guard library.hasCompletedInitialLoad else { return }
             await highlight.pickIfNeeded(
                 library: library,

@@ -229,12 +229,12 @@ private struct TimedLyricsScroller: View {
     var body: some View {
         // Paused schedule: lyrics only advance with playback time, so ticking
         // at 10 Hz while paused is pure redraw waste.
-        TimelineView(.animation(minimumInterval: 0.1, paused: !player.isPlaying)) { _ in
+        TimelineView(.animation(minimumInterval: 0.1, paused: !player.isAdvancing)) { _ in
             LyricsScrollerView(
                 lyrics: lyrics,
                 // Line changes should land when the words are heard, not when
                 // they're rendered — on Bluetooth that's ~0.2 s later.
-                currentTime: max(0, player.currentTime - player.engine.outputLatency),
+                currentTime: player.heardTime,
                 alignment: .leading,
                 activeStyle: AnyShapeStyle(Color.white),
                 maxWidthFraction: 1

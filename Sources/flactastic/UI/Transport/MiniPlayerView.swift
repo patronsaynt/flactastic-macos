@@ -70,11 +70,14 @@ struct MiniPlayerView: View {
                         .lineLimit(1)
                     PlayerQualityBadge(track: track)
                 }
-                if let artist = ArtistResolver.displayString(track.artist) {
-                    Text(artist)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textSecondary)
-                        .lineLimit(1)
+                HStack(spacing: 0) {
+                    if let artist = ArtistResolver.displayString(track.artist) {
+                        Text(artist)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.textSecondary)
+                            .lineLimit(1)
+                    }
+                    PlayerSourceLabel(track: track)
                 }
                 if let speaker = cast.activeSpeaker {
                     Label("Playing on \(speaker.name)",

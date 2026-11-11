@@ -19,7 +19,7 @@ struct RecordVisualizerView: View {
                     artwork: track?.artwork,
                     artworkID: track.map { "track:\($0.id)" } ?? "none",
                     diameter: diameter,
-                    isPlaying: player.isPlaying
+                    isPlaying: player.isAdvancing
                 )
                 // Most of the record sits past the right edge.
                 .position(x: geo.size.width - diameter * 0.02, y: topBarInset + room / 2)

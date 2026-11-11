@@ -38,15 +38,11 @@ final class ArtistStore {
     /// cached work on, instead of comparing the image-carrying dictionary.
     private(set) var revision = 0
 
-    private let fileURL: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("flactastic", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("artists.json")
-    }()
+    /// The open library's profiles (see `LibraryDataFolder`).
+    private var fileURL: URL { LibraryDataFolder.url.appendingPathComponent("artists.json") }
 
     func load() {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { overrides = [:]; return }
         do {
             let data = try Data(contentsOf: fileURL)
             let list = try JSONDecoder().decode([ArtistOverride].self, from: data)
@@ -70,7 +66,7 @@ final class ArtistStore {
                 return nil
             }
         }.value
-        guard let loaded else { return }
+        guard let loaded else { overrides = [:]; return }
         overrides = Dictionary(uniqueKeysWithValues: loaded.map { ($0.canonicalKey, $0) })
     }
 
@@ -100,6 +96,7 @@ final class ArtistStore {
                 print("[ArtistStore] Failed to save artist overrides: \(error)")
             }
         }
+        LibraryDataFolder.didChange()
     }
 
     func override(forKey key: String) -> ArtistOverride? {

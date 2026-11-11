@@ -27,6 +27,8 @@ struct OnboardingView: View {
     @Environment(PlaylistStore.self) private var playlistStore
     @Environment(ListeningStore.self) private var listening
     @Environment(SpotifyAuthController.self) private var spotifyAuth
+    @Environment(ServerSession.self) private var server
+    @State private var showConnect = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
@@ -237,8 +239,11 @@ struct OnboardingView: View {
         case .look:
             OnboardingLookStep(pick: pickLook)
         case .library:
-            OnboardingLibraryStep(flow: flow, useDefault: useDefaultFolder, choose: chooseFolder, isTargeted: isDropTargeted)
+            OnboardingLibraryStep(flow: flow, useDefault: useDefaultFolder, choose: chooseFolder,
+                                  connect: { showConnect = true }, isTargeted: isDropTargeted)
                 .animation(Self.ease, value: settings.lastRootPath)
+                .animation(Self.ease, value: server.activeID)
+                .sheet(isPresented: $showConnect, onDismiss: serverLinked) { ConnectServerSheet() }
                 .animation(Self.ease, value: flow.libraryScanned)
         case .restore:
             OnboardingRestoreStep(flow: flow, chooseBackup: chooseBackup, unlock: unlock, chooseFolder: chooseFolderForBackup, isTargeted: isDropTargeted)
@@ -585,7 +590,18 @@ struct OnboardingView: View {
         if panel.runModal() == .OK, let url = panel.url { adopt(url) }
     }
 
+    /// Signed in to a server during onboarding: its library is the answer.
+    private func serverLinked() {
+        guard let profile = server.active else { return }
+        flow.libraryScanned = true
+        flow.answers[.library] = "\(library.tracks.count.formatted()) tracks on \(profile.serverName)"
+        withAnimation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.6)) { flow.progress = 1 }
+        move(.spring(response: 0.8, dampingFraction: 0.6), to: flow.pose(for: .library))
+        jolt()
+    }
+
     private func adopt(_ url: URL) {
+        server.deactivate()
         flow.libraryScanned = false
         flow.caseAlbum = nil
         flow.progress = 0.08

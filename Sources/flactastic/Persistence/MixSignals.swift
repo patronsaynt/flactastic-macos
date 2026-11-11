@@ -38,12 +38,24 @@ final class MixSignals {
     private var analysisTask: Task<Void, Never>?
     private var loaded = false
 
-    private static let dir: URL = {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = base.appendingPathComponent("flactastic/mixes", isDirectory: true)
+    /// The open library's mixes (see `LibraryDataFolder`).
+    nonisolated static var dir: URL {
+        let dir = LibraryDataFolder.url.appendingPathComponent("mixes", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
-    }()
+    }
+
+    /// Another library opened, or its mixes changed on the server: read again.
+    func reload() {
+        loaded = false
+        related = [:]
+        fingerprints = [:]
+        feedback = Feedback()
+        today = nil
+        saved = [:]
+        unreadable = []
+        revision += 1
+    }
     private static var relatedURL: URL { dir.appendingPathComponent("related_artists.json") }
     private static var fingerprintsURL: URL { dir.appendingPathComponent("sound_fingerprints.json") }
     private static var feedbackURL: URL { dir.appendingPathComponent("feedback.json") }
@@ -95,6 +107,7 @@ final class MixSignals {
     func recordSaved(_ playlistID: UUID, for editionID: String) {
         saved[editionID] = playlistID
         Self.write(saved, to: Self.savedURL)
+        LibraryDataFolder.didChange()
         revision += 1
     }
 
@@ -247,7 +260,10 @@ final class MixSignals {
     }
 
     private func saveRelated() { Self.write(related, to: Self.relatedURL) }
-    private func saveFeedback() { Self.write(feedback, to: Self.feedbackURL) }
+    private func saveFeedback() {
+        Self.write(feedback, to: Self.feedbackURL)
+        LibraryDataFolder.didChange()
+    }
     private func saveFingerprints() {
         let snapshot = fingerprints, url = Self.fingerprintsURL
         Task.detached(priority: .utility) { Self.write(snapshot, to: url) }

@@ -44,6 +44,7 @@ final class SplitDecisionStore {
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try JSONEncoder().encode(decisions).write(to: url, options: .atomic)
+            LibraryDataFolder.didChange()
         } catch {
             Self.log.error("Couldn't save split decisions: \(error.localizedDescription, privacy: .public)")
         }

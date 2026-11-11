@@ -11,6 +11,7 @@ struct SettingsView: View {
     @Environment(ListeningStore.self) private var listening
     @Environment(PlayerState.self) private var player
     @Environment(DebugState.self) private var debugState
+    @Environment(ServerSession.self) private var server
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedTab: SettingsTab = .general
@@ -92,6 +93,7 @@ struct SettingsView: View {
             // history before switching roots, then load the new library's.
             player.flushPending()
             listening.save()
+            server.deactivate()
             settings.lastRootPath = url.path
             library.openFolder(url)
             playlistStore.load(from: url)
@@ -508,6 +510,7 @@ private struct ClearUserDataRow: View {
 private struct LibrarySettingsPane: View {
     @Environment(LibraryStore.self) private var library
     @Environment(Settings.self) private var settings
+    @Environment(ServerSession.self) private var server
     let openFolder: () -> Void
 
     var body: some View {
@@ -515,37 +518,18 @@ private struct LibrarySettingsPane: View {
 
         VStack(alignment: .leading, spacing: Theme.Spacing.xl) {
 
-            // Music Folder ─────────────────────────────────────────────────
-            SettingsGroup(title: "Music Folder") {
-                HStack(spacing: Theme.Spacing.md) {
-                    if let rootURL = library.rootURL {
-                        Image(systemName: "folder.fill")
-                            .foregroundStyle(Theme.textTertiary)
-                        Text(rootURL.path)
-                            .font(Theme.Font.caption)
-                            .foregroundStyle(Theme.textSecondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    } else {
-                        Image(systemName: "folder")
-                            .foregroundStyle(Theme.textTertiary)
-                        Text("No folder selected")
-                            .font(Theme.Font.caption)
-                            .foregroundStyle(Theme.textTertiary)
-                    }
-                    Spacer()
-                    Button("Choose Folder…") { openFolder() }
-                        .buttonStyle(PillButtonStyle())
-                }
-                .padding(.horizontal, Theme.Spacing.lg)
-                .padding(.vertical, Theme.Spacing.md)
-            }
+            LibrarySourceGroup(openFolder: openFolder)
+            ServerAccountGroups()
 
             // Genres ───────────────────────────────────────────────────────
-            SettingsGroup(title: "Genres") {
-                GenreScanRow()
-                    .padding(.horizontal, Theme.Spacing.lg)
-                    .padding(.vertical, Theme.Spacing.md)
+            // Scanning writes genres into local files; a server's tags are
+            // edited in the editors instead.
+            if !server.isActive {
+                SettingsGroup(title: "Genres") {
+                    GenreScanRow()
+                        .padding(.horizontal, Theme.Spacing.lg)
+                        .padding(.vertical, Theme.Spacing.md)
+                }
             }
 
             // Artist Credits ───────────────────────────────────────────────
@@ -564,10 +548,12 @@ private struct LibrarySettingsPane: View {
                         }
                     }
                 }
-                GroupDivider()
-                TagUpgradeRow()
-                    .padding(.horizontal, Theme.Spacing.lg)
-                    .padding(.vertical, Theme.Spacing.md)
+                if !server.isActive {
+                    GroupDivider()
+                    TagUpgradeRow()
+                        .padding(.horizontal, Theme.Spacing.lg)
+                        .padding(.vertical, Theme.Spacing.md)
+                }
             }
 
             // Collection ───────────────────────────────────────────────────
@@ -606,7 +592,9 @@ private struct LibrarySettingsPane: View {
                 GroupDivider()
                 ToggleRow(
                     label: "Save Lyrics to Audio Files",
-                    subtitle: "Embed fetched lyrics into the LYRICS tag on each file (Vorbis, ID3v2 USLT, MP4). Other players will pick them up automatically.",
+                    subtitle: server.isActive
+                        ? "Save fetched lyrics into the tracks on \(server.active?.serverName ?? "the server")."
+                        : "Embed fetched lyrics into the LYRICS tag on each file (Vorbis, ID3v2 USLT, MP4). Other players will pick them up automatically.",
                     isOn: $settings.saveLyricsToFiles,
                     isEnabled: settings.lyricsLookupEnabled
                 )

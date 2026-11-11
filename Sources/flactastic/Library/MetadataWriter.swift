@@ -13,6 +13,26 @@ import CTagLibHelper
 /// `@Environment(\.metadataWriter)` in SwiftUI views.
 actor MetadataWriter {
 
+    // MARK: - Server library
+
+    /// Set while a server profile is the library: tag writes become `PATCH`
+    /// requests (§10) instead of file writes.
+    private(set) var server: ServerTagEditor?
+
+    func setServer(_ editor: ServerTagEditor?) { server = editor }
+
+    /// Marks writes the user reviewed in an editor. Only those reach a
+    /// server, with one exception: fetched lyrics, which the user opts into
+    /// with Save Lyrics. Other background writers (found genres, tag
+    /// upgrades) are refused there.
+    @TaskLocal static var isUserEdit = false
+
+    private func serverEditor() throws -> ServerTagEditor? {
+        guard let server else { return nil }
+        guard Self.isUserEdit else { throw WriteError.serverLibrary }
+        return server
+    }
+
     // MARK: - Public API
 
     enum ArtworkChange: Sendable {
@@ -28,9 +48,13 @@ actor MetadataWriter {
         case fileNotFound(URL)
         case fileOpenFailed(URL)
         case saveFailed(URL)
+        case serverLibrary
 
         var errorDescription: String? {
             switch self {
+            case .serverLibrary:
+                return "Tags on the server are changed from the editors."
+
             case .fileNotFound(let url):
                 return "File not found: \(url.lastPathComponent)"
             case .fileOpenFailed(let url):
@@ -98,7 +122,14 @@ actor MetadataWriter {
         mixCompilationChange: MixCompilationChange = .unchanged,
         labelChange: LabelChange = .unchanged,
         discChange: DiscChange = .unchanged
-    ) throws -> Track {
+    ) async throws -> Track {
+        if let server = try serverEditor() {
+            return try await server.apply(TagEdit.from(
+                track, title: title, artist: artist, album: album, year: year, genre: genre,
+                secondaryGenres: secondaryGenres, trackNumber: trackNumber, artwork: artworkChange,
+                albumArtist: albumArtistChange, compilation: compilationChange, mix: mixCompilationChange,
+                label: labelChange, disc: discChange), to: track)
+        }
         let url = track.url
 
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -287,7 +318,13 @@ actor MetadataWriter {
     /// the property name to the format-specific frame (Xiph LYRICS / ID3v2
     /// USLT / MP4 ©lyr / WMA WM/Lyrics). Pass `nil` or `""` to clear.
     /// All other tags are left untouched.
-    func writeLyrics(to track: Track, lyrics: String?) throws {
+    func writeLyrics(to track: Track, lyrics: String?) async throws {
+        if let server {
+            var edit = TagEdit()
+            edit.fields["lyrics"] = (lyrics ?? "").isEmpty ? .null : .string(lyrics!)
+            _ = try await server.apply(edit, to: track)
+            return
+        }
         let url = track.url
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw WriteError.fileNotFound(url)
@@ -335,7 +372,12 @@ actor MetadataWriter {
     /// Read the `LYRICS` tag from the file at `track.url`. Returns nil when
     /// the tag is unset. Useful for honoring user-embedded lyrics without a
     /// network roundtrip.
-    func readLyrics(from track: Track) throws -> String? {
+    func readLyrics(from track: Track) async throws -> String? {
+        // A server track's lyrics come from the server, unless a verified
+        // offline copy is here: then from it, so they work offline.
+        if let server, !server.hasCurrentCopy(track) {
+            return try await server.detail(track).lyrics.flatMap { $0.isEmpty ? nil : $0 }
+        }
         let url = track.url
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
         guard let file = url.path.withCString({ taglib_file_new($0) }) else { return nil }
@@ -352,7 +394,14 @@ actor MetadataWriter {
 
     /// Write markers as an embedded CUESHEET tag on `track.url`. Pass an empty
     /// array to clear the tag. All other tags are left untouched.
-    func writeMarkers(to track: Track, markers: [TrackMarker]) throws {
+    func writeMarkers(to track: Track, markers: [TrackMarker]) async throws {
+        if let server = try serverEditor() {
+            var edit = TagEdit()
+            edit.fields["cueSheet"] = markers.isEmpty ? .null
+                : .string(CueSheet.encode(markers: markers, fileName: track.url.lastPathComponent))
+            _ = try await server.apply(edit, to: track)
+            return
+        }
         let url = track.url
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw WriteError.fileNotFound(url)
@@ -376,7 +425,10 @@ actor MetadataWriter {
 
     /// Read and decode the embedded CUESHEET tag from `track.url`. Returns an
     /// empty array when unset or unparsable.
-    func readMarkers(from track: Track) throws -> [TrackMarker] {
+    func readMarkers(from track: Track) async throws -> [TrackMarker] {
+        if let server, !server.hasCurrentCopy(track) {
+            return (try await server.detail(track).cueSheet).map(CueSheet.decode) ?? []
+        }
         let url = track.url
         guard FileManager.default.fileExists(atPath: url.path) else { return [] }
         guard let file = url.path.withCString({ taglib_file_new($0) }) else { return [] }

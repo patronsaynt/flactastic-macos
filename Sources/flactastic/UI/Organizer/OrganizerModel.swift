@@ -23,6 +23,9 @@ final class OrganizerModel {
     /// held until the numbers settle.
     var isRecomputing: Bool = false
 
+    /// The server's hash of the plan on screen; applying sends it back (§12).
+    private var planHash: String?
+
     private let executor = OrganizerExecutor()
     private var previewTask: Task<Void, Never>?
 
@@ -57,6 +60,66 @@ final class OrganizerModel {
             self.operations = ops
             self.isPreviewStale = false
             self.isRecomputing = false
+        }
+    }
+
+    /// A server library's preview: send the profiles, then ask the server for
+    /// its plan. The server plans with its own split rules (§12).
+    func scheduleServerPreview(session: ServerSession, store: OrganizerProfilesStore, library: LibraryStore) {
+        previewTask?.cancel()
+        lastError = nil
+        isRecomputing = true
+        let state = ServerSession.OrganizerState(profiles: store.profiles, selectedID: store.selectedID)
+        let profileID = store.selectedID
+        previewTask = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled, let self else { return }
+            do {
+                try await session.putOrganizer(state)
+                let plan = try await session.organizerPlan(profileID: profileID)
+                guard !Task.isCancelled else { return }
+                let root = library.rootURL ?? URL(fileURLWithPath: "/")
+                let byID = Dictionary(library.tracks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+                self.operations = plan.operations.compactMap { op in
+                    guard let track = byID[op.trackID] else { return nil }
+                    let status: OrganizerOperation.Status = switch op.status {
+                    case "move": .move
+                    case "conflict": .conflict(reason: "Another track renders to the same path.")
+                    default: .unchanged
+                    }
+                    return OrganizerOperation(id: op.trackID, track: track, sourceURL: root.appendingPathComponent(op.from),
+                                              destinationURL: root.appendingPathComponent(op.to), status: status)
+                }
+                self.planHash = plan.planHash
+                self.isPreviewStale = false
+            } catch {
+                self.lastError = error.localizedDescription
+            }
+            self.isRecomputing = false
+        }
+    }
+
+    /// Applies the previewed plan on the server. If the library changed since
+    /// the preview (`409 planStale`), nothing moves and the new plan is shown.
+    func applyOnServer(session: ServerSession, store: OrganizerProfilesStore, library: LibraryStore) async {
+        guard !isApplying, let planHash else { return }
+        isApplying = true
+        applyPhaseLabel = "Organizing on the server…"
+        applyProgress = nil
+        lastError = nil
+        defer { isApplying = false; applyPhaseLabel = nil }
+        do {
+            let result = try await session.organizerApply(profileID: store.selectedID, planHash: planHash)
+            lastResultMessage = "Organized \(result.moved) file\(result.moved == 1 ? "" : "s")."
+            self.planHash = nil
+            operations = []
+            isPreviewStale = true
+            await session.pullTracks()
+        } catch ServerError.api(code: "planStale", _, _) {
+            lastError = "The library changed since the preview. Here's the new plan."
+            scheduleServerPreview(session: session, store: store, library: library)
+        } catch {
+            lastError = error.localizedDescription
         }
     }
 

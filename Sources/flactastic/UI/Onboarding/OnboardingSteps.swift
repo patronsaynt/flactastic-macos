@@ -27,7 +27,7 @@ extension OnboardingCopy {
         case .look:
             return OnboardingCopy(title: "Choose your look.", subtitle: "You can change this any time in Settings.")
         case .library:
-            guard settings.lastRootPath != nil else {
+            guard settings.lastRootPath != nil || ServerSession.current?.isActive == true else {
                 return OnboardingCopy(title: "Where does your music live?", subtitle: "Pick your music folder, or start a new one.", canContinue: false)
             }
             if !flow.libraryScanned {
@@ -218,10 +218,18 @@ struct OnboardingLibraryStep: View {
     let flow: OnboardingFlow
     let useDefault: () -> Void
     let choose: () -> Void
+    var connect: () -> Void = {}
     let isTargeted: Bool
+    @Environment(ServerSession.self) private var server
 
     var body: some View {
-        if let path = settings.lastRootPath {
+        if let profile = server.active {
+            OnboardingDoneRow(title: profile.serverName,
+                              detail: "\(library.tracks.count.formatted()) tracks · \(profile.address.label)") {
+                Button("Change", action: connect).buttonStyle(QuietTextButtonStyle())
+            }
+            .transition(.opacity.combined(with: .offset(y: 12)))
+        } else if let path = settings.lastRootPath {
             VStack(alignment: .leading, spacing: 0) {
                 OnboardingDoneRow(title: (path as NSString).lastPathComponent, detail: (path as NSString).abbreviatingWithTildeInPath) {
                     Button("Change", action: choose).buttonStyle(QuietTextButtonStyle())
@@ -237,6 +245,7 @@ struct OnboardingLibraryStep: View {
             VStack(spacing: 10) {
                 OnboardingOption(icon: "plus", title: "Use ~/Music/FLACtastic", detail: "A new folder in Music", action: "Create", isProminent: true, perform: useDefault)
                 OnboardingOption(icon: "folder", title: "Choose a folder…", detail: "Use your existing library", action: "Browse", isTargeted: isTargeted, perform: choose)
+                OnboardingOption(icon: "server.rack", title: "Connect to a server…", detail: "Your library on FLACtastic Server", action: "Connect", perform: connect)
             }
             .transition(.opacity)
         }

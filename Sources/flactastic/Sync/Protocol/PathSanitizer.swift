@@ -152,7 +152,17 @@ enum PathSanitizer {
         guard !safeComponents.isEmpty else { throw Rejection.empty }
         guard safeComponents.count <= maxDepth else { throw Rejection.tooDeep(safeComponents.count) }
 
-        return safeComponents.joined(separator: "/")
+        let path = safeComponents.joined(separator: "/")
+        // The checks above compare whole Characters, so a "/" or "." carrying
+        // a combining mark isn't seen as one ("/\u{036F}0" passes as a single
+        // component), and sanitising can trim " ~" down to "~". Re-check the
+        // bytes the filesystem will actually see, as the server does.
+        for piece in path.utf8.split(separator: UInt8(ascii: "/"), omittingEmptySubsequences: false) {
+            guard let first = piece.first else { throw Rejection.emptyComponent }
+            if piece.allSatisfy({ $0 == UInt8(ascii: ".") }) { throw Rejection.parentTraversal }
+            if first == UInt8(ascii: "~") { throw Rejection.homeReference }
+        }
+        return path
     }
 
     /// As `sanitizeRelativePath`, but additionally requires the file extension

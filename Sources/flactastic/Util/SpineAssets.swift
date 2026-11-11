@@ -7,10 +7,10 @@ import UniformTypeIdentifiers
 /// copied in (downsampled to a sensible size, as PNG) so it survives the
 /// original moving, and decoded once per session.
 enum SpineLogoStore {
-    static var folder: URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        return appSupport.appendingPathComponent("flactastic/SpineLogos", isDirectory: true)
-    }
+    static var folder: URL { LibraryDataFolder.url.appendingPathComponent("SpineLogos", isDirectory: true) }
+
+    /// Forgets decoded logos (another library's are a different set).
+    static func clearCache() { cache.removeAllObjects() }
 
     /// Copies the image at `url` into the store and returns its file name,
     /// or nil when it isn't an image that can be read.
@@ -26,6 +26,7 @@ enum SpineLogoStore {
         } catch {
             return nil
         }
+        LibraryDataFolder.didChange()
         return name
     }
 
@@ -33,6 +34,7 @@ enum SpineLogoStore {
     static func remove(_ name: String) {
         try? FileManager.default.removeItem(at: folder.appendingPathComponent(name))
         cache.removeObject(forKey: name as NSString)
+        LibraryDataFolder.didChange()
     }
 
     /// `NSCache` is internally thread-safe.

@@ -668,8 +668,32 @@ struct AlbumMetadataEditorView: View {
         let art = artChange
         let writer = writer
 
+        // A server library takes one PATCH for every track sharing an edit
+        // (§10); the first file of each group sends it for the rest.
+        let server = await writer.server
+        var edits: [UUID: TagEdit] = [:]
+        if server != nil {
+            for p in plan {
+                edits[p.change.id] = TagEdit.from(
+                    p.item.originalTrack, title: p.title, artist: p.artist, album: newAlbum, year: parsedYear,
+                    genre: p.genre, secondaryGenres: cleanedSecondary, trackNumber: p.item.trackNumber,
+                    artwork: art, albumArtist: aaChange, compilation: compilationChange, mix: mixChange,
+                    label: labelChange, disc: p.discChange)
+            }
+        }
+        let groups = Dictionary(grouping: plan, by: { edits[$0.change.id] })
+        var batched: [UUID: Track] = [:]
+
         let allWritten = await session.write(plan.map(\.change)) { file in
             guard let p = byID[file.id] else { return }
+            if let server, let edit = edits[file.id] {
+                if batched[p.item.originalTrack.id] == nil {
+                    let group = (groups[edit] ?? [p]).map(\.item.originalTrack)
+                    for t in try await server.apply(edit, to: group) { batched[t.id] = t }
+                }
+                written[file.id] = batched[p.item.originalTrack.id] ?? p.item.originalTrack
+                return
+            }
             let updated = try await writer.write(
                 to: p.item.originalTrack,
                 title: p.title,

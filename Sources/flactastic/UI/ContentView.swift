@@ -13,6 +13,7 @@ struct ContentView: View {
     @Environment(Settings.self) private var settings
     @Environment(DebugState.self) private var debugState
     @Environment(LyricsFetcher.self) private var lyricsFetcher
+    @Environment(ServerSession.self) private var server
     /// On Organizer, the player starts tucked away past the window edge.
     @State private var isPuckTucked = true
     /// The ambiguous-credit review, offered once after the first full scan.
@@ -63,6 +64,13 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
             }
+            .overlay(alignment: .topLeading) {
+                if isChromeRevealed && !hidesTopBar(router: router) {
+                    ServerStatusLine()
+                        .padding(.top, TopBarView.height + 6)
+                        .padding(.leading, 24)
+                }
+            }
             // The queue runs the full height of the window, over the top bar's
             // trailing end, with a pull tab on the edge while it's closed.
             .overlay(alignment: .trailing) {
@@ -94,6 +102,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showSplitReview) {
             SplitReviewSheet()
+        }
+        .sheet(item: Binding(get: { server.playlistSync.conflict }, set: { server.playlistSync.conflict = $0 })) { conflict in
+            PlaylistConflictSheet(conflict: conflict)
         }
         .onChange(of: library.hasFinishedLaunchWork, initial: true) { _, finished in
             offerSplitReviewIfNeeded(finished: finished)

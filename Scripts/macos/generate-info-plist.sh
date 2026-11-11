@@ -50,10 +50,11 @@ cat > "$OUTPUT_PATH" <<PLIST
          and the failure is completely silent, so a missing key here looks
          exactly like "no other devices are running FLACtastic". -->
     <key>NSLocalNetworkUsageDescription</key>
-    <string>FLACtastic uses the local network to find your other devices and sync your music library between them, and to find and play music on network speakers. Nothing is sent over the internet.</string>
+    <string>FLACtastic uses the local network to find your other devices and your FLACtastic Server, sync your music library between them, and find and play music on network speakers. Nothing is sent over the internet.</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_flactastic._tcp</string>
+        <string>_flactastic-srv._tcp</string>
     </array>
     <key>NSHighResolutionCapable</key>
     <true/>

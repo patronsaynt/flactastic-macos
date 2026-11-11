@@ -662,8 +662,8 @@ private struct LyricsSyncPane: View {
     /// The line playing now, with the one before and after, as the
     /// visualizer will show them.
     private var preview: some View {
-        TimelineView(.animation(minimumInterval: 0.1, paused: !player.isPlaying)) { _ in
-            let now = currentIndex(at: player.currentTime)
+        TimelineView(.animation(minimumInterval: 0.1, paused: !player.isAdvancing)) { _ in
+            let now = currentIndex(at: player.heardTime)
             VStack(spacing: 10) {
                 SheetLabel(text: "Preview")
                 Text(text(now - 1)).font(.system(size: 14)).foregroundStyle(Theme.textTertiary)
@@ -701,7 +701,9 @@ private struct LyricsSyncPane: View {
 
     private func stamp() {
         guard cursor < lines.count else { return }
-        lines[cursor].0 = player.currentTime
+        // The line the listener just heard: stamped against heard time, as
+        // the lyrics visualizer shows it.
+        lines[cursor].0 = player.heardTime
         cursor += 1
         commit()
     }
@@ -751,7 +753,7 @@ private struct MarkersTimeline: View {
                     .foregroundStyle(Theme.textPrimary)
                 Spacer()
                 Button {
-                    add(at: player.currentTime, title: "New Chapter")
+                    add(at: player.heardTime, title: "New Chapter")
                 } label: {
                     Label("Add at Playhead", systemImage: "plus")
                 }

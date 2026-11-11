@@ -34,12 +34,19 @@ final class HomeHighlight {
     private(set) var isPinned = false
     private var hasPicked = false
 
-    private let pinnedFileURL: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let dir = appSupport.appendingPathComponent("flactastic", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("pinned_highlight.json")
-    }()
+    private var pinnedFileURL: URL { LibraryDataFolder.url.appendingPathComponent("pinned_highlight.json") }
+
+    /// Counts `reset()`s; Home picks again when it changes.
+    private(set) var resets = 0
+
+    /// Another library opened: forget this one's pick so Home picks again.
+    func reset() {
+        resets += 1
+        pick = nil
+        palette = nil
+        isPinned = false
+        hasPicked = false
+    }
 
     /// How many tracks we're willing to read embedded lyrics from when the
     /// in-memory cache yields nothing. Bounds the worst-case tag I/O.
@@ -56,10 +63,14 @@ final class HomeHighlight {
     ) async {
         guard !hasPicked else { return }
         hasPicked = true
+        // A reset while this pick waits means another library: drop it.
+        let round = resets
 
         // A pinned pick wins over a fresh roll, even if its track has since
         // left the library.
-        if let pinned = await loadPinned() {
+        let pinned = await loadPinned()
+        guard round == resets else { return }
+        if let pinned {
             pick = pinned
             isPinned = true
             return
@@ -104,6 +115,7 @@ final class HomeHighlight {
             guard reads < Self.fileReadCap else { break }
             reads += 1
             let raw = (try? await metadataWriter.readLyrics(from: track)) ?? nil
+            guard round == resets else { return }
             guard let raw, !raw.isEmpty else { continue }
             if let line = Self.randomGoodLine(raw: raw, duration: track.duration) {
                 finalize(track: track, line: line, resolver: resolver,
@@ -121,6 +133,7 @@ final class HomeHighlight {
         if isPinned {
             try? FileManager.default.removeItem(at: pinnedFileURL)
             isPinned = false
+            LibraryDataFolder.didChange()
             return
         }
         guard let pick else { return }
@@ -128,6 +141,7 @@ final class HomeHighlight {
             let data = try JSONEncoder().encode(pick)
             try data.write(to: pinnedFileURL, options: .atomic)
             isPinned = true
+            LibraryDataFolder.didChange()
         } catch {
             print("[HomeHighlight] Failed to save pin: \(error)")
         }

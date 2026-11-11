@@ -41,7 +41,19 @@ final class PlayerState {
 
     var currentTrack: Track?
     var isPlaying: Bool = false
+    /// Playing, but waiting for a stream to deliver: the clock is held.
+    var isBuffering = false
+    /// Where the playing track comes from in a server library; nil for local files.
+    var source: PlaybackSource?
     var currentTime: TimeInterval = 0
+
+    /// Where the listener is: `currentTime` less the output's latency (large
+    /// on Bluetooth). Lyrics and chapters are shown and stamped against this,
+    /// so a line lands when its words are heard.
+    var heardTime: TimeInterval { max(0, currentTime - engine.outputLatency) }
+
+    /// Whether time is actually moving, for things that animate with it.
+    var isAdvancing: Bool { isPlaying && !isBuffering }
     var duration: TimeInterval?
     var volume: Float = 0.75
     var isShuffleEnabled: Bool = false
@@ -327,6 +339,20 @@ final class PlayerState {
     /// the tracking slot. Safe to call repeatedly — a no-op when nothing is
     /// tracked. Call before switching libraries so the in-flight play is
     /// committed to the outgoing library.
+    /// Switching libraries: commit the in-flight play, stop, and drop the
+    /// queue, so nothing from the old library stays loaded or on screen.
+    func resetForLibrarySwitch() {
+        flushPending()
+        guard engine.currentTrack != nil || !engine.queue.isEmpty else { return }
+        engine.pause()
+        engine.setQueue([], startAt: 0)
+        originalQueue = []
+        userQueuedTrackIDs = []
+        playbackSource = nil
+        playbackSourceID = nil
+        isQueueVisible = false
+    }
+
     func flushPending() {
         guard let track = trackedTrack else { return }
         let duration = track.duration ?? engine.duration
@@ -413,6 +439,8 @@ final class PlayerState {
             currentTrack = engine.currentTrack
         }
         if isPlaying != engine.isPlaying { isPlaying = engine.isPlaying }
+        if isBuffering != engine.isHolding { isBuffering = engine.isHolding }
+        if source != engine.currentSource { source = engine.currentSource }
         currentTime = engine.currentTime
         if duration != engine.duration { duration = engine.duration }
         if volume != engine.volume { volume = engine.volume }

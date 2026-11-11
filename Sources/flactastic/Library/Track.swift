@@ -52,6 +52,9 @@ struct Track: Sendable, Identifiable, Hashable {
     /// string, so it's never split heuristically.
     var artistIsList = false
     var albumArtistIsList = false
+    /// A server track's picture (protocol v2 §9.3), fetched by this ID.
+    /// Nil for local files, whose picture is read from the file.
+    var artworkID: String?
 
     init(
         id: UUID = UUID(),
@@ -137,6 +140,7 @@ extension Track {
         copy.tagVersion = tagVersion
         copy.artistIsList = artistIsList
         copy.albumArtistIsList = albumArtistIsList
+        copy.artworkID = artworkID
         return copy
     }
 

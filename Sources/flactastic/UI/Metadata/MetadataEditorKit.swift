@@ -52,7 +52,8 @@ final class MetadataWriteSession {
         for file in files where statuses[file.id] != .written {
             statuses[file.id] = .writing
             do {
-                try await write(file)
+                // Reviewed by the user, so it may reach a server library.
+                try await MetadataWriter.$isUserEdit.withValue(true) { try await write(file) }
                 statuses[file.id] = .written
             } catch {
                 statuses[file.id] = .failed(Self.message(for: error))
@@ -69,6 +70,7 @@ final class MetadataWriteSession {
             case .fileNotFound: return "The file has moved or been deleted since the library was scanned. Rescan the library, then try again."
             case .fileOpenFailed: return "The file couldn't be opened for writing. It may be read-only or in use by another app."
             case .saveFailed: return "The file couldn't be saved. Check that it isn't read-only and that the disk has room, then retry."
+            case .serverLibrary: return e.localizedDescription
             }
         }
         return error.localizedDescription

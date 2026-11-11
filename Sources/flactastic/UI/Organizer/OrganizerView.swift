@@ -14,6 +14,9 @@ struct OrganizerView: View {
     @Environment(\.topBarInset) private var topBarInset
     @Environment(LibraryStore.self) private var library
     @Environment(PlayerState.self) private var player
+    @Environment(ServerSession.self) private var server
+    /// The server had no profiles and this Mac has its own: offer them once.
+    @State private var offerLocalProfiles = false
     @State private var store = OrganizerProfilesStore()
     @State private var model = OrganizerModel()
     @State private var showApplyConfirm = false
@@ -67,7 +70,11 @@ struct OrganizerView: View {
         .onChange(of: store.selected) { _, _ in refreshPreview() }
         .onChange(of: library.tracks.count) { _, _ in refreshPreview() }
         .onChange(of: library.rootURL) { _, _ in refreshPreview() }
-        .task { refreshPreview() }
+        .onChange(of: server.organizerRevision) { _, _ in Task { await loadServerProfiles() } }
+        .task {
+            await loadServerProfiles()
+            refreshPreview()
+        }
         .confirmationDialog(
             "Move \(model.moveCount) file\(model.moveCount == 1 ? "" : "s")?",
             isPresented: $showApplyConfirm,
@@ -75,7 +82,11 @@ struct OrganizerView: View {
         ) {
             Button("Move Files", role: .destructive) {
                 Task {
-                    await model.apply(library: library, player: player.engine, profile: store.selected)
+                    if server.isActive {
+                        await model.applyOnServer(session: server, store: store, library: library)
+                    } else {
+                        await model.apply(library: library, player: player.engine, profile: store.selected)
+                    }
                     refreshPreview()
                 }
             }
@@ -88,7 +99,33 @@ struct OrganizerView: View {
         }
     }
 
+    /// A server library keeps the profiles on the server; edits are sent there.
+    private func loadServerProfiles() async {
+        guard server.isActive else { store.remote = nil; return }
+        store.remote = { [model, store, server, library] _, _ in
+            model.scheduleServerPreview(session: server, store: store, library: library)
+        }
+        guard let state = try? await server.organizer() else { return }
+        store.adopt(state.profiles, selected: state.selectedID)
+        let local = OrganizerProfilesStore.localProfiles()
+        offerLocalProfiles = state.profiles.isEmpty && !local.isEmpty && local != [OrganizerProfile.default]
+            && !UserDefaults.standard.bool(forKey: "flactastic.organizer.offeredToServer.\(server.activeID?.uuidString ?? "")")
+    }
+
+    private func moveLocalProfiles(_ yes: Bool) {
+        UserDefaults.standard.set(true, forKey: "flactastic.organizer.offeredToServer.\(server.activeID?.uuidString ?? "")")
+        offerLocalProfiles = false
+        guard yes else { return }
+        let local = OrganizerProfilesStore.localProfiles()
+        store.profiles = local
+        store.selectedID = local[0].id
+    }
+
     private func refreshPreview() {
+        if server.isActive {
+            model.scheduleServerPreview(session: server, store: store, library: library)
+            return
+        }
         model.schedulePreview(
             profile: store.selected,
             tracks: library.tracks,
@@ -124,7 +161,8 @@ struct OrganizerView: View {
     private var confirmMessage: String {
         let conflicts = model.conflictCount
         var text = "Files move inside your library folder"
-        if let root = library.rootURL { text += ", \(root.lastPathComponent)" }
+        if let name = server.active?.serverName { text = "Files move on \(name)" }
+        else if let root = library.rootURL { text += ", \(root.lastPathComponent)" }
         text += "."
         if conflicts > 0 {
             text += " \(conflicts) conflict\(conflicts == 1 ? "" : "s") will get a number added to the file name."
@@ -245,7 +283,9 @@ struct OrganizerView: View {
     /// The whole rule as one large path: the library folder, each level's
     /// example folder name, then the example file name.
     private var rulePath: some View {
-        let root = library.rootURL?.lastPathComponent ?? "Library"
+        // A server library's rootURL is its offline-copies folder, not where
+        // the files are organized: name the library itself.
+        let root = ServerSession.current?.isActive == true ? "Library" : (library.rootURL?.lastPathComponent ?? "Library")
         var text = Text(root + " / ").foregroundColor(Theme.textTertiary)
         for level in store.selected.levels {
             text = text
@@ -603,6 +643,20 @@ struct OrganizerView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
+                    if offerLocalProfiles {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Use this Mac's Organizer profiles on \(server.active?.serverName ?? "the server")?")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Theme.textPrimary)
+                            HStack(spacing: 8) {
+                                Button("Use Them") { moveLocalProfiles(true) }
+                                    .buttonStyle(SheetPillStyle(isPrimary: true))
+                                Button("Not Now") { moveLocalProfiles(false) }
+                                    .buttonStyle(SheetPillStyle())
+                            }
+                        }
+                        .padding(.bottom, 4)
+                    }
                     if let error = model.lastError {
                         inlineNotice(text: error, color: Theme.qualityLow)
                     } else if let message = model.lastResultMessage, model.operations.isEmpty {

@@ -131,7 +131,12 @@ enum UserDataBackup {
         let fm = FileManager.default
 
         let domain = locations.defaults.persistentDomain(forName: locations.preferenceDomain) ?? [:]
-        let prefs = domain.filter { isBackedUpPreference($0.key) }
+        var prefs = domain.filter { isBackedUpPreference($0.key) }
+        // While a server account is open its customisation sits in these
+        // keys; back up this Mac's own instead.
+        if let local = LibraryScope.stashedLocalValues(in: locations.supportDirectory) {
+            for key in LibraryScope.dataKeys + LibraryScope.switchKeys { prefs[key] = local[key].flatMap(PrefsSync.plist) }
+        }
         let prefsData = try PropertyListSerialization.data(fromPropertyList: prefs, format: .binary, options: 0)
 
         var support: [String: Data] = [:]

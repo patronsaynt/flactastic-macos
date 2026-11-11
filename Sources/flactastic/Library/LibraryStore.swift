@@ -350,6 +350,8 @@ final class LibraryStore {
     /// playlist membership) stays stable.
     func addImportedTracks(_ imported: [Track]) {
         guard !imported.isEmpty else { return }
+        // A server library: the files are uploaded, and come back as tracks.
+        if let remoteRefresh { remoteRefresh(); return }
         let existing = Set(tracks.map { $0.url })
         var fresh = imported.filter { !existing.contains($0.url) }
         guard !fresh.isEmpty else { return }
@@ -389,7 +391,37 @@ final class LibraryStore {
         return failures
     }
 
+    /// The folder open now; nil for a server or no library.
+    @ObservationIgnored private var openedFolder: URL?
+    /// This Mac's library, set aside while a server is open, so switching
+    /// back shows it at once and only checks what changed meanwhile.
+    @ObservationIgnored private var parked: (root: URL, tracks: [Track], artwork: [String: Data?])?
+
     func openFolder(_ url: URL) {
+        if let p = parked, p.root.standardizedFileURL == url.standardizedFileURL {
+            parked = nil
+            willOpen(url)
+            remoteRefresh = nil
+            scanTask?.cancel()
+            metadataTask?.cancel()
+            rootURL = url
+            openedFolder = url
+            trackIDStore.load(from: url)
+            splitDecisions.load(from: url)
+            pendingSplitReview = []
+            albumArtworkCache = p.artwork
+            tracks = p.tracks
+            scanState = .done(count: p.tracks.count)
+            isLoadingFolder = false
+            hasCompletedInitialLoad = true
+            hasFinishedLaunchWork = true
+            refreshLibrary()
+            return
+        }
+        parked = nil
+        openedFolder = url
+        willOpen(url)
+        remoteRefresh = nil
         scanTask?.cancel()
         metadataTask?.cancel()
         rootURL = url
@@ -432,7 +464,88 @@ final class LibraryStore {
         }
     }
 
+    /// Set while a server profile is the library: a refresh asks the server
+    /// for changes instead of scanning the offline-copies folder.
+    @ObservationIgnored var remoteRefresh: (() -> Void)?
+
+    /// Called before a different library opens (set at launch to reset the
+    /// player), so nothing from the old one keeps playing.
+    @ObservationIgnored var onLibraryChange: (() -> Void)?
+
+    private func willOpen(_ root: URL?) {
+        if rootURL?.standardizedFileURL != root?.standardizedFileURL { onLibraryChange?() }
+    }
+
+    /// Credit answers changed on another device: read them again.
+    func reloadSplitDecisions() {
+        guard let rootURL else { return }
+        splitDecisions.load(from: rootURL)
+        normaliseArtistTags()
+    }
+
+    /// Adds credit answers; without `overwrite`, only for credits not yet answered.
+    func recordSplitDecisions(_ answers: [String: MultiValueParser.Decision], overwrite: Bool) {
+        splitDecisions.record(overwrite ? answers : answers.filter { splitDecisions.decisions[$0.key] == nil })
+        normaliseArtistTags()
+    }
+
+    /// No library: neither a folder nor a server.
+    func close() {
+        openedFolder = nil
+        willOpen(nil)
+        scanTask?.cancel()
+        metadataTask?.cancel()
+        remoteRefresh = nil
+        rootURL = nil
+        tracks = []
+        pendingSplitReview = []
+        scanState = .idle
+        isLoadingFolder = false
+    }
+
+    /// Shows a server library from its mirror. `root` is the profile's
+    /// offline-copies folder, which every track's URL sits under.
+    func openServer(root: URL, tracks: [Track]) {
+        if let folder = openedFolder, !isLoadingFolder, scanState != .scanning {
+            parked = (folder, self.tracks, albumArtworkCache)
+        }
+        openedFolder = nil
+        albumArtworkCache = [:] // the server's albums pick their own covers
+        willOpen(root)
+        scanTask?.cancel()
+        metadataTask?.cancel()
+        rootURL = root
+        splitDecisions.load(from: root)
+        pendingSplitReview = []
+        self.tracks = tracks.sortedForLibrary()
+        scanState = .done(count: tracks.count)
+        isLoadingFolder = false
+        hasCompletedInitialLoad = true
+        normaliseArtistTags()
+        seedAlbumArtworkCache()
+        hasFinishedLaunchWork = true
+    }
+
+    /// Applies tracks the server created, changed or deleted.
+    func applyRemote(updated: [Track], deleted: Set<UUID>) {
+        let byID = Dictionary(updated.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        var known = Set<UUID>()
+        var next: [Track] = tracks.compactMap { t in
+            if deleted.contains(t.id) { return nil }
+            known.insert(t.id)
+            return byID[t.id] ?? t
+        }
+        next += updated.filter { !known.contains($0.id) }
+        tracks = next.sortedForLibrary()
+        normaliseArtistTags()
+        // Album keys and covers can change with the tags: re-pick them all.
+        albumArtworkCache = [:]
+        seedAlbumArtworkCache()
+        scanState = .done(count: tracks.count)
+    }
+
     func refreshLibrary() {
+        if let remoteRefresh { remoteRefresh(); return }
         guard let url = rootURL else { return }
         guard scanState != .scanning else { return }
 
@@ -465,11 +578,26 @@ final class LibraryStore {
                     existingByURL[stub.url] ?? stableByURL[stub.url] ?? stub
                 }
 
-                self.tracks = merged
+                // Files edited since their details were saved (size or
+                // modification time differs): read again, like new ones.
+                let kept = merged.filter { existingByURL[$0.url] != nil }
+                let changed = await Task.detached(priority: .userInitiated) {
+                    let entries = TrackMetadataCache.load(rootURL: url)
+                    return kept.filter { t in
+                        entries[TrackMetadataCache.relativePath(for: t.url, rootPath: url.path)]
+                            .map { !$0.isValid(forFileAt: t.url.path) } ?? false
+                    }
+                }.value
+                if Task.isCancelled { return }
+
+                if !stableNewStubs.isEmpty || merged.count != self.tracks.count {
+                    self.tracks = merged.sortedForLibrary()
+                }
                 self.scanState = .done(count: merged.count)
 
-                if !stableNewStubs.isEmpty {
-                    self.startMetadataLoadForTracks(stableNewStubs)
+                for t in changed { if let album = self.album(for: t) { self.albumArtworkCache[album.id] = nil } }
+                if !stableNewStubs.isEmpty || !changed.isEmpty {
+                    self.startMetadataLoadForTracks(stableNewStubs + changed)
                 }
             } catch {
                 if Task.isCancelled { return }

@@ -18,6 +18,7 @@ struct FlactasticApp: App {
     @State private var lyricsFetcher: LyricsFetcher
     @State private var audioOutput: AudioOutputManager
     @State private var castManager: CastManager
+    @State private var server: ServerSession
 
     init() {
         // A write to a closed socket/pipe should surface as EPIPE, not kill the
@@ -40,6 +41,8 @@ struct FlactasticApp: App {
         _castManager = State(initialValue: CastManager(player: playerState, audioOutput: outputManager, settings: settingsStore))
 
         let store = ArtistStore()
+        let highlight = HomeHighlight()
+        _homeHighlight = State(initialValue: highlight)
         let cache = ArtistRemoteCache()
         _artistStore = State(initialValue: store)
         _artistRemoteCache = State(initialValue: cache)
@@ -70,6 +73,22 @@ struct FlactasticApp: App {
         let plStore = PlaylistStore()
         _playlistStore = State(initialValue: plStore)
         _syncModel = State(initialValue: SyncModel(library: lib, playlistStore: plStore))
+        // Any change of library (folder ↔ server, or another of either)
+        // stops playback and empties the queue.
+        lib.onLibraryChange = { [playerState] in playerState.resetForLibrarySwitch() }
+        // FLACtastic Server: when a server profile is the library, the player
+        // asks it for streams of tracks with no verified offline copy.
+        let serverSession = ServerSession(library: lib, playlists: plStore, listening: listeningStore,
+                                          settings: settingsStore, writer: writer)
+        _server = State(initialValue: serverSession)
+        serverSession.scope = LibraryScope(artists: store, highlight: highlight, settings: settingsStore)
+        playerState.engine.sourceOpener = { [streamer = serverSession.streamer] track, seconds in
+            try await streamer.open(track, at: seconds)
+        }
+        playerState.engine.upcoming = { [streamer = serverSession.streamer] current, next in
+            streamer.upcoming(current: current, next: next)
+        }
+        playerState.engine.stalled = { [streamer = serverSession.streamer] in streamer.stalled() }
         _playlistRebuildCoordinator = State(initialValue: PlaylistRebuildCoordinator(
             downloads: downloads,
             playlistStore: plStore,
@@ -99,7 +118,7 @@ struct FlactasticApp: App {
         ))
     }
     @State private var metadataWriter: MetadataWriter
-    @State private var homeHighlight = HomeHighlight()
+    @State private var homeHighlight: HomeHighlight
     @State private var importCoordinator = ImportCoordinator()
     @State private var playlistAddCoordinator = PlaylistAddCoordinator()
     @State private var router = NavigationRouter()
@@ -148,6 +167,7 @@ struct FlactasticApp: App {
                         .environment(\.metadataWriter, metadataWriter)
                         .environment(homeHighlight)
                         .environment(debugState)
+                        .environment(server)
                         .transition(.opacity)
                 } else {
                     OnboardingView(onFinish: {
@@ -161,6 +181,7 @@ struct FlactasticApp: App {
                         .environment(playlistStore)
                         .environment(listening)
                         .environment(spotifyAuth)
+                        .environment(server)
                         .transition(.opacity)
                 }
             }
@@ -211,6 +232,8 @@ struct FlactasticApp: App {
             // a permanent tab in the navigation.
             CommandGroup(replacing: .newItem) {
                 Button("Sync…") { openWindow(id: "sync") }
+                    // Mac-to-Mac sync is for local folders; a server keeps its own devices in step.
+                    .disabled(server.isActive)
             }
             CommandMenu("Collection") {
                 Button("Refresh Collection") { library.refreshLibrary() }
@@ -278,6 +301,7 @@ struct FlactasticApp: App {
                 .environment(\.metadataWriter, metadataWriter)
                 .environment(homeHighlight)
                 .environment(debugState)
+                .environment(server)
                 .preferredColorScheme(settings.theme.colorScheme)
                 .scrollIndicators(.hidden)
         }
@@ -313,6 +337,7 @@ struct FlactasticApp: App {
                 .environment(playlistStore)
                 .environment(listening)
                 .environment(spotifyAuth)
+                .environment(server)
                 .scrollIndicators(.hidden)
         }
         .windowStyle(.hiddenTitleBar)
@@ -357,6 +382,13 @@ struct FlactasticApp: App {
 
     @MainActor
     private func bootstrap() async {
+        // The open library's customisation first, so nothing from another
+        // library shows even for a moment.
+        if let id = server.activeID {
+            server.activate(id)
+        } else {
+            server.scope?.enter(LibraryDataFolder.local)
+        }
         // Async loads: file reads + JSON decodes run off the main actor so
         // launch doesn't block first paint on disk I/O (the listening log in
         // particular grows with use).
@@ -373,6 +405,7 @@ struct FlactasticApp: App {
         // Network round-trips (profile + playlists) — never hold the library
         // scan, and with it the loading cover, behind them.
         Task { await spotifyAuth.restore() }
+        if server.isActive { return }
         if let path = settings.lastRootPath {
             let url = URL(fileURLWithPath: path)
             if FileManager.default.fileExists(atPath: url.path) {

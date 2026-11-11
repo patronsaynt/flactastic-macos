@@ -41,7 +41,8 @@ final class PlaylistStore {
     func load(from libraryRootURL: URL) {
         currentRootURL = libraryRootURL
 
-        guard let url = fileURL, FileManager.default.fileExists(atPath: url.path) else { return }
+        // Switching libraries: never keep the previous one's playlists.
+        guard let url = fileURL, FileManager.default.fileExists(atPath: url.path) else { playlists = []; return }
         do {
             let data = try Data(contentsOf: url)
             playlists = try JSONDecoder().decode([Playlist].self, from: data)
@@ -50,7 +51,22 @@ final class PlaylistStore {
         }
     }
 
+    /// Told after every save; a server profile sends the changes on.
+    @ObservationIgnored var onSave: (() -> Void)?
+
+    /// Takes playlists from the server and keeps them as the offline copy,
+    /// without echoing them back.
+    func replaceAll(_ list: [Playlist]) {
+        if list != playlists { playlists = list }
+        writeFile()
+    }
+
     func save() {
+        writeFile()
+        onSave?()
+    }
+
+    private func writeFile() {
         guard let url = fileURL else {
             print("[PlaylistStore] Cannot save: no library root URL set")
             return

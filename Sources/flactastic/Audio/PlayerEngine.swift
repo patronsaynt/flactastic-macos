@@ -34,6 +34,18 @@ final class PlayerEngine {
 
     var onStateUpdate: (@MainActor () -> Void)?
 
+    /// Opens tracks that aren't plain local files (a server library's
+    /// streams), starting at the given second. Nil, or a nil result, means
+    /// read `track.url` with `AVAudioFile`.
+    var sourceOpener: (@Sendable (Track, TimeInterval) async throws -> (any PCMSource)?)?
+
+    /// Told the playing track and the one after it whenever either changes,
+    /// so a server stream can preload the next and drop the rest.
+    var upcoming: ((Track?, Track?) -> Void)?
+    /// Playback ran dry mid-track (a stream that can't keep up).
+    var stalled: (() -> Void)?
+    private var lastUpcoming: (URL?, URL?) = (nil, nil)
+
     // MARK: - Private
 
     private let graph: any AudioGraphProtocol
@@ -48,6 +60,10 @@ final class PlayerEngine {
     private var seekTimeOffset: TimeInterval = 0
     /// The queue played to its end (cleared when anything starts again).
     private var hasFinished = false
+    /// Playing, but the node is held because the decoder hasn't delivered
+    /// (a stream opening, a seek into a transcode, a slow network). See
+    /// `holdWhileStarved`.
+    private(set) var isHolding = false
 
     /// Tracks which scheduled entry playback is currently inside (by its startFrame).
     /// Used to detect entry transitions — including loops of the same track under
@@ -104,7 +120,13 @@ final class PlayerEngine {
         let track: Track
         let startFrame: AVAudioFramePosition
         var endFrame: AVAudioFramePosition
+        var source: PlaybackSource? = nil
     }
+
+    /// Where the playing track comes from, for a server library (offline
+    /// copy, stream, or transcode). Nil for local files. Switches with the
+    /// track itself, not when the next one is read ahead.
+    private(set) var currentSource: PlaybackSource?
 
     // MARK: - Remote playback state
 
@@ -157,6 +179,7 @@ final class PlayerEngine {
     // MARK: - Transport API
 
     func setQueue(_ tracks: [Track], startAt index: Int) {
+        if !tracks.isEmpty { PlaybackTrace.begin("play") }
         hasFinished = false
         if let remote {
             _queue = tracks
@@ -186,6 +209,7 @@ final class PlayerEngine {
         _currentIndex = min(index, max(tracks.count - 1, 0))
         if _queue.isEmpty {
             currentTrack = nil
+            currentSource = nil
             duration = nil
             currentTime = 0
             isPlaying = false
@@ -214,10 +238,42 @@ final class PlayerEngine {
             return
         }
         ensurePrepared()
-        graph.play()
         isPlaying = true
+        isHolding = false
+        if isStarved {
+            isHolding = true
+            stopTick() // so the quicker cadence starts now, not after a sleep
+        } else {
+            graph.play()
+        }
         startTick()
         notifyStateUpdate()
+    }
+
+    /// Less than a quarter second queued while more is still being decoded.
+    private var isStarved: Bool {
+        isDecoding && throttle.inFlightFrames < AVAudioFramePosition(graph.canonicalFormat.sampleRate / 4)
+    }
+
+    /// The node's clock, which the scrubber follows, keeps counting while the
+    /// node runs with nothing queued. A local file is decoded in milliseconds;
+    /// a stream can take a moment (opening, a seek into a transcode, a slow
+    /// network), and the scrubber would run ahead of the audio by that much.
+    /// So the node is held, clock frozen, until a second of audio is queued
+    /// again. Nothing is cut: a held node keeps what it has.
+    private func holdWhileStarved() {
+        if !isHolding, isStarved {
+            graph.pause()
+            isHolding = true
+            stalled?()
+            notifyStateUpdate()
+        } else if isHolding,
+                  !isDecoding || throttle.inFlightFrames >= AVAudioFramePosition(graph.canonicalFormat.sampleRate / 2) {
+            graph.play()
+            PlaybackTrace.mark("output")
+            isHolding = false
+            notifyStateUpdate()
+        }
     }
 
     func pause() {
@@ -231,6 +287,7 @@ final class PlayerEngine {
         }
         graph.pause()
         isPlaying = false
+        isHolding = false
         stopTick()
         notifyStateUpdate()
     }
@@ -368,7 +425,7 @@ final class PlayerEngine {
         _queue = _queue.map(moved)
         currentTrack = currentTrack.map(moved)
         scheduledEntries = scheduledEntries.map {
-            ScheduledEntry(track: moved($0.track), startFrame: $0.startFrame, endFrame: $0.endFrame)
+            ScheduledEntry(track: moved($0.track), startFrame: $0.startFrame, endFrame: $0.endFrame, source: $0.source)
         }
         notifyStateUpdate()
 
@@ -465,6 +522,7 @@ final class PlayerEngine {
     }
 
     func seek(to seconds: TimeInterval) {
+        PlaybackTrace.begin("seek")
         guard !_queue.isEmpty else { return }
         if let remote {
             let clamped = max(0, seconds)
@@ -616,6 +674,7 @@ final class PlayerEngine {
         let myGeneration = generation.withLock { $0 }
         let generation = self.generation
         let scheduleEnd = self.liveScheduleEnd  // captured by reference (struct wraps OS pointer)
+        let opener = sourceOpener
         // A pass started for upcoming tracks (append/insert while the decoder is
         // idle) begins at a track that isn't playing yet — its length must not
         // replace the playing track's duration, or the seek bar jumps.
@@ -653,11 +712,13 @@ final class PlayerEngine {
                 var totalScheduledFrames: AVAudioFramePosition = resume?.scheduled ?? 0
                 var entryOpened = resume != nil
                 do {
-                    let file = try AVAudioFile(
-                        forReading: track.url,
-                        commonFormat: .pcmFormatFloat32,
-                        interleaved: false
-                    )
+                    let file: any PCMSource
+                    let startSeconds = resume?.seconds ?? (isFirstTrack ? seekOffset : 0)
+                    if let opened = try await opener?(track, startSeconds) {
+                        file = opened
+                    } else {
+                        file = try AVAudioFile(forReading: track.url, commonFormat: .pcmFormatFloat32, interleaved: false)
+                    }
                     let sourceFormat = file.processingFormat
 
                     // Seek within the first track, or back to where a failed read stopped.
@@ -704,6 +765,7 @@ final class PlayerEngine {
                     // a second entry. We only capture nextScheduleFrame so the finalization
                     // below can compute the correct absolute endFrame for the existing entry.
                     if resume == nil {
+                        let source = file.playbackSource
                         startFrame = await MainActor.run { [weak self] () -> AVAudioFramePosition in
                             guard let self, generation.withLock({ $0 }) == myGeneration else { return -1 }
                             let sf = self.nextScheduleFrame
@@ -711,13 +773,23 @@ final class PlayerEngine {
                                 // Continuation: no new entry. Just update the live pointer.
                                 scheduleEnd.withLock { $0 = sf }
                             } else {
-                                let entry = ScheduledEntry(track: track, startFrame: sf, endFrame: .max)
+                                let entry = ScheduledEntry(track: track, startFrame: sf, endFrame: .max, source: source)
                                 self.scheduledEntries.append(entry)
                                 scheduleEnd.withLock { $0 = sf }
                             }
                             return sf
                         }
                         if startFrame < 0 { return }
+                    } else {
+                        // Reopened mid-track, perhaps at another quality: the mark follows.
+                        let source = file.playbackSource, sf = startFrame
+                        await MainActor.run { [weak self] in
+                            guard let self, generation.withLock({ $0 }) == myGeneration,
+                                  let i = self.scheduledEntries.lastIndex(where: { $0.startFrame == sf && $0.track.id == track.id }),
+                                  self.scheduledEntries[i].source != source else { return }
+                            self.scheduledEntries[i].source = source
+                            if self.currentEntryStartFrame == sf { self.currentSource = source; self.notifyStateUpdate() }
+                        }
                     }
                     entryOpened = true
                     let startFrame = startFrame
@@ -774,6 +846,7 @@ final class PlayerEngine {
                                 await throttle.acquire(frames: frameCount)
                                 if generation.withLock({ $0 }) != myGeneration { return }
 
+                                PlaybackTrace.mark("decoded")
                                 totalScheduledFrames += AVAudioFramePosition(frameCount)
                                 graphRef.schedule(destBuffer, completionCallbackType: .dataConsumed) { _ in
                                     if generation.withLock({ $0 }) == myGeneration {
@@ -814,6 +887,7 @@ final class PlayerEngine {
                             await throttle.acquire(frames: frameCount)
                             if generation.withLock({ $0 }) != myGeneration { return }
 
+                            PlaybackTrace.mark("decoded")
                             totalScheduledFrames += AVAudioFramePosition(frameCount)
                             graphRef.schedule(destBuffer, completionCallbackType: .dataConsumed) { _ in
                                 if generation.withLock({ $0 }) == myGeneration {
@@ -1063,7 +1137,8 @@ final class PlayerEngine {
         tickTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 self?.updateTime()
-                try? await Task.sleep(for: .milliseconds(50))
+                // Quicker while waiting to start, so audio goes out as soon as it's ready.
+                try? await Task.sleep(for: .milliseconds(self?.isHolding == true ? 5 : 50))
             }
         }
     }
@@ -1078,6 +1153,8 @@ final class PlayerEngine {
             updateRemoteTime()
             return
         }
+        if isPlaying { holdWhileStarved() }
+        if isHolding { return }
         guard let sampleTime = graph.currentPlayerSampleTime(), sampleTime >= 0 else { return }
         let canonicalRate = graph.canonicalFormat.sampleRate
 
@@ -1091,6 +1168,7 @@ final class PlayerEngine {
                     let isInitialEntry = (currentEntryStartFrame == -1)
                     currentEntryStartFrame = entry.startFrame
                     currentTrack = entry.track
+                    currentSource = entry.source
                     if entry.endFrame != .max {
                         duration = entry.track.duration ?? Double(entry.endFrame - entry.startFrame) / canonicalRate
                     } else {
@@ -1210,6 +1288,11 @@ final class PlayerEngine {
     // MARK: - Helpers
 
     private func notifyStateUpdate() {
+        let next = _currentIndex + 1 < _queue.count ? _queue[_currentIndex + 1] : nil
+        if lastUpcoming.0 != currentTrack?.url || lastUpcoming.1 != next?.url {
+            lastUpcoming = (currentTrack?.url, next?.url)
+            upcoming?(currentTrack, next)
+        }
         onStateUpdate?()
     }
 }
@@ -1253,6 +1336,9 @@ final class BufferThrottle: @unchecked Sendable {
         }
         waiter?.resume()
     }
+
+    /// Frames scheduled on the node and not yet consumed.
+    var inFlightFrames: Int64 { state.withLock { $0.inFlight } }
 
     /// Cancel all backpressure — unblock any waiting decode task so it can check cancellation.
     func reset() {

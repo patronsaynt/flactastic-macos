@@ -133,3 +133,18 @@ private func store(_ plays: [(Track, Date, Double)]) -> ListeningStore {
     #expect(abs(b.buckets[5][0] - 15) < 0.001)
     #expect(abs(b.buckets[6][0] - 15) < 0.001)
 }
+
+// MARK: - Top artists
+
+@Test @MainActor func topArtistsCountEachArtistOnATrack() {
+    let s = store([
+        (track(album: "Census Designated", artist: "Jane Remover"), date(days: -1), 360),
+        (track(album: "Revengeseekerz", artist: "Jane Remover ; @973BADVIBEZGIRL"), date(days: -1, hour: 13), 300),
+        (track(album: "Gooey", artist: "ISOxo ; Knock2"), date(days: -1, hour: 14), 60),
+    ])
+    let top = s.topArtists(limit: 10, since: nil, resolver: ArtistResolver(tracks: []))
+    #expect(top.map(\.name) == ["Jane Remover", "@973BADVIBEZGIRL", "ISOxo", "Knock2"])
+    #expect(top.first?.minutes == 11, "both of her plays")
+    #expect(top.first?.plays == 2)
+    #expect(!top.contains { $0.name.contains(";") || $0.name.contains(",") })
+}

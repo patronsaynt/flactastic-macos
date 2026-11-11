@@ -184,11 +184,15 @@ struct PlayerTrackText: View {
                     badge
                 }
             }
-            if let artist = ArtistResolver.displayString(track.artist) {
-                Text(artist)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
+            HStack(spacing: 0) {
+                if let artist = ArtistResolver.displayString(track.artist) {
+                    Text(artist)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                }
+                // Bar only: the puck has no room, and doesn't need it.
+                if showsDetail { PlayerSourceLabel(track: track, size: 11.5).transition(.opacity) }
             }
             if let speaker = cast.activeSpeaker {
                 Label("Playing on \(speaker.name)",
@@ -204,11 +208,11 @@ struct PlayerTrackText: View {
         }
     }
 
+    /// Bar only, and left out of the layout in the puck, so the puck's
+    /// title keeps all of its width.
+    @ViewBuilder
     private var badge: some View {
-        PlayerQualityBadge(track: track)
-            .opacity(showsDetail ? 1 : 0)
-            .blur(radius: showsDetail ? 0 : 4)
-            .accessibilityHidden(!showsDetail)
+        if showsDetail { PlayerQualityBadge(track: track).transition(.opacity) }
     }
 }
 
@@ -429,18 +433,41 @@ struct GlassIconButtonStyle: ButtonStyle {
 
 /// The playing track's fidelity, tiny, beside its title: "24/96" in the
 /// tier's color, or the tier name when the file carries no rate. Shown in
-/// every player unless UI for nerds turns it off.
+/// every player unless UI for nerds turns it off. A server transcode shows
+/// what's actually heard ("AAC 256") instead of the file's own fidelity.
 struct PlayerQualityBadge: View {
     let track: Track
+    @Environment(PlayerState.self) private var player
+
+    /// Only the playing track has a source; other uses of the badge don't.
+    private var source: PlaybackSource? {
+        player.currentTrack?.url == track.url ? player.source : nil
+    }
 
     var body: some View {
         if UIStyle.shared.playerQualityBadge { badge }
     }
 
+    @ViewBuilder
     private var badge: some View {
-        let quality = AudioQuality.of(track)
-        let detail = FormatUtils.formatSampleRate(track.sampleRate, bitDepth: track.bitDepth)
-        return Text(detail ?? quality.label)
+        if case .transcode(let q)? = source {
+            // What's heard is the lossy stream (§9.2: AAC-LC at the source rate
+            // up to 48 kHz, else 44.1 or 48 kHz by rate family).
+            let rate = track.sampleRate ?? 44_100
+            let out = rate <= 48_000 ? rate : (rate.truncatingRemainder(dividingBy: 11_025) == 0 ? 44_100 : 48_000)
+            // High (256) wears the CD tier's green; the others are rated as lossy.
+            let quality = q == .high ? .cd : AudioQuality.classify(sampleRate: out, bitDepth: nil, format: .aac)
+            pill("AAC \(q.kbps)", quality: quality, help: "AAC \(q.kbps) kbit/s, transcoded by the server")
+        } else {
+            let quality = AudioQuality.of(track)
+            let detail = FormatUtils.formatSampleRate(track.sampleRate, bitDepth: track.bitDepth)
+            pill(detail ?? quality.label, quality: quality,
+                 help: FormatUtils.techSpec(for: track).map { "\(quality.label) · \($0)" } ?? quality.label)
+        }
+    }
+
+    private func pill(_ text: String, quality: AudioQuality, help: String) -> some View {
+        Text(text)
             .font(.system(size: 9.5, weight: .bold))
             .monospacedDigit()
             .foregroundStyle(quality.color)
@@ -449,6 +476,29 @@ struct PlayerQualityBadge: View {
             .padding(.horizontal, 5)
             .frame(height: 15)
             .background(quality.color.opacity(0.14), in: RoundedRectangle(cornerRadius: 4))
-            .help(FormatUtils.techSpec(for: track).map { "\(quality.label) · \($0)" } ?? quality.label)
+            .help(help)
+    }
+}
+
+/// Where a server track's audio comes from, after the artist: "· Streaming"
+/// or "· Offline", quiet, in the app's one ink. Nothing for local files.
+struct PlayerSourceLabel: View {
+    let track: Track
+    var size: CGFloat = 12
+    @Environment(PlayerState.self) private var player
+
+    var body: some View {
+        if player.currentTrack?.url == track.url, let source = player.source {
+            let server = ServerSession.current?.active?.serverName ?? "the server"
+            let (text, help) = source == .offline
+                ? ("Offline", "Playing the offline copy on this Mac")
+                : ("Streaming", "Streaming from \(server)")
+            Text(" · \(text)")
+                .font(.system(size: size))
+                .foregroundStyle(Theme.textTertiary)
+                .lineLimit(1)
+                .fixedSize()
+                .help(help)
+        }
     }
 }

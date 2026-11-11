@@ -132,6 +132,13 @@ struct PlaylistDetailView: View {
                         playbackContextMenuItems(for: tracks, player: player)
                         FLContextMenuItem.divider
                         FLContextMenuItem.button("Edit...", systemImage: "pencil") { showEditor = true }
+                        if let offline = ServerSession.current.flatMap({ $0.isActive ? $0.offline : nil }) {
+                            let kept = offline.isKept(playlist: playlist.id)
+                            FLContextMenuItem.button(kept ? "Remove Offline Copy" : "Keep Offline",
+                                                     systemImage: kept ? "icloud.slash" : "arrow.down.circle") {
+                                offline.setPlaylist(playlist.id, kept: !kept)
+                            }
+                        }
                     }
                     .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
                     .opacity(hasEntered ? 1 : 0)
