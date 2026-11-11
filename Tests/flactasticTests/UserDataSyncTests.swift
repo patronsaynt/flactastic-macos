@@ -58,6 +58,8 @@ final class FakeUserDataServer: URLProtocol, @unchecked Sendable {
         switch (method, path) {
         case ("POST", "/v2/auth/login"): reply(200, #"{"token":"t","user":\#(user),"device":\#(device)}"#)
         case ("GET", "/v2/me"): reply(200, #"{"user":\#(user),"device":\#(device)}"#)
+        case ("GET", "/v2/server"):
+            reply(200, #"{"id":"1A1C2B3A-4D5E-4F60-8A7B-0C1D2E3F4A5B","name":"fake","protocol":"2.0","version":"beta-2","transcoding":false}"#)
         case ("GET", "/v2/changes"):
             DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { self.reply(200, #"{"seq":0,"changed":[]}"#) }
         case ("GET", "/v2/tracks"): reply(200, #"{"tracks":[],"deleted":[],"seq":0,"more":false}"#)
@@ -241,6 +243,37 @@ struct AccountDataTests {
             await sync.sync()
             #expect(!FileManager.default.fileExists(atPath: pinURL.path))
             #expect(highlight.resets == resets + 1)
+        }
+    }
+
+    @Test("Losing the server says so at once, retries on its own, and Try Now reconnects straight away")
+    func reconnects() async throws {
+        try await withFakeAccount { session, _, _ in
+            @MainActor func until(_ seconds: Double, _ done: () -> Bool) async {
+                let end = Date().addingTimeInterval(seconds)
+                while !done(), Date() < end { try? await Task.sleep(for: .milliseconds(50)) }
+            }
+            // Any request that can't get through marks the server unreachable.
+            FakeUserDataServer.lock.withLock { FakeUserDataServer.offline = true }
+            _ = try? await session.client!.json(ServerInfo.self, "GET", "v2/server")
+            await until(2) { session.status == .unreachable }
+            #expect(session.status == .unreachable)
+
+            // Back: the first retry (after 2 s) finds it.
+            FakeUserDataServer.lock.withLock { FakeUserDataServer.offline = false }
+            await until(5) { session.status == .ready }
+            #expect(session.status == .ready)
+
+            // Down again for a while: Try Now doesn't wait out the back-off.
+            FakeUserDataServer.lock.withLock { FakeUserDataServer.offline = true }
+            session.connectionLost()
+            try await Task.sleep(for: .seconds(4.5)) // retries at 2 s and 6 s
+            FakeUserDataServer.lock.withLock { FakeUserDataServer.offline = false }
+            let tapped = Date()
+            session.reconnectNow()
+            await until(3) { session.status == .ready }
+            #expect(session.status == .ready)
+            #expect(Date().timeIntervalSince(tapped) < 1, "no waiting for the next scheduled retry")
         }
     }
 

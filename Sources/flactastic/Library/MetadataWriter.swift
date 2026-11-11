@@ -27,8 +27,14 @@ actor MetadataWriter {
     /// upgrades) are refused there.
     @TaskLocal static var isUserEdit = false
 
-    private func serverEditor() throws -> ServerTagEditor? {
-        guard let server else { return nil }
+    /// The server, when `track` is one of its tracks; nil for a file only
+    /// on this Mac (an import before it uploads), which is tagged here.
+    private func server(for track: Track) -> ServerTagEditor? {
+        server.flatMap { $0.knows(track) ? $0 : nil }
+    }
+
+    private func serverEditor(for track: Track) throws -> ServerTagEditor? {
+        guard let server = server(for: track) else { return nil }
         guard Self.isUserEdit else { throw WriteError.serverLibrary }
         return server
     }
@@ -53,7 +59,7 @@ actor MetadataWriter {
         var errorDescription: String? {
             switch self {
             case .serverLibrary:
-                return "Tags on the server are changed from the editors."
+                return "On a server, tags can only be changed in the track and album editors."
 
             case .fileNotFound(let url):
                 return "File not found: \(url.lastPathComponent)"
@@ -123,7 +129,7 @@ actor MetadataWriter {
         labelChange: LabelChange = .unchanged,
         discChange: DiscChange = .unchanged
     ) async throws -> Track {
-        if let server = try serverEditor() {
+        if let server = try serverEditor(for: track) {
             return try await server.apply(TagEdit.from(
                 track, title: title, artist: artist, album: album, year: year, genre: genre,
                 secondaryGenres: secondaryGenres, trackNumber: trackNumber, artwork: artworkChange,
@@ -319,7 +325,7 @@ actor MetadataWriter {
     /// USLT / MP4 ©lyr / WMA WM/Lyrics). Pass `nil` or `""` to clear.
     /// All other tags are left untouched.
     func writeLyrics(to track: Track, lyrics: String?) async throws {
-        if let server {
+        if let server = server(for: track) {
             var edit = TagEdit()
             edit.fields["lyrics"] = (lyrics ?? "").isEmpty ? .null : .string(lyrics!)
             _ = try await server.apply(edit, to: track)
@@ -375,7 +381,7 @@ actor MetadataWriter {
     func readLyrics(from track: Track) async throws -> String? {
         // A server track's lyrics come from the server, unless a verified
         // offline copy is here: then from it, so they work offline.
-        if let server, !server.hasCurrentCopy(track) {
+        if let server = server(for: track), !server.hasCurrentCopy(track) {
             return try await server.detail(track).lyrics.flatMap { $0.isEmpty ? nil : $0 }
         }
         let url = track.url
@@ -395,7 +401,7 @@ actor MetadataWriter {
     /// Write markers as an embedded CUESHEET tag on `track.url`. Pass an empty
     /// array to clear the tag. All other tags are left untouched.
     func writeMarkers(to track: Track, markers: [TrackMarker]) async throws {
-        if let server = try serverEditor() {
+        if let server = try serverEditor(for: track) {
             var edit = TagEdit()
             edit.fields["cueSheet"] = markers.isEmpty ? .null
                 : .string(CueSheet.encode(markers: markers, fileName: track.url.lastPathComponent))
@@ -426,7 +432,7 @@ actor MetadataWriter {
     /// Read and decode the embedded CUESHEET tag from `track.url`. Returns an
     /// empty array when unset or unparsable.
     func readMarkers(from track: Track) async throws -> [TrackMarker] {
-        if let server, !server.hasCurrentCopy(track) {
+        if let server = server(for: track), !server.hasCurrentCopy(track) {
             return (try await server.detail(track).cueSheet).map(CueSheet.decode) ?? []
         }
         let url = track.url

@@ -12,8 +12,8 @@ struct LibraryMenus {
     let playlistAdd: PlaylistAddCoordinator
     let router: NavigationRouter
 
-    /// Play Next, Add to Queue, Add to Playlist, then Open, Edit and Remove
-    /// where the page offers them, and the album's artists.
+    /// Play Next, Add to Queue, Add to Playlist, then Open and Edit where the
+    /// page offers them, the album's artists, and Remove last.
     func album(
         _ album: Album,
         open: (() -> Void)? = nil,
@@ -26,7 +26,6 @@ struct LibraryMenus {
         var manage: [FLContextMenuItem] = []
         if let open { manage.append(.button("Open Album", systemImage: "square.grid.2x2", action: open)) }
         if let edit { manage.append(.button("Edit...", systemImage: "pencil", action: edit)) }
-        if let remove { manage.append(.button("Remove from Library", systemImage: "trash", action: remove)) }
         if let offline = ServerSession.current.flatMap({ $0.isActive ? $0.offline : nil }) {
             let kept = offline.isKept(album: album.id)
             manage.append(.button(kept ? "Remove Offline Copy" : "Keep Offline",
@@ -45,11 +44,12 @@ struct LibraryMenus {
                 items.append(contentsOf: artists)
             }
         }
+        appendRemove(remove, to: &items)
         return items
     }
 
     /// Play Next, Add to Queue, Add to Playlist, View Album, anything the page
-    /// adds (Remove from Playlist), Edit and Remove, and the track's artists.
+    /// adds (Remove from Playlist), Edit, the track's artists, and Remove last.
     func track(
         _ track: Track,
         viewAlbum: Bool = true,
@@ -66,7 +66,6 @@ struct LibraryMenus {
         }
         var manage = extra
         if let edit { manage.append(.button("Edit...", systemImage: "pencil", action: edit)) }
-        if let remove { manage.append(.button("Remove from Library", systemImage: "trash", action: remove)) }
         if !manage.isEmpty {
             items.append(.divider)
             items.append(contentsOf: manage)
@@ -76,7 +75,15 @@ struct LibraryMenus {
             items.append(.divider)
             items.append(contentsOf: artists)
         }
+        appendRemove(remove, to: &items)
         return items
+    }
+
+    /// "Remove from Library" goes last, in red, on its own.
+    private func appendRemove(_ remove: (() -> Void)?, to items: inout [FLContextMenuItem]) {
+        guard let remove else { return }
+        items.append(.divider)
+        items.append(.button("Remove from Library", systemImage: "trash", destructive: true, action: remove))
     }
 
     /// "Add to Playlist" with every playlist, then a field for a new one.

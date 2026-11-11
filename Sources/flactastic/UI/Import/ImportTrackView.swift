@@ -197,6 +197,7 @@ struct ImportTrackView: View {
         let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
 
         Task {
+            var copied: URL?
             do {
                 let filename = ImportCopy.trackFileName(
                     artist: artist.isEmpty ? nil : artist,
@@ -204,6 +205,7 @@ struct ImportTrackView: View {
                     pathExtension: source.url.pathExtension
                 )
                 let destURL = try ImportCopy.copy(source.url, into: root, named: filename)
+                copied = destURL
                 let destTrack = source.relocated(to: destURL)
                 let updated = try await writer.write(
                     to: destTrack,
@@ -220,6 +222,8 @@ struct ImportTrackView: View {
                     dismiss()
                 }
             } catch {
+                // An untagged copy left behind would be found and uploaded.
+                if let copied { try? FileManager.default.removeItem(at: copied) }
                 await MainActor.run {
                     errorMessage = error.localizedDescription
                     isSaving = false

@@ -78,3 +78,23 @@ func cancellationIsNotUnreachable() {
     #expect(client.mapTransport(CancellationError()) is CancellationError)
     #expect(client.mapTransport(URLError(.cannotConnectToHost)) as? ServerError == .unreachable(URLError(.cannotConnectToHost).localizedDescription))
 }
+
+@Test("An import on a server library is tagged on this Mac before it uploads; the server never sees the write")
+func importIsTaggedLocally() async throws {
+    let dir = try FixtureSupport.makeTempDir("import-tags")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let file = dir.appendingPathComponent("Mirrors.wav")
+    try FixtureSupport.writeSilentWAV(to: file)
+    // An unreachable server: any request would fail the write.
+    let client = ServerClient(address: ServerAddress(host: "127.0.0.1", port: 9), pin: Data(repeating: 0, count: 32))
+    let writer = MetadataWriter()
+    await writer.setServer(ServerTagEditor(client: client, root: dir, streamer: ServerStreamer()))
+
+    let track = Track(url: file, title: "Mirrors", fileFormat: .wav)
+    let written = try await writer.write(to: track, title: "Mirrors", artist: "Angel Zero", album: "Mirrors - Single",
+                                         year: nil, genre: nil, trackNumber: nil)
+    #expect(written.artist == "Angel Zero")
+    let reread = await LibraryScanner().loadMetadata(for: track)
+    #expect(reread.artist == "Angel Zero")
+    #expect(reread.album == "Mirrors - Single")
+}

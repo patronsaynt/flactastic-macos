@@ -8,7 +8,9 @@ struct ServerStatusLine: View {
 
     var body: some View {
         if let text {
-            Button { router.showSettings = true } label: {
+            Button {
+                if server.status == .unreachable { server.reconnectNow() } else { router.showSettings = true }
+            } label: {
                 HStack(spacing: 8) {
                     if isBusy { BrandLoader(height: 12) }
                     Text(text)
@@ -20,7 +22,7 @@ struct ServerStatusLine: View {
                 .background(Capsule().fill(Theme.textPrimary.opacity(isProblem ? 0.12 : 0.06)))
             }
             .buttonStyle(.plain)
-            .help("Open Settings")
+            .help(server.status == .unreachable ? "Try now" : "Open Settings")
             .transition(.opacity)
         }
     }
@@ -41,7 +43,7 @@ struct ServerStatusLine: View {
         switch server.status {
         case .identityChanged: return "\(name)'s identity changed."
         case .signedOut: return "Signed out of \(name)."
-        case .unreachable: return "Can't reach \(name). Playing offline copies."
+        case .unreachable: return "Can't reach \(name). Trying again… Offline copies still play."
         default: break
         }
         if server.library?.state == .offline { return "\(name)'s music folder is offline. Browsing still works." }

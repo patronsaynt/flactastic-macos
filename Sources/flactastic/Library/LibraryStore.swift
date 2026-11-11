@@ -372,6 +372,14 @@ final class LibraryStore {
     @discardableResult
     func removeTracks(_ toRemove: [Track]) -> Int {
         guard !toRemove.isEmpty else { return 0 }
+        // A server library: the server deletes them (into its trash); they
+        // leave the library now, and come back if the server says no.
+        if let remoteRemove {
+            remoteRemove(toRemove)
+            let ids = Set(toRemove.map(\.id))
+            tracks = tracks.filter { !ids.contains($0.id) }
+            return 0
+        }
         var removedIDs = Set<UUID>()
         var failures = 0
         for track in toRemove {
@@ -402,6 +410,7 @@ final class LibraryStore {
             parked = nil
             willOpen(url)
             remoteRefresh = nil
+            remoteRemove = nil
             scanTask?.cancel()
             metadataTask?.cancel()
             rootURL = url
@@ -422,6 +431,7 @@ final class LibraryStore {
         openedFolder = url
         willOpen(url)
         remoteRefresh = nil
+        remoteRemove = nil
         scanTask?.cancel()
         metadataTask?.cancel()
         rootURL = url
@@ -467,6 +477,8 @@ final class LibraryStore {
     /// Set while a server profile is the library: a refresh asks the server
     /// for changes instead of scanning the offline-copies folder.
     @ObservationIgnored var remoteRefresh: (() -> Void)?
+    /// Set with `remoteRefresh`: removing tracks asks the server to delete them.
+    @ObservationIgnored var remoteRemove: (([Track]) -> Void)?
 
     /// Called before a different library opens (set at launch to reset the
     /// player), so nothing from the old one keeps playing.
@@ -496,6 +508,7 @@ final class LibraryStore {
         scanTask?.cancel()
         metadataTask?.cancel()
         remoteRefresh = nil
+        remoteRemove = nil
         rootURL = nil
         tracks = []
         pendingSplitReview = []

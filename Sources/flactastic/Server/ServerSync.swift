@@ -408,7 +408,10 @@ final class HistorySync {
     func attach() {
         state = stateURL.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(State.self, from: $0) } ?? State()
         session.listening.libraryID = { [weak session] track in session?.serverID(for: track) }
-        session.listening.onRecord = { [weak self] event in
+        // Stats count only this library's tracks, and only those plays are sent.
+        session.listening.belongs = { [weak session] event in session?.mirror.tracks[event.trackID] != nil }
+        session.listening.onRecord = { [weak self, weak session] event in
+            guard session?.mirror.tracks[event.trackID] != nil else { return }
             self?.state.outbox.insert(event.id)
             self?.schedulePost()
         }
@@ -420,6 +423,7 @@ final class HistorySync {
     }
 
     func detach() {
+        session.listening.belongs = nil
         session.listening.libraryID = nil
         session.listening.onRecord = nil
         session.listening.onContext = nil
@@ -489,7 +493,7 @@ final class HistorySync {
     func uploadLocal(from root: URL) async throws -> Int {
         markOffered()
         let url = ListeningStore.historyURL(for: root, librariesDirectory: ListeningStore.defaultLibrariesDirectory)
-        let (events, contexts) = ListeningStore.readHistory(url)
+        let (events, contexts) = Self.matched(ListeningStore.readHistory(url), to: Array(session.mirror.tracks.values))
         var sent = 0
         for start in stride(from: 0, to: max(events.count, 1), by: 1000) {
             let slice = Array(events[start..<min(start + 1000, events.count)])
@@ -500,5 +504,24 @@ final class HistorySync {
         }
         await pull()
         return sent
+    }
+
+    /// Of another library's history, the plays of songs the server has (by
+    /// title, artist and album), under its track IDs, and the albums among
+    /// them. That library's playlists aren't the server's, so they're dropped.
+    nonisolated static func matched(_ history: ([PlayEvent], [RecentContext]), to tracks: [ServerTrack]) -> ([PlayEvent], [RecentContext]) {
+        func key(_ title: String?, _ artist: String?, _ album: String?) -> String {
+            [title, artist, album].map { ArtistResolver.key(for: $0 ?? "") }.joined(separator: "|")
+        }
+        var ids: [String: UUID] = [:]
+        for t in tracks { ids[key(t.title, t.artist ?? t.albumArtist, t.album)] = t.id }
+        let events: [PlayEvent] = history.0.compactMap { e in
+            guard let id = ids[key(e.title, e.artist, e.album)] else { return nil }
+            var e = e
+            e.trackID = id
+            return e
+        }
+        let albums = Set(events.compactMap(\.albumID))
+        return (events, history.1.filter { $0.kind == .album && albums.contains($0.targetID) })
     }
 }

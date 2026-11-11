@@ -150,13 +150,17 @@ struct ServerAccountGroups: View {
             }
             if let accountMessage { message(accountMessage) }
         default:
-            Row(title: statusTitle(profile), detail: storageLine) { EmptyView() }
+            Row(title: statusTitle(profile), detail: storageLine) {
+                if server.status == .unreachable {
+                    Button("Try Now") { server.reconnectNow() }.buttonStyle(PillButtonStyle())
+                }
+            }
         }
     }
 
     private func statusTitle(_ profile: ServerProfile) -> String {
         switch server.status {
-        case .unreachable: return "Can't reach \(profile.serverName). Playing offline copies."
+        case .unreachable: return "Can't reach \(profile.serverName). Trying again… Offline copies still play."
         case .connecting, .idle: return "Connecting…"
         default:
             switch server.library?.state {
@@ -238,6 +242,9 @@ struct ServerAccountGroups: View {
                 if item.id != server.uploads.items.first?.id { GroupDivider() }
                 Row(title: item.name, detail: uploadDetail(item)) {
                     if item.status == .failed {
+                        Button("Remove") { server.uploads.dismiss(item.id) }
+                            .buttonStyle(QuietTextButtonStyle())
+                            .help("Stop trying to upload this file. The file stays on this Mac.")
                         Button("Retry") { server.uploads.retry(item.id) }
                             .buttonStyle(PillButtonStyle())
                     }

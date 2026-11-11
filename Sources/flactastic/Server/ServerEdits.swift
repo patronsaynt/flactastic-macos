@@ -9,6 +9,19 @@ struct TagEdit: Encodable, Hashable, Sendable {
 
     func encode(to encoder: Encoder) throws { try fields.encode(to: encoder) }
 
+    /// A cover the server takes in an edit (§17: ≤ 10 MiB, ≤ 6000 px a
+    /// side): as is when it fits, else a JPEG at the same size, smaller
+    /// steps of quality until it does.
+    static func fitForServer(_ data: Data) -> Data {
+        let limit = 10 << 20
+        // At 0.9, `fit` keeps a picture within 6000 px untouched.
+        for quality in [0.9, 0.8, 0.65, 0.5] {
+            let out = ArtistProfileFile.fit(data, edge: 6000, quality: quality)
+            if out.count <= limit { return out }
+        }
+        return data
+    }
+
     mutating func text(_ key: String, _ old: String?, _ new: String?) {
         let o = old ?? "", n = new ?? ""
         guard o != n else { return }
@@ -53,7 +66,7 @@ struct TagEdit: Encodable, Hashable, Sendable {
         switch artwork {
         case .unchanged: break
         case .removed: if t.artwork != nil || t.artworkID != nil { e.fields["artwork"] = .null }
-        case .updated(let data): e.fields["artwork"] = .string(data.base64EncodedString())
+        case .updated(let data): e.fields["artwork"] = .string(Self.fitForServer(data).base64EncodedString())
         }
         return e
     }
@@ -75,6 +88,12 @@ final class ServerTagEditor: Sendable {
         self.root = root
         self.streamer = streamer
         self.onApplied = onApplied
+    }
+
+    /// The server has this track. A file here it doesn't have yet (an
+    /// import waiting to upload) is tagged on this Mac.
+    func knows(_ track: Track) -> Bool {
+        streamer?.config.withLock { $0.tracks[track.url.standardizedFileURL.path] != nil } ?? true
     }
 
     /// A verified offline copy is on this Mac: its tags can be read from it.

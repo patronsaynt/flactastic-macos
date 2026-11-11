@@ -29,9 +29,15 @@ extension View {
             Button("Cancel", role: .cancel) { request.wrappedValue = nil }
         } message: { pending in
             let n = pending.tracks.count
-            Text(n == 1
-                 ? "The file will be deleted from your library and moved to the Trash."
-                 : "\(n) files will be deleted from your library and moved to the Trash.")
+            if ServerSession.current?.isActive == true {
+                Text(n == 1
+                     ? "The file will be deleted from the server. It stays in the server's trash for 30 days."
+                     : "\(n) files will be deleted from the server. They stay in the server's trash for 30 days.")
+            } else {
+                Text(n == 1
+                     ? "The file will be deleted from your library and moved to the Trash."
+                     : "\(n) files will be deleted from your library and moved to the Trash.")
+            }
         }
     }
 }

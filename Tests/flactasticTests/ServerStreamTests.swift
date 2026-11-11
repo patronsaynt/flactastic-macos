@@ -1,4 +1,5 @@
 @preconcurrency import AVFoundation
+import AppKit
 import Foundation
 import os
 import Testing
@@ -410,4 +411,67 @@ func prefsRoundTrip() {
     }
     #expect(PrefsSync.json(true) == .bool(true))
     #expect(PrefsSync.json(3) == .int(3))
+}
+
+// MARK: - History per library
+
+@Test("Another library's history brought to a server keeps only plays of the server's songs, under its IDs")
+func importedHistoryMatchesServerTracks() throws {
+    let json = #"""
+    { "id": "9f1c2b3a-4d5e-4f60-8a7b-0c1d2e3f4a5b", "relativePath": "Steely Dan/Aja/01 Black Cow.flac",
+      "format": "flac", "fileSize": 1, "contentHash": null, "tagFingerprint": "ab",
+      "title": "Black Cow", "artist": "Steely Dan", "album": "Aja",
+      "secondaryGenres": [], "isCompilation": false, "isMixCompilation": false, "hasCueSheet": false,
+      "dateAdded": "2026-01-02T03:04:05Z", "modified": "2026-01-02T03:04:05Z" }
+    """#
+    let server = try ServerClient.decoder.decode(ServerTrack.self, from: Data(json.utf8))
+    let local = UUID()
+    let aja = PlayEvent(date: .now, trackID: local, title: "Black Cow", artist: "steely dan", albumID: "Steely Dan|Aja",
+                        album: "Aja", secondsListened: 300, counted: true)
+    let other = PlayEvent(date: .now, trackID: UUID(), title: "niteharts", artist: "ISOxo ; Knock2", albumID: "ISOxo|niteharts",
+                          album: "niteharts", secondsListened: 60, counted: true)
+    let contexts = [RecentContext(kind: .album, targetID: "Steely Dan|Aja", title: "Aja", subtitle: "", date: .now),
+                    RecentContext(kind: .album, targetID: "ISOxo|niteharts", title: "niteharts", subtitle: "", date: .now),
+                    RecentContext(kind: .playlist, targetID: UUID().uuidString, title: "Mine", subtitle: "", date: .now)]
+    let (events, kept) = HistorySync.matched(([aja, other], contexts), to: [server])
+    #expect(events.map(\.trackID) == [server.id])
+    #expect(events.first?.id == aja.id, "the same event, so posting it twice changes nothing")
+    #expect(kept.map(\.targetID) == ["Steely Dan|Aja"])
+}
+
+@MainActor
+@Test("Stats count only the plays a library's filter accepts; the history keeps them all")
+func statsFollowTheLibrary() {
+    let store = ListeningStore(librariesDirectory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+    let mine = UUID(), stray = UUID()
+    store.merge(events: [
+        PlayEvent(date: .now, trackID: mine, title: "Black Cow", artist: "Steely Dan", secondsListened: 300, counted: true),
+        PlayEvent(date: .now, trackID: stray, title: "niteharts", artist: "ISOxo ; Knock2", secondsListened: 60, counted: true),
+    ], contexts: [])
+    var known: Set<UUID> = [mine]
+    store.belongs = { known.contains($0.trackID) }
+    #expect(store.events.map(\.trackID) == [mine])
+    #expect(!store.topArtists(limit: 5, resolver: ArtistResolver(tracks: [])).contains { $0.name == "Knock2" })
+    known.insert(stray)
+    store.refilter()
+    #expect(store.events.count == 2, "a song that arrives later counts its earlier plays")
+    store.belongs = nil
+    #expect(store.events.count == 2)
+}
+
+@Test("A cover over the server's 10 MiB is re-encoded to fit; one within it is sent as is")
+func coverFitsTheServer() {
+    let side = 3000
+    let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: side, pixelsHigh: side, bitsPerSample: 8,
+                               samplesPerPixel: 3, hasAlpha: false, isPlanar: false, colorSpaceName: .deviceRGB,
+                               bytesPerRow: side * 3, bitsPerPixel: 24)!
+    arc4random_buf(rep.bitmapData!, side * side * 3)
+    let png = rep.representation(using: .png, properties: [:])!
+    #expect(png.count > 10 << 20, "a noisy 3000 px PNG is over the limit")
+    let fitted = TagEdit.fitForServer(png)
+    #expect(fitted.count <= 10 << 20)
+    let image = NSBitmapImageRep(data: fitted)
+    #expect(image?.pixelsWide == side, "same size, only re-encoded")
+    let small = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.5])!
+    #expect(TagEdit.fitForServer(small) == small)
 }

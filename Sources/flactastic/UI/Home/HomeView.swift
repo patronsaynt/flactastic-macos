@@ -752,7 +752,8 @@ struct HomeView: View {
                 Text("Not enough plays yet").font(.system(size: 12)).foregroundStyle(Theme.textTertiary)
             }
             ForEach(Array(metrics.topArtists.prefix(5).enumerated()), id: \.element.id) { index, artist in
-                let key = resolver.keys(forCredit: artist.name).first
+                // Only an artist with music in this library has a page.
+                let key = resolver.keys(forCredit: artist.name).first.flatMap { resolver.canonicalByKey[$0] == nil ? nil : $0 }
                 let name = ArtistResolver.displayString(artist.name) ?? artist.name
                 Button {
                     if let key { router.navigateToArtist(key: key) }

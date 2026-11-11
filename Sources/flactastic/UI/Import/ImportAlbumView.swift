@@ -351,6 +351,7 @@ struct ImportAlbumView: View {
             var firstError: String? = nil
             for (index, item) in ordered.enumerated() {
                 let newTitle = item.title.trimmingCharacters(in: .whitespaces)
+                var copied: URL?
                 do {
                     let resolvedTitle = newTitle.isEmpty ? item.source.title : newTitle
                     let filename = ImportCopy.trackFileName(
@@ -359,6 +360,7 @@ struct ImportAlbumView: View {
                         pathExtension: item.source.url.pathExtension
                     )
                     let destURL = try ImportCopy.copy(item.source.url, into: destDirectory, named: filename)
+                    copied = destURL
                     let destTrack = item.source.relocated(to: destURL)
                     let updated = try await writer.write(
                         to: destTrack,
@@ -374,6 +376,8 @@ struct ImportAlbumView: View {
                     collected.append(updated)
                     await MainActor.run { savedCount += 1 }
                 } catch {
+                    // An untagged copy left behind would be found and uploaded.
+                    if let copied { try? FileManager.default.removeItem(at: copied) }
                     if firstError == nil { firstError = error.localizedDescription }
                 }
             }

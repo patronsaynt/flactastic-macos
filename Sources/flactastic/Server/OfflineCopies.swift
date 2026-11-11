@@ -286,8 +286,10 @@ final class OfflineCopies {
     }
 
     /// An uploaded file stays as an offline copy, filed where the server put it.
-    func adopt(uploaded file: URL, as track: ServerTrack) {
-        guard let root = session.active?.offlineRoot, let hash = track.contentHash,
+    /// `hash` is the one the upload was checked against: a new track's
+    /// reply has none until the server hashes it in the background.
+    func adopt(uploaded file: URL, as track: ServerTrack, hash: String) {
+        guard let root = session.active?.offlineRoot,
               let format = AudioFileFormat(rawValue: track.format),
               let destination = try? PathSanitizer.destinationForIncomingTrack(remoteRelativePath: track.relativePath, under: root)
         else { return }
@@ -313,6 +315,15 @@ final class OfflineCopies {
     func remove(_ id: UUID) {
         guard let root = session.active?.offlineRoot, let copy = installed[id] else { return }
         try? FileManager.default.removeItem(at: root.appendingPathComponent(copy.relativePath))
+        installed[id] = nil
+        saveIndex()
+        publish()
+    }
+
+    /// The track was deleted: its copy here goes to the Trash.
+    func trash(_ id: UUID) {
+        guard let root = session.active?.offlineRoot, let copy = installed[id] else { return }
+        try? FileManager.default.trashItem(at: root.appendingPathComponent(copy.relativePath), resultingItemURL: nil)
         installed[id] = nil
         saveIndex()
         publish()

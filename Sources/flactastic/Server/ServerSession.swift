@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import Network
 import Observation
 
 /// A signed-in server account. The token lives in the Keychain under `id`;
@@ -65,6 +66,10 @@ final class ServerSession {
     @ObservationIgnored var mirror = ServerMirror()
     @ObservationIgnored private var changesTask: Task<Void, Never>?
     @ObservationIgnored private var foregroundObservers: [NSObjectProtocol] = []
+    @ObservationIgnored private var retryTask: Task<Void, Never>?
+    @ObservationIgnored private var retryRound = 0
+    @ObservationIgnored private let path = NWPathMonitor()
+    @ObservationIgnored private var pathWasUp = true
     @ObservationIgnored lazy var artwork = ServerArtwork(session: self)
     @ObservationIgnored lazy var offline = OfflineCopies(session: self)
     @ObservationIgnored lazy var uploads = ServerUploads(session: self)
@@ -181,6 +186,7 @@ final class ServerSession {
         let token: String?
         do { token = try ServerTokenStore.token(for: id) } catch { token = nil }
         let client = ServerClient(address: profile.address, pin: profile.pin, token: token)
+        client.onUnreachable = { [weak self] in Task { @MainActor in self?.connectionLost() } }
         self.client = client
         let editor = ServerTagEditor(client: client, root: profile.offlineRoot, streamer: streamer) { [weak self] tracks in
             Task { @MainActor in self?.applyServerTracks(tracks) }
@@ -191,6 +197,7 @@ final class ServerSession {
         if profile.userID == nil { Task { await learnUserID() } }
         mirror = ServerMirror.load(from: profile.supportDirectory)
         offline.load()
+        libraryStore.remoteRemove = { [weak self] tracks in Task { await self?.deleteTracks(tracks) } }
         libraryStore.remoteRefresh = { [weak self] in
             self?.uploads.scanForNewFiles()
             Task { await self?.pullTracks() }
@@ -235,6 +242,8 @@ final class ServerSession {
         // the play in progress.
         if isActive { libraryStore.onLibraryChange?() }
         stopChanges()
+        retryTask?.cancel()
+        retryTask = nil
         offline.cancel()
         history.detach()
         playlistSync.detach()
@@ -249,6 +258,7 @@ final class ServerSession {
         status = .idle
         library = nil
         libraryStore.remoteRefresh = nil
+        libraryStore.remoteRemove = nil
         persistProfiles()
     }
 
@@ -358,6 +368,18 @@ final class ServerSession {
 
     /// Fetches every track created, changed or deleted since the mirror's
     /// `seq`, page by page, and applies it to the library.
+    /// Deletes tracks on the server (§10: into its trash for 30 days), and
+    /// this Mac's copies with them (into the Trash). A track the server
+    /// didn't delete comes back with the pull that follows.
+    func deleteTracks(_ tracks: [Track]) async {
+        for track in tracks {
+            let id = serverID(for: track) ?? track.id
+            guard (try? await call({ try await $0.send("DELETE", "v2/tracks/\(id.uuidString)") })) != nil else { continue }
+            offline.trash(id)
+        }
+        await pullTracks()
+    }
+
     func pullTracks() async {
         guard let profile = active, !isPullingTracks else { return }
         isPullingTracks = true
@@ -407,6 +429,7 @@ final class ServerSession {
         idByPath = ids
         let snapshot = infos
         streamer.config.withLock { $0.tracks = snapshot }
+        listening.refilter() // plays of tracks that just arrived count now
     }
 
     func serverID(for track: Track) -> UUID? { idByPath[track.url.standardizedFileURL.path] }
@@ -544,11 +567,63 @@ final class ServerSession {
         changesTask = nil
     }
 
+    // MARK: - Reconnecting
+
+    /// A request or stream couldn't reach the server: say so, and keep
+    /// trying in the background (2 s, doubling to a minute) until it answers.
+    func connectionLost() {
+        guard isActive, client != nil, status != .signedOut, status != .identityChanged else { return }
+        status = .unreachable
+        if retryTask == nil { retry(after: 2) }
+    }
+
+    /// Try now instead of waiting (the notice was clicked, the network came
+    /// back, the Mac woke).
+    func reconnectNow() {
+        guard isActive, client != nil, status != .signedOut, status != .identityChanged else { return }
+        if status == .unreachable { retry(after: 0) }
+        else if changesTask != nil { startChanges() } // a long-poll from before sleep may be dead
+    }
+
+    private func retry(after first: Double) {
+        retryTask?.cancel()
+        retryRound += 1
+        let round = retryRound
+        retryTask = Task { [weak self] in
+            var delay = first
+            while let self, !Task.isCancelled, self.status == .unreachable {
+                if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
+                guard !Task.isCancelled else { return }
+                if (try? await self.call({ try await $0.json(ServerInfo.self, "GET", "v2/server", timeout: 10) })) != nil {
+                    // Back: catch up on everything that changed meanwhile.
+                    if NSApp?.isActive == true { self.startChanges() }
+                    else { await self.catchUp(["tracks", "playlists", "prefs", "history", "library", "userdata"]) }
+                    break
+                }
+                delay = min(max(delay * 2, 2), 60)
+            }
+            if let self, self.retryRound == round { self.retryTask = nil }
+        }
+    }
+
     /// Long-polls only while the app is in front; catches up on return.
     private func watchForeground() {
         guard foregroundObservers.isEmpty else { return }
+        // The network going and coming back: say so at once, retry at once.
+        path.pathUpdateHandler = { [weak self] p in
+            Task { @MainActor in
+                guard let self else { return }
+                let up = p.status == .satisfied
+                defer { self.pathWasUp = up }
+                if !up { self.connectionLost() } else if !self.pathWasUp { self.reconnectNow() }
+            }
+        }
+        path.start(queue: .global(qos: .utility))
         let center = NotificationCenter.default
         foregroundObservers = [
+            NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.reconnectNow() }
+            },
             center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.stopChanges() }
             },

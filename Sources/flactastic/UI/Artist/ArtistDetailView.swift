@@ -136,6 +136,11 @@ struct ArtistDetailView: View {
                 .foregroundStyle(Theme.textTertiary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.background)
+                .overlay(alignment: .topLeading) {
+                    HeroBackButton(action: popDetail)
+                        .padding(.leading, Theme.Spacing.xxl)
+                        .padding(.top, Theme.Spacing.xl + topBarInset)
+                }
         }
     }
 

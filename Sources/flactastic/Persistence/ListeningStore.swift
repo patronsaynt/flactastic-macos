@@ -67,7 +67,19 @@ struct PlayEvent: Codable, Sendable, Identifiable {
 @Observable
 @MainActor
 final class ListeningStore {
+    /// Every play in this library's history, as saved and synced.
+    private var all: [PlayEvent] = [] { didSet { refilter() } }
+    /// The plays stats are built from: `all`, less any `belongs` rejects.
     private(set) var events: [PlayEvent] = []
+    /// Set for a server library: only plays of its own tracks count. Its
+    /// history can hold plays of tracks it never had (an imported history).
+    @ObservationIgnored var belongs: ((PlayEvent) -> Bool)? { didSet { refilter() } }
+
+    /// Applies `belongs` again (after the library's tracks change).
+    func refilter() {
+        let next = belongs.map { all.filter($0) } ?? all
+        events = next
+    }
 
     /// Intentionally-played albums/playlists, newest last. Distinct from
     /// `events` (which power stats): this only records when the user explicitly
@@ -154,7 +166,7 @@ final class ListeningStore {
         let url = Self.historyURL(for: libraryRootURL, librariesDirectory: librariesDirectory)
         let loaded = Self.read(url)
         fileURL = url
-        events = loaded?.events ?? []
+        all = loaded?.events ?? []
         recentContexts = loaded?.contexts ?? []
     }
 
@@ -170,7 +182,7 @@ final class ListeningStore {
             return (url, Self.read(url))
         }.value
         fileURL = url
-        events = loaded?.events ?? []
+        all = loaded?.events ?? []
         recentContexts = loaded?.contexts ?? []
     }
 
@@ -226,7 +238,7 @@ final class ListeningStore {
         guard let url = fileURL else { return }
         saveGeneration &+= 1
         let generation = saveGeneration
-        let snapshot = PersistedData(events: events, contexts: recentContexts)
+        let snapshot = PersistedData(events: all, contexts: recentContexts)
         Task.detached(priority: .utility) { [persister] in
             await persister.write(snapshot, generation: generation, to: url)
         }
@@ -236,7 +248,7 @@ final class ListeningStore {
     private func saveNow() {
         guard let url = fileURL else { return }
         saveGeneration &+= 1
-        Self.write(PersistedData(events: events, contexts: recentContexts), to: url)
+        Self.write(PersistedData(events: all, contexts: recentContexts), to: url)
     }
 
     // MARK: - Recording
@@ -256,11 +268,11 @@ final class ListeningStore {
     /// so merging the same page twice changes nothing; for each context the
     /// newest date wins.
     func merge(events incoming: [PlayEvent], contexts: [RecentContext]) {
-        let known = Set(events.map(\.id))
+        let known = Set(all.map(\.id))
         let fresh = incoming.filter { !known.contains($0.id) }
         var changed = false
         if !fresh.isEmpty {
-            events = (events + fresh).sorted { $0.date < $1.date }
+            all = (all + fresh).sorted { $0.date < $1.date }
             changed = true
         }
         for c in contexts {
@@ -301,7 +313,7 @@ final class ListeningStore {
             secondsListened: secondsListened,
             counted: counted
         )
-        events.append(event)
+        all.append(event)
         save()
         onRecord?(event)
     }

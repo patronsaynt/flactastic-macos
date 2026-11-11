@@ -27,16 +27,23 @@ final class ServerUploads {
     }
 
     private(set) var items: [Item] = []
+    /// Files uploaded or dismissed here (path → content hash). They're never
+    /// queued again, even once their track is deleted on the server, and no
+    /// other file with the same bytes is sent.
+    @ObservationIgnored private var handled: [String: String] = [:]
     @ObservationIgnored unowned let session: ServerSession
     @ObservationIgnored private var running: Task<Void, Never>?
 
     init(session: ServerSession) { self.session = session }
 
     private var stateURL: URL? { session.active?.supportDirectory.appendingPathComponent("uploads.json") }
+    private var handledURL: URL? { session.active?.supportDirectory.appendingPathComponent("uploads-handled.json") }
 
     func load() {
         items = stateURL.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode([Item].self, from: $0) } ?? []
-        items.removeAll { $0.status == .done }
+        handled = handledURL.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+        // Finished, or the file is gone: nothing left to do.
+        items.removeAll { $0.status == .done || !FileManager.default.fileExists(atPath: $0.file) }
         for i in items.indices where items[i].status != .failed { items[i].status = .waiting }
         start()
     }
@@ -44,6 +51,15 @@ final class ServerUploads {
     private func save() {
         guard let url = stateURL, let data = try? JSONEncoder().encode(items) else { return }
         try? data.write(to: url, options: .atomic)
+        if let url = handledURL, let data = try? JSONEncoder().encode(handled) { try? data.write(to: url, options: .atomic) }
+    }
+
+    /// Takes a file out of the queue for good; the file itself stays.
+    func dismiss(_ id: UUID) {
+        guard let item = items.first(where: { $0.id == id }) else { return }
+        handled[item.file] = item.contentHash ?? ""
+        items.removeAll { $0.id == id }
+        save()
     }
 
     /// Queues a file. With `replacing`, the upload replaces that track.
@@ -74,7 +90,7 @@ final class ServerUploads {
         let root = profile.offlineRoot
         let known = session.offline.installedPaths
         let since = profile.created
-        let queued = Set(items.map(\.file))
+        let queued = Set(items.map(\.file)).union(handled.keys)
         Task.detached(priority: .utility) {
             let found = Self.newFiles(in: root, since: since, known: known, queued: queued)
             await MainActor.run { for url in found { self.enqueue(url) } }
@@ -124,6 +140,23 @@ final class ServerUploads {
                 item.size = (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
                 set(id) { $0.contentHash = item.contentHash; $0.size = item.size }
             }
+            // Bytes the server already has (another copy of this file) aren't
+            // sent again: this file becomes that track's copy here.
+            if item.trackID == nil, let hash = item.contentHash {
+                if let track = session.mirror.tracks.values.first(where: { $0.contentHash == hash }) {
+                    session.offline.adopt(uploaded: url, as: track, hash: hash)
+                    handled[item.file] = hash
+                    items.removeAll { $0.id == id }
+                    save()
+                    return
+                }
+                if handled.values.contains(hash) {
+                    handled[item.file] = hash
+                    items.removeAll { $0.id == id }
+                    save()
+                    return
+                }
+            }
             set(id) { $0.status = .sending }
             save()
 
@@ -140,7 +173,8 @@ final class ServerUploads {
                 self.set(id) { $0.sent = sent }
             }
             set(id) { $0.status = .done; $0.relativePath = track.relativePath; $0.sent = $0.size }
-            session.offline.adopt(uploaded: url, as: track)
+            handled[item.file] = item.contentHash
+            session.offline.adopt(uploaded: url, as: track, hash: track.contentHash ?? item.contentHash!)
             await session.pullTracks()
         } catch let error as ServerError {
             session.note(error)

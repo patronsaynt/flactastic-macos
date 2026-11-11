@@ -391,6 +391,51 @@ struct ServerIntegrationTests {
             _ = try await session.writer.write(to: tone, title: "Nope", artist: nil, album: nil, year: nil, genre: "Jazz", trackNumber: nil)
         }
 
+        // An import: a new file in the folder uploads once, becomes an offline
+        // copy where the server filed it, and a later scan doesn't send it again.
+        let imported = profile.offlineRoot.appendingPathComponent("Imported \(UUID().uuidString.prefix(6)).wav")
+        var wav = Data("RIFF".utf8)
+        let samples = 44_100 * 4
+        func le32(_ v: Int) -> Data { withUnsafeBytes(of: UInt32(v).littleEndian) { Data($0) } }
+        func le16(_ v: Int) -> Data { withUnsafeBytes(of: UInt16(v).littleEndian) { Data($0) } }
+        wav += le32(36 + samples) + Data("WAVEfmt ".utf8) + le32(16) + le16(1) + le16(2) + le32(44100) + le32(44100 * 4) + le16(4) + le16(16)
+        wav += Data("data".utf8) + le32(samples) + Data((0..<samples).map { _ in UInt8.random(in: 0...255) })
+        try wav.write(to: imported)
+        session.uploads.scanForNewFiles()
+        // By name: the queue holds the resolved path (/private/var for a temp folder).
+        let importedName = imported.lastPathComponent
+        await until(30) { session.uploads.items.contains { $0.name == importedName && $0.status == .done } }
+        let upload = try #require(session.uploads.items.first { $0.name == importedName })
+        #expect(upload.status == .done, "\(upload.error ?? "")")
+        let filed = try #require(upload.relativePath)
+        #expect(session.offline.installedPaths.contains(filed), "kept here as an offline copy")
+        session.uploads.load() // a relaunch: finished uploads are forgotten
+        session.uploads.scanForNewFiles()
+        try await Task.sleep(for: .seconds(2))
+        #expect(session.uploads.items.isEmpty, "nothing uploads twice")
+        // A second copy of the same bytes isn't sent again.
+        let copy = profile.offlineRoot.appendingPathComponent("Copy \(UUID().uuidString.prefix(6)).wav")
+        try wav.write(to: copy)
+        let tracksBefore = session.mirror.tracks.count
+        session.uploads.scanForNewFiles()
+        try await Task.sleep(for: .seconds(3))
+        await session.pullTracks()
+        #expect(session.mirror.tracks.count == tracksBefore, "no duplicate on the server")
+        #expect(session.uploads.items.isEmpty)
+
+        // Remove from Library deletes it on the server, and it stays gone.
+        await until { library.tracks.contains { $0.url.path.hasSuffix(filed) } }
+        let uploadedTrack = try #require(library.tracks.first { $0.url.path.hasSuffix(filed) })
+        let serverID = try #require(session.serverID(for: uploadedTrack))
+        library.removeTracks([uploadedTrack])
+        await until { session.mirror.tracks[serverID] == nil }
+        #expect(session.mirror.tracks[serverID] == nil, "deleted on the server")
+        #expect(!library.tracks.contains { $0.id == uploadedTrack.id })
+        session.uploads.load()
+        session.uploads.scanForNewFiles()
+        try await Task.sleep(for: .seconds(3))
+        #expect(session.uploads.items.isEmpty, "a deleted upload isn't sent again")
+
         // Disconnect keeps the account: reopening needs no password.
         session.disconnect()
         #expect(!session.isActive)

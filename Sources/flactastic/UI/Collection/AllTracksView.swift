@@ -190,7 +190,6 @@ struct AllTracksView: View {
                             FLContextMenuItem.divider
                         }
                         FLContextMenuItem.button("Edit...", systemImage: "pencil") { editingTrack = track }
-                        FLContextMenuItem.button("Remove from Library", systemImage: "trash") { removalRequest = LibraryRemovalRequest(title: tracksForMenu.count == 1 ? track.title : "\(tracksForMenu.count) Tracks", tracks: tracksForMenu) }
                         FLContextMenuItem.divider
                         addToPlaylistMenuItem(tracks: tracksForMenu)
                         let artistItems = artistContextMenuItems(
@@ -201,6 +200,10 @@ struct AllTracksView: View {
                         if !artistItems.isEmpty {
                             FLContextMenuItem.divider
                             artistItems
+                        }
+                        FLContextMenuItem.divider
+                        FLContextMenuItem.button("Remove from Library", systemImage: "trash", destructive: true) {
+                            removalRequest = LibraryRemovalRequest(title: tracksForMenu.count == 1 ? track.title : "\(tracksForMenu.count) Tracks", tracks: tracksForMenu)
                         }
                     }
                     .riseFadeIn(index: index, animated: track.id, animatedIDs: animatedTrackIDs, enabled: canAnimateEntrances)

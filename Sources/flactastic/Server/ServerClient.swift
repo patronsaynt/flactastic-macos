@@ -180,6 +180,12 @@ final class ServerClient: Sendable {
     let session: URLSession
     let trust: PinningDelegate
     private let tokenLock: OSAllocatedUnfairLock<String?>
+    private let lostLock = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
+    /// Told whenever a request or stream can't reach the server.
+    var onUnreachable: (@Sendable () -> Void)? {
+        get { lostLock.withLock { $0 } }
+        set { lostLock.withLock { $0 = newValue } }
+    }
 
     /// `protocolClasses` lets tests answer requests without a server.
     /// Answers every client's requests in tests, without a server.
@@ -259,6 +265,7 @@ final class ServerClient: Sendable {
     func mapTransport(_ error: Error) -> Error {
         if let pin = trust.pin, let seen = trust.seenPin, seen != pin { return ServerError.identityChanged }
         if error is CancellationError || (error as? URLError)?.code == .cancelled { return CancellationError() }
+        onUnreachable?()
         return ServerError.unreachable((error as? URLError)?.localizedDescription ?? error.localizedDescription)
     }
 
