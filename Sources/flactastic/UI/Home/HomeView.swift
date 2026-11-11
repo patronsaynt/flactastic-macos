@@ -286,9 +286,11 @@ struct HomeView: View {
             AlbumMetadataEditorView(album: album)
                 .environment(library)
         }
-        // Again for each library and after each reset: its pinned highlight is its own.
-        .task(id: "\(library.hasCompletedInitialLoad)|\(library.rootURL?.path ?? "")|\(highlight.resets)") {
-            guard library.hasCompletedInitialLoad else { return }
+        // Again for each library and after each reset (its pinned highlight is
+        // its own), once the saved lyrics are read, and while nothing is
+        // picked, again as more lyrics are cached.
+        .task(id: "\(library.hasCompletedInitialLoad)|\(library.rootURL?.path ?? "")|\(highlight.resets)|\(lyricsRemoteCache.isLoaded)|\(highlight.pick == nil ? lyricsRemoteCache.entries.count : -1)") {
+            guard library.hasCompletedInitialLoad, lyricsRemoteCache.isLoaded else { return }
             await highlight.pickIfNeeded(
                 library: library,
                 lyricsCache: lyricsRemoteCache,

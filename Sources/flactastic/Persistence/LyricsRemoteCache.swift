@@ -47,6 +47,9 @@ final class LyricsRemoteCache {
     static let negativeTTL: TimeInterval = 60 * 60 * 24 * 7
 
     private(set) var entries: [String: LyricsCacheEntry] = [:]
+    /// The saved cache has been read (or there was none). Before this,
+    /// `entries` being empty says nothing.
+    private(set) var isLoaded = false
 
     private let fileURL: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -56,6 +59,7 @@ final class LyricsRemoteCache {
     }()
 
     func load() {
+        defer { isLoaded = true }
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
         do {
             let data = try Data(contentsOf: fileURL)
@@ -69,6 +73,7 @@ final class LyricsRemoteCache {
     /// Async variant of `load()` for app bootstrap: file read + JSON decode
     /// run off the main actor so launch doesn't block first paint on disk I/O.
     func loadAsync() async {
+        defer { isLoaded = true }
         let url = fileURL
         let loaded: [LyricsCacheEntry]? = await Task.detached(priority: .userInitiated) {
             guard FileManager.default.fileExists(atPath: url.path) else { return nil }

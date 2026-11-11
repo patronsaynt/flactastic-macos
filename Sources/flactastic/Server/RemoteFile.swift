@@ -119,7 +119,10 @@ final class RemoteFile: @unchecked Sendable {
     init(client: ServerClient, trackID: UUID, size: Int64, file: URL, readAheadLimit: Int64? = nil,
          onSpeed: @escaping @Sendable (Double) -> Void = { _ in }) throws {
         self.client = client
-        self.path = "v2/tracks/\(trackID.uuidString)/file"
+        // Playback goes through /stream (§9.2: the original there is /file
+        // with the same Range semantics), so the server counts it as a
+        // stream; /file is for downloads.
+        self.path = "v2/tracks/\(trackID.uuidString)/stream"
         self.size = size
         self.file = file
         self.readAheadLimit = readAheadLimit
@@ -236,7 +239,7 @@ final class RemoteFile: @unchecked Sendable {
         guard force || Int64(have.count) < min(readAheadLimit ?? Self.cap, size),
               let start = nextGap(after: offset) ?? nextGap(after: 0) else { return }
         let window = Window(start, min(size, start + windowSize))
-        var request = client.request("GET", path, timeout: 30)
+        var request = client.request("GET", path, query: [URLQueryItem(name: "quality", value: "original")], timeout: 30)
         request.setValue("bytes=\(window.start)-\(window.end - 1)", forHTTPHeaderField: "Range")
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-Range") }
         window.task = StreamTask(client, request, onResponse: { [weak self] http in

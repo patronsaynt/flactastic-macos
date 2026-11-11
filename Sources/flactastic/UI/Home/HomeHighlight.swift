@@ -42,6 +42,7 @@ final class HomeHighlight {
     /// Another library opened: forget this one's pick so Home picks again.
     func reset() {
         resets += 1
+        triedFiles = false
         pick = nil
         palette = nil
         isPinned = false
@@ -51,9 +52,13 @@ final class HomeHighlight {
     /// How many tracks we're willing to read embedded lyrics from when the
     /// in-memory cache yields nothing. Bounds the worst-case tag I/O.
     private static let fileReadCap = 12
+    /// This library's files have been read for lyrics once; later attempts
+    /// (as fetched lyrics arrive) only look in the cache.
+    private var triedFiles = false
 
-    /// Pick once per session. Runs off the main thread for the file-reading
-    /// fallback so it never blocks launch. No-ops after the first attempt.
+    /// Pick once per library. Call again when more lyrics are cached: an
+    /// attempt that found nothing tries the cache again (files only once).
+    /// The file-reading fallback runs off the main thread, so it never blocks launch.
     func pickIfNeeded(
         library: LibraryStore,
         lyricsCache: LyricsRemoteCache,
@@ -65,6 +70,8 @@ final class HomeHighlight {
         hasPicked = true
         // A reset while this pick waits means another library: drop it.
         let round = resets
+        // Nothing found: let a later call (more lyrics cached) try again.
+        defer { if pick == nil && round == resets { hasPicked = false } }
 
         // A pinned pick wins over a fresh roll, even if its track has since
         // left the library.
@@ -109,7 +116,9 @@ final class HomeHighlight {
             }
         }
 
-        // ── Phase B: bounded fallback — embedded file lyrics ──
+        // ── Phase B: bounded fallback — embedded file lyrics, once per library ──
+        guard !triedFiles else { return }
+        triedFiles = true
         var reads = 0
         for track in tracks.shuffled() {
             guard reads < Self.fileReadCap else { break }
