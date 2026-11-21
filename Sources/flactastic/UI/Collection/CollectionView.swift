@@ -369,6 +369,9 @@ struct CollectionView: View {
                 AlbumCardView(album: album)
                     .contentShape(Rectangle())
                     .onTapGesture { router.collectionPath.append(album.id) }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { router.collectionPath.append(album.id) }
                     .flContextMenu { albumContextMenu(album) }
                     .riseFadeIn(index: index, animated: album.id, animatedIDs: animatedAlbumIDs, enabled: canAnimateEntrances)
             }

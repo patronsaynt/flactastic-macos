@@ -19,7 +19,7 @@ struct ServerStatusLine: View {
                 }
                 .padding(.horizontal, 12)
                 .frame(height: 26)
-                .background(Capsule().fill(Theme.textPrimary.opacity(isProblem ? 0.12 : 0.06)))
+                .background(StatusPillGlass(isProblem: isProblem))
             }
             .buttonStyle(.plain)
             .help(server.status == .unreachable ? "Try now" : "Open Settings")
@@ -52,6 +52,33 @@ struct ServerStatusLine: View {
         if sending > 0 { return "Uploading \(sending) file\(sending == 1 ? "" : "s")" }
         if let p = server.offline.progress { return "Downloading \(p.done + 1) of \(p.total) for offline" }
         return nil
+    }
+}
+
+/// The status line's pill: the player's frosted glass in a capsule, so it
+/// reads over a busy banner or artwork. A problem adds a little more ink.
+/// With glass off in UI for nerds, a plain raised surface instead.
+private struct StatusPillGlass: View {
+    let isProblem: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let light = colorScheme == .light
+        let glass = UIStyle.shared.glass
+        Capsule()
+            .fill(glass ? AnyShapeStyle(.ultraThinMaterial) : AnyShapeStyle(Theme.surfaceElevated))
+            .overlay(Capsule().fill(light ? Color(white: 1).opacity(0.5) : Color(white: 0.08).opacity(0.46)).opacity(glass ? 1 : 0))
+            .overlay(Capsule().fill(Theme.textPrimary.opacity(isProblem ? 0.08 : 0)))
+            .overlay(
+                Capsule().strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(light ? 0.8 : 0.16), Theme.textPrimary.opacity(light ? 0.08 : 0.1)],
+                        startPoint: .top, endPoint: .bottom
+                    ),
+                    lineWidth: 1
+                )
+            )
+            .shadow(color: .black.opacity(light ? 0.12 : 0.4), radius: 10, y: 4)
     }
 }
 

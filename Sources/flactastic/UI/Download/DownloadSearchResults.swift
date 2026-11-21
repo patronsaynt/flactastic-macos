@@ -237,6 +237,8 @@ private struct TopResultCard: View {
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(result.title), \(result.kind.label) by \(result.artist)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onOpen() }
     }
 
     private var meta: String {
@@ -335,6 +337,8 @@ private struct SearchTrackRow: View {
         .onHover { isHovering = $0 }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(result.title) by \(result.artist)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onOpen() }
     }
 }
 
@@ -439,6 +443,8 @@ private struct SearchAlbumCard: View {
         .help(showsArtist ? "\(result.title) · \(result.artist)" : result.title)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(result.title), \(result.kind.label) by \(result.artist)")
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onOpen() }
     }
 
     private var subtitle: String {

@@ -9,6 +9,9 @@ struct TrackRow: View {
     static let formatColumnWidth: CGFloat = 56
     static let qualityColumnWidth: CGFloat = 124
     static let lengthColumnWidth: CGFloat = 60
+    /// Below this list width the FORMAT column goes, so titles keep about
+    /// 300pt (see `trackListColumns()`).
+    static let formatColumnMinListWidth: CGFloat = 760
 
     let track: Track
     let isPlaying: Bool
@@ -21,6 +24,9 @@ struct TrackRow: View {
     /// the artist. Used by the flat All Tracks list, where the album isn't
     /// implied by context.
     var showAlbumInSubtitle: Bool = false
+    /// A server library marks what's on this Mac; nil in other windows.
+    @Environment(ServerSession.self) private var server: ServerSession?
+    @Environment(\.trackListShowsFormat) private var showsFormat
 
     var body: some View {
         HStack(spacing: 14) {
@@ -34,10 +40,13 @@ struct TrackRow: View {
             }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(track.title)
-                    .font(.system(size: 13.5))
-                    .foregroundStyle(isPlaying ? Theme.accent : Theme.textPrimary)
-                    .lineLimit(1)
+                HStack(spacing: 5) {
+                    Text(track.title)
+                        .font(.system(size: 13.5))
+                        .foregroundStyle(isPlaying ? Theme.accent : Theme.textPrimary)
+                        .lineLimit(1)
+                    if let kind = server?.onThisMac(track) { OnThisMacMark(kind: kind) }
+                }
 
                 if let subtitle {
                     Text(subtitle)
@@ -49,19 +58,22 @@ struct TrackRow: View {
 
             Spacer(minLength: Theme.Spacing.sm)
 
-            // File format badge
-            Text(track.fileFormat.displayName)
-                .font(.system(size: 10, weight: .medium))
-                .tracking(0.3)
-                .foregroundStyle(Theme.textTertiary)
-                .lineLimit(1)
-                .frame(width: Self.formatColumnWidth - 14, alignment: .center)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(
-                    RoundedRectangle(cornerRadius: Theme.Radius.sm)
-                        .fill(Theme.surfaceElevated)
-                )
+            if showsFormat {
+                // A wash of ink rather than a surface color, so the badge
+                // still shows on a playing or selected row's own fill.
+                Text(track.fileFormat.displayName)
+                    .font(.system(size: 10, weight: .medium))
+                    .tracking(0.3)
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .frame(width: Self.formatColumnWidth - 14, alignment: .center)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                            .fill(Theme.textPrimary.opacity(0.07))
+                    )
+            }
 
             // Quality badge
             qualityBadge
@@ -132,5 +144,26 @@ struct TrackRow: View {
 
     private var qualityBadge: some View {
         TrackQualityBadge(track: track)
+    }
+}
+
+/// Beside a server track's title: its bytes are on this Mac, so it plays
+/// without the server. Nothing for a library that is this Mac's own.
+struct OnThisMacMark: View {
+    let kind: ServerSession.OnThisMac
+
+    var body: some View {
+        Image(systemName: "arrow.down.circle.fill")
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(Theme.textTertiary)
+            .help(label)
+            .accessibilityLabel(label)
+    }
+
+    private var label: String {
+        switch kind {
+        case .copy: "Playable offline"
+        case .notOnServer: "Only on this Mac"
+        }
     }
 }

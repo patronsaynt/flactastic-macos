@@ -182,6 +182,51 @@
         ],
         "createdAt": "2026-11-04T16:25:41.969Z",
         "reason": "assistant: the glow is the Laser variant's literal reading beam (a light source), not a decorative halo"
+      },
+      {
+        "rule": "low-contrast",
+        "value": "*",
+        "files": [
+          "docs/design/FLACtastic-Visual-Reference.html"
+        ],
+        "createdAt": "2026-11-12T01:08:36.208Z",
+        "reason": "user confirmed 2026-11-02: keep Theme.swift tokens exactly (tertiary text); this sheet documents those tokens"
+      },
+      {
+        "rule": "tiny-text",
+        "value": "*",
+        "files": [
+          "docs/design/FLACtastic-Visual-Reference.html"
+        ],
+        "createdAt": "2026-11-12T01:08:36.234Z",
+        "reason": "Claude: reference sheet reproduces the app's shipped sizes (9.5–11pt badges and group labels) to document them"
+      },
+      {
+        "rule": "clipped-overflow-container",
+        "value": "*",
+        "files": [
+          "docs/design/FLACtastic-Visual-Reference.html"
+        ],
+        "createdAt": "2026-11-12T01:08:36.259Z",
+        "reason": "Claude: wireframe boxes and the colour split panels clip their own diagram blocks by design"
+      },
+      {
+        "rule": "undersized-ui-text",
+        "value": "*",
+        "files": [
+          "docs/design/FLACtastic-Visual-Reference.html"
+        ],
+        "createdAt": "2026-11-20T20:50:19.597Z",
+        "reason": "Reference sheet reproduces the app's shipped badge and label sizes as specimens"
+      },
+      {
+        "rule": "all-caps-body",
+        "value": "*",
+        "files": [
+          "docs/design/FLACtastic-Visual-Reference.html"
+        ],
+        "createdAt": "2026-11-20T20:50:19.619Z",
+        "reason": "Uppercase is only on short specimen labels and wireframe tags, copied from the app"
       }
     ]
   }

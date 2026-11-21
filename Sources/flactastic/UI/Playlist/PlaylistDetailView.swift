@@ -21,6 +21,8 @@ struct PlaylistDetailView: View {
     @State private var isEditingName = false
     @State private var editedName = ""
     @State private var selection: Set<UUID> = []
+    /// The row the arrow keys are on; Return plays it.
+    @State private var keyboardCursor: UUID?
     @State private var showEditor = false
     @State private var draggingEntryID: UUID? = nil
     @State private var dropTargetEntryID: UUID? = nil
@@ -60,6 +62,7 @@ struct PlaylistDetailView: View {
                         }
                     }
                     .padding(.horizontal, collectionGutter)
+                    .trackListColumns()
                     .padding(.top, 8)
                     .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.8))
                 }
@@ -278,7 +281,7 @@ struct PlaylistDetailView: View {
         // SwiftUI's List `.onMove` is unreliable on macOS with `.listStyle(.plain)`,
         // so reordering is implemented with `.draggable` / `.dropDestination`
         // on a LazyVStack instead.
-        LazyVStack(alignment: .leading, spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 2) {
             ForEach(Array(playlist.entries.enumerated()), id: \.element.id) { index, entry in
                 if let track = resolveEntry(entry, lookup: lookup) {
                     draggablePlaylistRow(
@@ -289,6 +292,13 @@ struct PlaylistDetailView: View {
                     )
                 }
             }
+        }
+        .rowKeyboardNav(
+            ids: playlist.entries.filter { resolveEntry($0, lookup: lookup) != nil }.map(\.id),
+            cursor: $keyboardCursor,
+            clearsOnBlur: true
+        ) { id in
+            if let entry = playlist.entries.first(where: { $0.id == id }) { playFromEntry(entry, in: playlist) }
         }
     }
 
@@ -302,7 +312,7 @@ struct PlaylistDetailView: View {
         // `nil` lets `flRowStyle` supply its own hover fill.
         let rowBackground: Color? = player.currentTrack?.id == track.id
             ? Theme.surfaceElevated
-            : (selection.contains(entryID) ? Theme.surfaceElevated.opacity(0.6) : nil)
+            : (selection.contains(entryID) || keyboardCursor == entryID ? Theme.surfaceElevated.opacity(0.6) : nil)
 
         TrackRow(track: track,
                  isPlaying: player.currentTrack?.id == track.id,
@@ -322,6 +332,8 @@ struct PlaylistDetailView: View {
             .onTapGesture(count: 2) {
                 playFromEntry(entry, in: playlist)
             }
+            .simultaneousGesture(TapGesture().onEnded { keyboardCursor = entryID })
+            .playableRowAccessibility { playFromEntry(entry, in: playlist) }
             .flContextMenu { contextMenuItems(for: entry, track: track) }
             .draggable(entryID.uuidString) {
                 TrackRow(track: track,

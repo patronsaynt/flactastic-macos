@@ -89,6 +89,7 @@ struct AllTracksView: View {
                 trackList
             }
         }
+        .trackListColumns()
         .task { canAnimateEntrances = true }
         .onAppear { recomputeVisible() }
         // The revision, not `tracks`: comparing the arrays byte-compares
@@ -159,7 +160,7 @@ struct AllTracksView: View {
 
     private var trackRows: some View {
         Group {
-            LazyVStack(spacing: 0) {
+            LazyVStack(spacing: 2) {
                 ForEach(Array(cachedVisible.enumerated()), id: \.element.id) { index, track in
                     TrackRow(
                         track: track,
@@ -173,6 +174,7 @@ struct AllTracksView: View {
                     .simultaneousGesture(
                         TapGesture(count: 1).onEnded { handleSelection(for: track) }
                     )
+                    .playableRowAccessibility { play(track: track) }
                     .flContextMenu {
                         let tracksForMenu = contextTracks(primary: track)
                         playbackContextMenuItems(for: tracksForMenu, player: player)
@@ -208,6 +210,12 @@ struct AllTracksView: View {
                     }
                     .riseFadeIn(index: index, animated: track.id, animatedIDs: animatedTrackIDs, enabled: canAnimateEntrances)
                 }
+            }
+            .rowKeyboardNav(ids: cachedVisible.map(\.id), cursor: keyboardCursor) { id in
+                guard let track = cachedVisible.first(where: { $0.id == id }) else { return }
+                play(track: track)
+                // Keep the keyboard's place, which playing would clear.
+                keyboardCursor.wrappedValue = id
             }
             .padding(.bottom, 100)
             .background(
@@ -247,6 +255,18 @@ struct AllTracksView: View {
             selection = [track.id]
             anchorID = track.id
         }
+    }
+
+    /// The row the arrow keys move from: the selection's anchor. Moving it
+    /// selects that row alone, as in a Mac table.
+    private var keyboardCursor: Binding<UUID?> {
+        Binding(
+            get: { anchorID.flatMap { selection.contains($0) ? $0 : nil } },
+            set: { id in
+                selection = id.map { [$0] } ?? []
+                anchorID = id
+            }
+        )
     }
 
     private func clearSelection() {

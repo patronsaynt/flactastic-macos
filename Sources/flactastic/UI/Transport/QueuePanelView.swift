@@ -132,6 +132,8 @@ struct QueueUpNextList: View {
     @Environment(PlayerState.self) private var player
     @State private var draggingTrackID: UUID? = nil
     @State private var dropTargetTrackID: UUID? = nil
+    /// The row the arrow keys are on; Return plays it.
+    @State private var keyboardCursor: UUID?
 
     var body: some View {
         let items = player.upcoming
@@ -168,6 +170,9 @@ struct QueueUpNextList: View {
                 draggableRow(item: item, isAdded: offset >= queuedRun && player.isUserQueued(item.track))
             }
         }
+        .rowKeyboardNav(ids: items.map(\.track.id), cursor: $keyboardCursor, clearsOnBlur: true) { id in
+            if let item = items.first(where: { $0.track.id == id }) { player.jumpTo(index: item.engineIndex) }
+        }
     }
 
     /// Where the following run of tracks came from.
@@ -192,7 +197,8 @@ struct QueueUpNextList: View {
         let trackID = item.track.id
         let isDropTarget = dropTargetTrackID == trackID && draggingTrackID != trackID
 
-        QueueTrackRow(track: item.track, isAdded: isAdded, compact: compact) {
+        QueueTrackRow(track: item.track, isAdded: isAdded, compact: compact,
+                      isCursor: keyboardCursor == trackID) {
             player.removeFromQueue(at: item.engineIndex)
         }
         .opacity(draggingTrackID == trackID ? 0.35 : 1.0)
@@ -206,6 +212,9 @@ struct QueueUpNextList: View {
         .onTapGesture(count: 2) {
             player.jumpTo(index: item.engineIndex)
         }
+        .simultaneousGesture(TapGesture().onEnded { keyboardCursor = trackID })
+        .playableRowAccessibility { player.jumpTo(index: item.engineIndex) }
+        .accessibilityAction(named: "Remove from Queue") { player.removeFromQueue(at: item.engineIndex) }
         .flContextMenu(priority: 1) { menu(item.track, item.engineIndex) }
         .draggable(trackID.uuidString) {
             QueueTrackRow(track: item.track, isAdded: isAdded, compact: compact, onRemove: nil)
@@ -391,6 +400,8 @@ private struct QueueTrackRow: View {
     var isAdded = false
     /// Smaller art and type, for the menu bar player's drawer.
     var compact = false
+    /// The keyboard's row in the list.
+    var isCursor = false
     let onRemove: (() -> Void)?
 
     @State private var isHovered = false
@@ -456,7 +467,7 @@ private struct QueueTrackRow: View {
         .frame(height: compact ? 46 : 58)
         .background(
             RoundedRectangle(cornerRadius: 12)
-                .fill(Theme.textPrimary.opacity(isHovered ? 0.06 : 0))
+                .fill(Theme.textPrimary.opacity(isHovered || isCursor ? 0.06 : 0))
         )
         .onHover { isHovered = $0 }
     }

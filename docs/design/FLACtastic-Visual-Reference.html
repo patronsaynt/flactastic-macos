@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FLACtastic Visual Reference</title>
+<style>
+  :root {
+    --bg:#000; --surface:#141414; --elev:#1F1F1F; --hover:#292929;
+    --ink:#F2F2F2; --ink2:#A6A6A6; --ink3:#737373; --div:#2E2E2E; --accent:#FFF;
+    --hires:#00E6CC; --cd:#4DD966; --mid:#F2BF33; --low:#F24D4D;
+    --ink-rgb:242,242,242;
+    --ease: cubic-bezier(.16,1,.3,1);
+  }
+  .light {
+    --bg:#F5F5F5; --surface:#E6E6E6; --elev:#D6D6D6; --hover:#C7C7C7;
+    --ink:#141414; --ink2:#595959; --ink3:#666666; --div:#CCCCCC; --accent:#000;
+    --hires:#008073; --cd:#268040; --mid:#875E05; --low:#B82E2E;
+    --ink-rgb:20,20,20;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  body { background:#000; color:#F2F2F2; font-family:-apple-system,"SF Pro Text","SF Pro Display",system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  .page { background:var(--bg); color:var(--ink); padding:56px 64px 64px; break-after:page; min-height:900px; }
+  .page:last-child { break-after:auto; }
+  @page { size: 1280px 900px; margin:0; }
+  @media print { .page { min-height:900px; height:900px; overflow:hidden; } }
+
+  h1 { font-size:80px; font-weight:800; letter-spacing:-3px; line-height:1; }
+  h2 { font-size:40px; font-weight:800; letter-spacing:-1.5px; line-height:1; margin-bottom:8px; }
+  .lede { font-size:15px; color:var(--ink2); max-width:640px; line-height:1.4; margin-bottom:32px; }
+  .label { font-size:11px; font-weight:700; letter-spacing:1.4px; text-transform:uppercase; color:var(--ink3); margin-bottom:10px; }
+  .muted { color:var(--ink3); font-size:12px; }
+  .mono { font-variant-numeric:tabular-nums; }
+  .grid { display:grid; gap:28px; }
+  .two { grid-template-columns:1fr 1fr; }
+  .three { grid-template-columns:repeat(3,1fr); }
+  .rule { height:1px; background:rgba(var(--ink-rgb),.1); margin:28px 0; }
+  .split { display:grid; grid-template-columns:1fr 1fr; gap:0; border-radius:18px; overflow:hidden; }
+  .split > div { padding:24px; background:var(--bg); color:var(--ink); }
+
+  /* cover */
+  .cover { display:flex; flex-direction:column; justify-content:space-between; }
+  .wordmark { font-size:30px; font-weight:800; letter-spacing:-1px; }
+  .cover .big { font-size:120px; font-weight:800; letter-spacing:-5px; line-height:.92; }
+  .principles { display:grid; grid-template-columns:repeat(4,1fr); gap:28px; }
+  .principles b { display:block; font-size:15px; margin-bottom:6px; }
+  .principles span { font-size:12.5px; color:var(--ink3); line-height:1.4; display:block; }
+  .num { font-size:30px; font-weight:800; color:var(--ink3); letter-spacing:-1px; margin-bottom:10px; }
+
+  /* swatches */
+  .ladder { display:grid; grid-template-columns:repeat(9,1fr); gap:8px; }
+  .sw { border-radius:12px; height:84px; border:1px solid rgba(var(--ink-rgb),.1); }
+  .swname { font-size:12px; font-weight:600; margin-top:8px; }
+  .swhex { font-size:11px; color:var(--ink3); }
+  .opacity { display:grid; grid-template-columns:repeat(9,1fr); gap:8px; }
+  .op { height:56px; border-radius:10px; display:flex; align-items:flex-end; padding:8px; font-size:11px; font-weight:700; }
+  .tiers { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+  .tier { border-radius:14px; padding:16px; background:rgba(var(--ink-rgb),.05); }
+  .tier .dot { width:14px; height:14px; border-radius:50%; margin-bottom:12px; }
+  .tier b { font-size:15px; display:block; }
+  .tier span { font-size:12px; color:var(--ink3); }
+  .palette { display:flex; gap:0; height:56px; border-radius:12px; overflow:hidden; }
+  .palette div { flex:1; }
+
+  /* type */
+  .spec { display:grid; grid-template-columns:200px 1fr; align-items:baseline; gap:24px; padding:12px 0; border-bottom:1px solid rgba(var(--ink-rgb),.1); }
+  .spec .meta { font-size:12px; color:var(--ink3); line-height:1.4; }
+  .spec .meta b { color:var(--ink); font-size:13px; display:block; }
+
+  /* shapes */
+  .radii { display:flex; gap:18px; align-items:flex-end; flex-wrap:wrap; }
+  .rad { width:86px; height:86px; background:rgba(var(--ink-rgb),.08); border:1px solid rgba(var(--ink-rgb),.14); display:flex; align-items:flex-end; justify-content:center; padding-bottom:8px; font-size:11px; font-weight:700; color:var(--ink2); }
+
+  /* components */
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; }
+  .pill { height:40px; padding:0 22px; border-radius:999px; font-size:14px; font-weight:600; display:inline-flex; align-items:center; border:0; }
+  .pill.primary { background:var(--ink); color:var(--bg); }
+  .pill.secondary { background:rgba(var(--ink-rgb),.08); color:var(--ink); }
+  .pill.destructive { background:#FF453A; color:#fff; }
+  .pill.disabled { background:var(--ink); color:var(--bg); opacity:.4; }
+  .quiet { height:26px; padding:0 10px; border-radius:999px; font-size:12px; color:var(--ink3); display:inline-flex; align-items:center; }
+  .quiet.hover { color:var(--ink); background:rgba(var(--ink-rgb),.06); }
+  .tpill { height:30px; padding:0 13px; border-radius:999px; font-size:12.5px; font-weight:600; display:inline-flex; align-items:center; }
+  .tpill.off { color:var(--ink2); box-shadow:inset 0 0 0 1px rgba(var(--ink-rgb),.14); }
+  .tpill.on { background:var(--ink); color:var(--bg); }
+  .switch { width:40px; height:24px; border-radius:999px; position:relative; }
+  .switch.on { background:var(--ink); }
+  .switch.off { background:rgba(var(--ink-rgb),.16); }
+  .switch::after { content:""; position:absolute; top:3px; width:18px; height:18px; border-radius:50%; }
+  .switch.on::after { right:3px; background:var(--bg); }
+  .switch.off::after { left:3px; background:rgba(var(--ink-rgb),.55); }
+  .close { width:30px; height:30px; border-radius:50%; background:rgba(var(--ink-rgb),.07); display:inline-flex; align-items:center; justify-content:center; font-size:12px; font-weight:800; color:var(--ink2); }
+  .seg { display:inline-flex; padding:3px; border-radius:10px; background:var(--surface); box-shadow:inset 0 0 0 1px var(--div); }
+  .seg span { padding:6px 14px; font-size:12.5px; font-weight:600; color:var(--ink2); border-radius:7px; }
+  .seg span.on { background:var(--elev); color:var(--ink); }
+  .field { font-size:15px; font-weight:600; padding:6px 10px; border-radius:10px; margin-left:-10px; display:inline-block; min-width:220px; }
+  .field.focus { background:rgba(var(--ink-rgb),.07); box-shadow:inset 0 0 0 1px rgba(var(--ink-rgb),.12); }
+  .option { display:flex; gap:14px; align-items:center; padding:14px 16px 14px 14px; border-radius:16px; background:rgba(var(--ink-rgb),.05); box-shadow:inset 0 0 0 1px rgba(var(--ink-rgb),.1); }
+  .tile44 { width:44px; height:44px; border-radius:12px; background:rgba(var(--ink-rgb),.08); display:flex; align-items:center; justify-content:center; font-weight:800; }
+  .tile44.solid { background:var(--ink); color:var(--bg); }
+  .option b { font-size:15px; display:block; }
+  .option span { font-size:12.5px; color:var(--ink3); }
+  .option .act { margin-left:auto; font-size:12.5px; font-weight:600; color:var(--ink2); }
+  .group .item { display:flex; justify-content:space-between; align-items:center; padding:12px 0; font-size:13px; }
+  .group .hair { height:.5px; background:var(--div); }
+  .menu { width:220px; background:var(--elev); border-radius:8px; padding:4px; box-shadow:0 6px 14px rgba(0,0,0,.35); border:1px solid rgba(var(--ink-rgb),.08); font-size:13px; }
+  .menu div { padding:6px 10px; border-radius:5px; }
+  .menu .hl { background:rgba(var(--ink-rgb),.1); }
+  .menu .sep { height:1px; background:var(--div); margin:4px 8px; padding:0; }
+
+  /* player */
+  /* Solid stops only: translucent gradients don't survive PDF export. */
+  .glass { border-radius:16px; background:linear-gradient(90deg, #4a2b1c 0%, #2a1f1a 30%, #1a1a1a 60%); border:1px solid #3a3a3a; box-shadow:0 10px 30px rgba(0,0,0,.5); position:relative; }
+  .light .glass { background:linear-gradient(90deg, #f6d9c6 0%, #f7ece5 30%, #fafafa 60%); border:1px solid #dddddd; box-shadow:0 10px 30px rgba(0,0,0,.18); }
+  .puck { width:320px; height:56px; display:flex; align-items:center; gap:10px; padding:0 10px 0 8px; }
+  .art { border-radius:8px; background:linear-gradient(135deg,#ff7a2f,#7a2fff); flex:none; }
+  .puck .t b { font-size:13px; display:block; }
+  .puck .t span { font-size:11.5px; color:var(--ink3); }
+  .tx { margin-left:auto; display:flex; gap:10px; font-size:13px; }
+  .lip { position:absolute; left:16px; right:16px; bottom:0; height:2px; background:rgba(var(--ink-rgb),.12); border-radius:2px; }
+  .lip::after { content:""; position:absolute; left:0; top:0; bottom:0; width:38%; background:var(--ink); border-radius:2px; }
+  .bar { width:700px; border-radius:18px; padding:12px 20px 10px; }
+  .bar .top { display:flex; align-items:center; height:50px; gap:8px; position:relative; }
+  .bar .center { position:absolute; left:58%; transform:translateX(-50%); display:flex; gap:12px; align-items:center; font-size:15px; }
+  .bar .playb { width:36px; height:36px; border-radius:50%; background:var(--ink); color:var(--bg); display:flex; align-items:center; justify-content:center; font-size:13px; }
+  .badge { font-size:9.5px; font-weight:800; letter-spacing:.3px; }
+  .seek { height:4px; border-radius:2px; background:rgba(var(--ink-rgb),.14); margin-top:6px; position:relative; }
+  .seek::after { content:""; position:absolute; left:0; top:0; bottom:0; width:42%; background:var(--ink); border-radius:2px; }
+
+  /* home */
+  .shelf { display:flex; gap:18px; }
+  .htile { width:170px; }
+  .hcover { width:170px; height:170px; border-radius:12px; position:relative; box-shadow:0 4px 6px rgba(0,0,0,.28); }
+  .hcover.hover { transform:translateY(-3px); box-shadow:0 10px 14px rgba(0,0,0,.45); }
+  .hbadge { position:absolute; top:8px; left:8px; height:20px; padding:0 7px; border-radius:6px; background:rgba(0,0,0,.62); font-size:10.5px; font-weight:800; display:flex; align-items:center; }
+  .hplay { position:absolute; right:10px; bottom:10px; width:40px; height:40px; border-radius:50%; background:var(--accent); color:var(--bg); display:flex; align-items:center; justify-content:center; font-size:14px; box-shadow:0 6px 9px rgba(0,0,0,.4); }
+  .htile b { display:block; font-size:13.5px; margin-top:10px; }
+  .htile span { font-size:12px; color:var(--ink3); }
+  .sechead { display:flex; align-items:baseline; gap:12px; margin-bottom:16px; }
+  .sechead b { font-size:22px; font-weight:800; letter-spacing:-.5px; }
+  .sechead span { font-size:13px; color:var(--ink3); }
+  .sechead i { margin-left:auto; font-style:normal; font-size:12px; color:var(--ink3); }
+
+  /* jewel case */
+  /* Flat 2D drawing with solid stops, so it survives PDF export. */
+  .stage { height:320px; position:relative; overflow:hidden; margin:6px 0 14px; }
+  .glow { position:absolute; left:50%; top:50%; width:440px; height:440px; margin:-220px 0 0 -220px; border-radius:50%; background:radial-gradient(circle, #3d2214 0%, #1c120d 45%, #000 70%); }
+  .disc { position:absolute; left:50%; top:50%; width:196px; height:196px; margin:-98px 0 0 -40px; border-radius:50%; background:linear-gradient(135deg,#ffb27a,#ffe2b0 30%,#b796ff 60%,#8fe3ff); box-shadow:0 16px 24px rgba(0,0,0,.5); }
+  .disc::before { content:""; position:absolute; left:50%; top:50%; width:64px; height:64px; margin:-32px 0 0 -32px; border-radius:50%; background:#d9d9d9; }
+  .disc::after { content:""; position:absolute; left:50%; top:50%; width:22px; height:22px; margin:-11px 0 0 -11px; border-radius:50%; background:#000; }
+  .case { position:absolute; left:50%; top:50%; width:210px; height:210px; margin:-105px 0 0 -150px; transform:rotate(-4deg); border-radius:3px; background:linear-gradient(135deg,#ff7a2f,#3a1060); border:1px solid #c9a0ff; box-shadow:0 20px 22px rgba(0,0,0,.5); overflow:hidden; }
+  .case::before { content:""; position:absolute; left:-40px; top:-60px; width:120px; height:340px; transform:rotate(25deg); background:linear-gradient(90deg,#ff9a5f,#ffb88e 50%,#ff9a5f); opacity:.55; }
+  .case::after { content:""; position:absolute; left:0; right:0; top:0; height:1px; background:#fff; }
+  .spine { position:absolute; left:0; top:0; bottom:0; width:16px; background:linear-gradient(#f2efe6,#e2dccb); z-index:1; }
+
+  /* motion */
+  .curves { display:grid; grid-template-columns:repeat(4,1fr); gap:18px; }
+  .curve { background:rgba(var(--ink-rgb),.05); border-radius:14px; padding:16px; }
+  .curve svg { width:100%; height:auto; display:block; margin-bottom:12px; }
+  .curve b { font-size:14px; display:block; }
+  .curve span { font-size:11.5px; color:var(--ink3); line-height:1.4; display:block; margin-top:4px; }
+
+  /* anatomy */
+  .wire { border-radius:14px; background:rgba(var(--ink-rgb),.04); box-shadow:inset 0 0 0 1px rgba(var(--ink-rgb),.1); padding:14px; position:relative; height:340px; overflow:hidden; }
+  .blk { position:absolute; border-radius:8px; background:rgba(var(--ink-rgb),.08); font-size:10.5px; font-weight:700; color:var(--ink2); padding:6px 8px; white-space:nowrap; }
+  .blk.ink { background:var(--ink); color:var(--bg); }
+  .blk.acc { background:#4a2b1c; color:var(--ink); }
+  .dd { display:grid; grid-template-columns:1fr 1fr; gap:28px; }
+  .dd ul { list-style:none; }
+  .dd li { font-size:13px; line-height:1.4; padding:9px 0; border-bottom:1px solid rgba(var(--ink-rgb),.1); }
+  .dd li b { font-weight:700; }
+</style>
+</head>
+<body>
+
+<!-- 1 COVER -->
+<section class="page cover">
+  <div class="row" style="justify-content:space-between">
+    <div class="wordmark">FLACtastic</div>
+    <div class="muted">Visual reference · branch revisions · 2026-11-11</div>
+  </div>
+  <div>
+    <div class="label">Creative north star</div>
+    <div class="big">The CD<br>back insert.</div>
+    <p class="lede" style="margin-top:24px">One ink on one ground. Heavy SF Pro titles, hairline rules, plain lists. The interface is colourless. Colour comes from the music: album art, the artist's palette on Home, and the audio-quality tiers. The one physical object is the jewel case.</p>
+  </div>
+  <div class="principles">
+    <div><div class="num">01</div><b>Owning beats renting</b><span>A local library should feel at least as alive as a streaming home.</span></div>
+    <div><div class="num">02</div><b>Fidelity is shown</b><span>Quality comes from the real files, never as decoration.</span></div>
+    <div><div class="num">03</div><b>The library is yours</b><span>Fill-if-empty, append-only, never write a playing file.</span></div>
+    <div><div class="num">04</div><b>Restraint is the brand</b><span>Monochrome first. A hue means music or quality.</span></div>
+  </div>
+</section>
+
+<!-- 2 COLOUR -->
+<section class="page">
+  <h2>Colour</h2>
+  <p class="lede">Nine adaptive greys. The accent is the ink itself: white in dark mode, black in light mode. Emphasis comes from inverting the fill, never from a hue.</p>
+  <div class="split">
+    <div>
+      <div class="label">Dark</div>
+      <div class="ladder" id="ladder-dark"></div>
+    </div>
+    <div class="light">
+      <div class="label">Light</div>
+      <div class="ladder" id="ladder-light"></div>
+    </div>
+  </div>
+  <div class="rule"></div>
+  <div class="label">The opacity ladder: textPrimary at fixed strengths</div>
+  <div class="split">
+    <div><div class="opacity" id="op-dark"></div></div>
+    <div class="light"><div class="opacity" id="op-light"></div></div>
+  </div>
+  <div class="rule"></div>
+  <div class="grid two">
+    <div>
+      <div class="label">Quality tiers: only where quality is shown</div>
+      <div class="split" style="grid-template-columns:1fr">
+        <div><div class="tiers">
+          <div class="tier"><div class="dot" style="background:var(--hires)"></div><b style="color:var(--hires)">Hi-Res</b><span>&gt;16-bit or &gt;44.1k</span></div>
+          <div class="tier"><div class="dot" style="background:var(--cd)"></div><b style="color:var(--cd)">CD</b><span>16 / 44.1</span></div>
+          <div class="tier"><div class="dot" style="background:var(--mid)"></div><b style="color:var(--mid)">Mid</b><span>lossy ≥44.1k</span></div>
+          <div class="tier"><div class="dot" style="background:var(--low)"></div><b style="color:var(--low)">Low</b><span>lossy &lt;44.1k</span></div>
+        </div></div>
+        <div class="light"><div class="tiers">
+          <div class="tier"><div class="dot" style="background:var(--hires)"></div><b style="color:var(--hires)">Hi-Res</b><span>#008073</span></div>
+          <div class="tier"><div class="dot" style="background:var(--cd)"></div><b style="color:var(--cd)">CD</b><span>#268040</span></div>
+          <div class="tier"><div class="dot" style="background:var(--mid)"></div><b style="color:var(--mid)">Mid</b><span>#875E05</span></div>
+          <div class="tier"><div class="dot" style="background:var(--low)"></div><b style="color:var(--low)">Low</b><span>#B82E2E</span></div>
+        </div></div>
+      </div>
+    </div>
+    <div>
+      <div class="label">Home palette: sampled from the artist (example)</div>
+      <div class="palette"><div style="background:#ff7a2f"></div><div style="background:#c4531a"></div><div style="background:#ffd890"></div><div style="background:#7a2fff"></div></div>
+      <p class="muted" style="margin-top:10px;line-height:1.5">Up to four hues. Used for highlighted figures, number-one ranks, the genre chart, the Fidelidex and the glow behind the case. <b>Home only.</b> A grey or missing image keeps Home monochrome. UI for nerds sets the Accent to Artist (default), Mono or Custom.</p>
+      <div class="rule" style="margin:18px 0"></div>
+      <div class="label">The rule</div>
+      <p style="font-size:15px;line-height:1.45">A hue on screen is a <b style="color:var(--hires)">quality tier</b>, the <b style="color:#ff7a2f">Home palette</b>, or <b>album art</b>. Nothing else. System red only on permanent-delete pills.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 3 TYPE -->
+<section class="page">
+  <h2>Typography</h2>
+  <p class="lede">One family pushed to its extremes. Titles are heavy (800) with tight negative tracking, set like a record sleeve. Everything else is small and quiet. Numbers use monospaced digits.</p>
+  <div class="spec"><div class="meta"><b>Display</b>80 heavy · −3 · detail titles</div><div style="font-size:80px;font-weight:800;letter-spacing:-3px;line-height:1">Burning Out</div></div>
+  <div class="spec"><div class="meta"><b>Lyric</b>50 heavy · −1.2 · Home</div><div style="font-size:50px;font-weight:800;letter-spacing:-1.2px;line-height:1.05"><i>“</i>I keep the lights on low<i>”</i></div></div>
+  <div class="spec"><div class="meta"><b>Headline</b>40 heavy · −1.5 · tab pages (56–72 on Organizer, Artist, Downloads)</div><div style="font-size:40px;font-weight:800;letter-spacing:-1.5px">Collection</div></div>
+  <div class="spec"><div class="meta"><b>Numeral</b>30–54 heavy · tabular · counts up</div><div class="mono" style="font-size:44px;font-weight:800;letter-spacing:-1.5px">87 <span style="font-size:13px;font-weight:500;color:var(--ink3);letter-spacing:0">fidelity score</span></div></div>
+  <div class="spec"><div class="meta"><b>Section title</b>22 heavy · −0.5 · Home shelves</div><div><span style="font-size:22px;font-weight:800;letter-spacing:-.5px">Recommended for today</span> <span style="font-size:13px;color:var(--ink3)">&nbsp;Picked from your library</span></div></div>
+  <div class="spec"><div class="meta"><b>Title / Row title</b>18–19 bold · 15 bold · 13.5 semibold</div><div><span style="font-size:18px;font-weight:700">Choose your look</span> · <span style="font-size:15px;font-weight:700">Link a folder</span> · <span style="font-size:13.5px;font-weight:600">In Rainbows</span></div></div>
+  <div class="spec"><div class="meta"><b>Body / Label</b>13 regular · 12–12.5 tertiary</div><div><span style="font-size:13px">Files only move when you say so.</span> &nbsp; <span style="font-size:12px;color:var(--ink3)">1,204 tracks · 14 hr</span></div></div>
+  <div class="spec"><div class="meta"><b>Group label</b>11 bold · caps · kerning 1.4 · tertiary</div><div class="label" style="margin:0">Playback</div></div>
+  <div class="spec"><div class="meta"><b>Badge</b>9.5–10.5 heavy caps · tier colour</div><div><span class="badge" style="color:var(--hires);font-size:10.5px">HI-RES</span> &nbsp; <span class="badge" style="color:var(--hires)">24/96</span> &nbsp; <span class="badge" style="color:var(--cd)">CD</span></div></div>
+  <p class="muted" style="margin-top:18px">Rules: one heavy title per page, left-aligned. Never an eyebrow above a page title. Spaced capitals name groups and fields only.</p>
+</section>
+
+<!-- 4 SHAPE & DEPTH -->
+<section class="page">
+  <h2>Shape &amp; depth</h2>
+  <p class="lede">Controls are capsules. Containers are continuous-corner rectangles whose radius grows with size. Surfaces are flat; only physical things (case, disc, cover, spine) cast shadows.</p>
+  <div class="label">Radius steps (continuous corners)</div>
+  <div class="radii">
+    <div class="rad" style="border-radius:4px">4</div>
+    <div class="rad" style="border-radius:7px">7 thumb</div>
+    <div class="rad" style="border-radius:8px">8 menu</div>
+    <div class="rad" style="border-radius:10px">10 field</div>
+    <div class="rad" style="border-radius:12px">12 art</div>
+    <div class="rad" style="border-radius:14px">14 tile</div>
+    <div class="rad" style="border-radius:16px">16 row·puck</div>
+    <div class="rad" style="border-radius:18px">18 card·bar</div>
+    <div class="rad" style="border-radius:999px;width:140px">capsule</div>
+  </div>
+  <div class="rule"></div>
+  <div class="grid two">
+    <div>
+      <div class="label">Shadow vocabulary (objects only)</div>
+      <div class="row" style="gap:30px;align-items:flex-end;padding:20px 0 10px">
+        <div><div class="art" style="width:80px;height:80px;border-radius:12px;box-shadow:0 2px 5px rgba(0,0,0,.3)"></div><p class="muted" style="margin-top:12px">Artwork<br>~6% of size</p></div>
+        <div><div class="art" style="width:80px;height:80px;border-radius:12px;transform:translateY(-3px);box-shadow:0 10px 14px rgba(0,0,0,.45)"></div><p class="muted" style="margin-top:12px">Tile hover<br>45 / r14 / y10</p></div>
+        <div><div style="width:80px;height:80px;background:linear-gradient(135deg,#ff7a2f,#3a1060);box-shadow:0 20px 22px rgba(0,0,0,.5)"></div><p class="muted" style="margin-top:12px">Case floor<br>50 / r22 / y20</p></div>
+        <div><div style="width:26px;height:80px;border-radius:2px;background:#eee;transform:translateY(-8px);box-shadow:0 12px 14px rgba(0,0,0,.6)"></div><p class="muted" style="margin-top:12px">Spine hover<br>60 / r14</p></div>
+      </div>
+      <p class="muted" style="line-height:1.5">Glow only from real light sources: the case's palette glow, the skip laser, the loader bloom. Floating windows (context menu) are the one control-level shadow.</p>
+    </div>
+    <div>
+      <div class="label">The jewel case: the signature object</div>
+      <div class="stage">
+        <div class="glow"></div>
+        <div class="disc"></div>
+        <div class="case"><div class="spine"></div></div>
+      </div>
+      <p class="muted" style="line-height:1.5">RackBox and RackDisc: a clear case with sheen and a 1px top highlight, a designed spine, and a disc printed from the cover. Thrown onto Home once per launch, then perfectly still. Always reuse it; never draw a new one.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 5 COMPONENTS -->
+<section class="page">
+  <h2>Components</h2>
+  <p class="lede">Tactile and plain. A pressed control dips to 0.96 and returns over 0.08s. Shown in both themes.</p>
+  <div class="split" id="components"></div>
+</section>
+
+<!-- 6 PLAYER & HOME -->
+<section class="page">
+  <h2>Player &amp; Home</h2>
+  <p class="lede">The player is one glass shape. The puck widens first (0.28s), then rises (0.26s) into the bar; closing is the exact reverse. Home is built from heavy section titles and 170pt cover shelves.</p>
+  <div class="split" id="playerhome"></div>
+</section>
+
+<!-- 7 MOTION -->
+<section class="page">
+  <h2>Motion</h2>
+  <p class="lede">One house ease for arrivals. Big motion is saved for signature moments; after a showpiece, objects rest completely still. Every move has a Reduce Motion version.</p>
+  <div class="curves" id="curves"></div>
+  <div class="rule"></div>
+  <div class="grid three">
+    <div><div class="label">The throw</div><p style="font-size:13px;line-height:1.5">Flies in from the far right, small and tumbling. Lands on the house ease, caught with a ~4×3pt jolt decaying over 0.16–0.2s. The disc is caught halfway out. Once per launch, then still.</p></div>
+    <div><div class="label">CD skip</div><p style="font-size:13px;line-height:1.5">The case spins an extra turn, and a 2pt read laser sweeps the stage. The old content stutters (−12, 5, −20, −8) then tears off (x −140, skew −12°, blur 20). The new title springs in word by word.</p></div>
+    <div><div class="label">Micro</div><p style="font-size:13px;line-height:1.5">Press 0.08–0.12s ease-out at 0.92–0.96 scale. Hover 0.15s. Selection 0.2s. List entrance 0.28s, 10pt rise, 15ms stagger capped at 0.25s. Theme flood pours from the click.</p></div>
+  </div>
+</section>
+
+<!-- 8 ANATOMY + DO/DON'T -->
+<section class="page">
+  <h2>Page anatomy</h2>
+  <p class="lede">Content hangs from one left edge. Page tops are tall, with one heavy title; lists are tighter.</p>
+  <div class="grid three">
+    <div>
+      <div class="label">Home</div>
+      <div class="wire">
+        <div class="blk" style="left:14px;top:14px;width:120px;height:24px">wordmark 60 · date</div>
+        <div class="blk" style="left:14px;top:50px;width:52%;height:84px">lyric (left 54%)</div>
+        <div class="blk" style="left:14px;top:142px;width:40%;height:18px">song · artist · pin</div>
+        <div class="blk acc" style="right:14px;top:30px;width:34%;height:128px">thrown case</div>
+        <div class="blk" style="left:14px;top:178px;width:30%;height:100px">Today's pick</div>
+        <div class="blk" style="left:36%;top:178px;right:14px;height:46px">rotation row</div>
+        <div class="blk" style="left:36%;top:232px;right:14px;height:46px">rotation row</div>
+        <div class="blk" style="left:14px;top:290px;right:14px;height:36px">shelves · 170pt covers</div>
+      </div>
+    </div>
+    <div>
+      <div class="label">Album / Playlist / Mix</div>
+      <div class="wire">
+        <div class="blk acc" style="left:0;top:0;right:0;height:150px;border-radius:0;opacity:.6">blurred cover wash</div>
+        <div class="blk" style="left:14px;top:40px;width:96px;height:96px">cover</div>
+        <div class="blk ink" style="left:120px;top:70px;right:14px;height:36px">80pt title</div>
+        <div class="blk" style="left:120px;top:112px;width:50%;height:16px">artist · album · year</div>
+        <div class="blk" style="left:14px;top:164px;width:120px;height:24px">Play · Shuffle</div>
+        <div class="blk" style="left:14px;top:198px;right:14px;height:16px"># TITLE FORMAT QUALITY LENGTH</div>
+        <div class="blk" style="left:14px;top:220px;right:14px;height:70px">tracklist rows</div>
+        <div class="blk" style="left:14px;top:298px;right:14px;height:28px">More by · 6 columns</div>
+      </div>
+    </div>
+    <div>
+      <div class="label">Settings / Sheet</div>
+      <div class="wire">
+        <div class="blk" style="left:14px;top:14px;width:90px;height:16px">SHEET TITLE</div>
+        <div class="blk" style="right:14px;top:10px;width:24px;height:24px;border-radius:50%">✕</div>
+        <div class="blk" style="left:14px;top:50px;width:120px;height:14px;padding:0 8px;background:none;color:var(--ink3)">GROUP LABEL</div>
+        <div class="blk" style="left:14px;top:72px;right:14px;height:28px;background:none;border-bottom:.5px solid var(--div);border-radius:0">row · switch</div>
+        <div class="blk" style="left:14px;top:104px;right:14px;height:28px;background:none;border-bottom:.5px solid var(--div);border-radius:0">row · pill toggle</div>
+        <div class="blk" style="left:14px;top:136px;right:14px;height:28px;background:none;border-radius:0">row · quiet field</div>
+        <div class="blk" style="left:14px;top:182px;width:120px;height:14px;padding:0 8px;background:none;color:var(--ink3)">GROUP LABEL</div>
+        <div class="blk" style="left:14px;top:204px;right:14px;height:28px;background:none;border-radius:0">row</div>
+        <div class="blk" style="left:0;right:0;top:282px;height:1px;padding:0;border-radius:0;background:var(--div)"></div>
+        <div class="blk" style="right:92px;top:296px;width:70px;height:28px;border-radius:99px">Cancel</div>
+        <div class="blk ink" style="right:14px;top:296px;width:70px;height:28px;border-radius:99px">Save</div>
+      </div>
+    </div>
+  </div>
+  <div class="rule" style="margin:22px 0"></div>
+  <div class="dd">
+    <ul>
+      <li><b>Do</b> take colours from Theme pairs and check both themes.</li>
+      <li><b>Do</b> reuse FLSheet, SheetPillStyle, FLSwitchStyle, FLPillToggle, BrandLoader, .flContextMenu, RackBox.</li>
+      <li><b>Do</b> write one short, natural line of copy.</li>
+      <li><b>Do</b> give every animation a Reduce Motion path.</li>
+    </ul>
+    <ul>
+      <li><b>Don't</b> use a hue as a UI accent, or blur a photo into a banner.</li>
+      <li><b>Don't</b> put shadows on controls, rows or cards, or boxes around settings groups.</li>
+      <li><b>Don't</b> use system spinners, segmented pickers or switches.</li>
+      <li><b>Don't</b> add taglines, eyebrows on titles, or motion after a showpiece lands.</li>
+    </ul>
+  </div>
+</section>
+
+<script>
+const ladder = [
+  ['background','#000000','#F5F5F5'],['surface','#141414','#E6E6E6'],['elevated','#1F1F1F','#D6D6D6'],
+  ['hover','#292929','#C7C7C7'],['divider','#2E2E2E','#CCCCCC'],['tertiary','#737373','#666666'],
+  ['secondary','#A6A6A6','#595959'],['primary','#F2F2F2','#141414'],['accent','#FFFFFF','#000000']];
+for (const [mode,i] of [['dark',1],['light',2]]) {
+  document.getElementById('ladder-'+mode).innerHTML = ladder.map(r =>
+    `<div><div class="sw" style="background:${r[i]}"></div><div class="swname">${r[0]}</div><div class="swhex">${r[i]}</div></div>`).join('');
+  document.getElementById('op-'+mode).innerHTML = [4.5,5,7,8,10,12,14,16,55].map(o =>
+    `<div class="op" style="background:rgba(var(--ink-rgb),${o/100})">${o}%</div>`).join('');
+}
+
+const comps = `
+  <div class="label">Pills · SheetPillStyle</div>
+  <div class="row"><span class="pill primary">Save</span><span class="pill secondary">Cancel</span><span class="pill destructive">Delete</span><span class="pill disabled">Save</span></div>
+  <div class="label" style="margin-top:22px">Quiet · toggle pills · close</div>
+  <div class="row"><span class="quiet">Back</span><span class="quiet hover">Remove cover</span><span class="tpill off">Compilation</span><span class="tpill on">Mix Compilation</span><span class="close">✕</span></div>
+  <div class="label" style="margin-top:22px">Switch · pill toggle</div>
+  <div class="row"><span class="switch on"></span><span class="switch off"></span><span class="seg"><span class="on">Albums</span><span>Artists</span><span>Tracks</span></span></div>
+  <div class="label" style="margin-top:22px">Quiet field (rest · focus)</div>
+  <div><span class="field">Burning Out</span></div><div style="margin-top:6px"><span class="field focus">Burning Out|</span></div>
+  <div class="label" style="margin-top:22px">Option row</div>
+  <div class="option"><div class="tile44 solid">♪</div><div><b>Link a folder</b><span>~/Music/FLACtastic</span></div><div class="act">Choose…</div></div>
+  <div class="label" style="margin-top:22px">Settings group · context menu</div>
+  <div class="row" style="align-items:flex-start;gap:20px">
+    <div class="group" style="flex:1">
+      <div class="item">Gapless playback <span class="switch on" style="transform:scale(.8)"></span></div><div class="hair"></div>
+      <div class="item">Output device <span class="muted">MOTU M2</span></div>
+    </div>
+    <div class="menu"><div>Play Next</div><div class="hl">More Like This</div><div>Doesn't Fit</div><div class="sep"></div><div>Go to Album</div></div>
+  </div>`;
+document.getElementById('components').innerHTML = `<div>${comps}</div><div class="light">${comps}</div>`;
+
+const ph = `
+  <div class="label">Puck (320×56, r16)</div>
+  <div class="glass puck"><div class="art" style="width:40px;height:40px"></div><div class="t"><b>Burning Out</b><span>Mild Minds</span></div><div class="tx">◀◀ ▶ ▶▶</div><div class="lip"></div></div>
+  <div class="label" style="margin-top:22px">Open bar (r18, wash from cover)</div>
+  <div class="glass bar" style="width:100%"><div class="top"><div class="art" style="width:48px;height:48px"></div><div style="margin-left:6px"><b style="font-size:13px">Burning Out</b><div class="muted">Mild Minds · <span class="badge" style="color:var(--hires)">24/96</span></div></div><div class="center"><span style="color:var(--ink3)">⤮</span><span>◀◀</span><span class="playb">❚❚</span><span>▶▶</span><span style="color:var(--ink3)">↻</span></div></div><div class="seek"></div></div>
+  <div class="label" style="margin-top:26px">Home section</div>
+  <div class="sechead"><b>Jump back in</b><span>Albums you left halfway</span><i>Show all</i></div>
+  <div class="shelf">
+    <div class="htile"><div class="hcover art" style="width:150px;height:150px;border-radius:12px"><div class="hbadge" style="color:var(--hires)">HI-RES</div></div><b>Burning Out</b><span>Mild Minds · 2026</span></div>
+    <div class="htile"><div class="hcover hover" style="width:150px;height:150px;background:linear-gradient(135deg,#2fd0ff,#0a2a5a)"><div class="hbadge" style="color:#4DD966">CD</div><div class="hplay">▶</div></div><b>Kid A</b><span>Radiohead · hovered</span></div>
+  </div>`;
+document.getElementById('playerhome').innerHTML = `<div>${ph}</div><div class="light">${ph}</div>`;
+
+const curves = [
+  ['House ease','(0.16, 1, 0.3, 1)','Arrivals, reveals, card hover, case glides. 0.3–1.2s.',[.16,1,.3,1]],
+  ['Exit ease','(0.6, 0, 0.9, 0.4)','Things leaving: tear-off, fold-away. 0.24–0.5s.',[.6,0,.9,.4]],
+  ['Wipe ease','(0.7, 0, 0.2, 1)','Wordmark wipe, theme flood. 0.9–1.1s.',[.7,0,.2,1]],
+  ['Staggered axes','(0.65, 0, 0.35, 1)','Player puck: width 0.28s, then height 0.26s.',[.65,0,.35,1]]];
+document.getElementById('curves').innerHTML = curves.map(([n,v,d,[a,b,c,e]]) => {
+  const S=200, P=12, x=t=>P+t*(S-2*P), y=t=>S-P-t*(S-2*P);
+  return `<div class="curve"><svg viewBox="0 0 ${S} ${S}">
+    <rect x="${P}" y="${P}" width="${S-2*P}" height="${S-2*P}" fill="none" stroke="currentColor" stroke-opacity=".12"/>
+    <line x1="${x(0)}" y1="${y(0)}" x2="${x(a)}" y2="${y(b)}" stroke="currentColor" stroke-opacity=".3"/>
+    <line x1="${x(1)}" y1="${y(1)}" x2="${x(c)}" y2="${y(e)}" stroke="currentColor" stroke-opacity=".3"/>
+    <circle cx="${x(a)}" cy="${y(b)}" r="3.5" fill="currentColor" fill-opacity=".5"/><circle cx="${x(c)}" cy="${y(e)}" r="3.5" fill="currentColor" fill-opacity=".5"/>
+    <path d="M${x(0)},${y(0)} C${x(a)},${y(b)} ${x(c)},${y(e)} ${x(1)},${y(1)}" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+  </svg><b>${n}</b><span class="mono">${v}</span><span>${d}</span></div>`;
+}).join('');
+</script>
+</body>
+</html>

@@ -36,7 +36,8 @@ enum Theme {
 
     static let textTertiary = Color(nsColor: adaptive(
         dark: NSColor(white: 0.45, alpha: 1),
-        light: NSColor(white: 0.55, alpha: 1)
+        // 4.5:1 on the light page and surface, for small text.
+        light: NSColor(white: 0.40, alpha: 1)
     ))
 
     static let divider = Color(nsColor: adaptive(
@@ -61,7 +62,7 @@ enum Theme {
     ))
     static let qualityMid = Color(nsColor: adaptive(
         dark:  NSColor(red: 0.95, green: 0.75, blue: 0.2,  alpha: 1), // amber — mid quality
-        light: NSColor(red: 0.68, green: 0.48, blue: 0.05, alpha: 1)  // muted amber pastel
+        light: NSColor(red: 0.53, green: 0.37, blue: 0.02, alpha: 1)  // deep amber, 4.5:1 on light surfaces
     ))
     static let qualityLow = Color(nsColor: adaptive(
         dark:  NSColor(red: 0.95, green: 0.3,  blue: 0.3,  alpha: 1), // red — low quality

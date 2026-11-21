@@ -50,6 +50,94 @@ enum FLContextMenuItem: Identifiable {
     ) -> FLContextMenuItem {
         .textField(id: UUID(), placeholder: placeholder, systemImage: systemImage, onSubmit: onSubmit)
     }
+
+    /// What type-select matches against; nil for rows the keyboard skips.
+    var navigableTitle: String? {
+        switch self {
+        case .button(_, let title, _, _, _), .submenu(_, let title, _, _): return title
+        case .textField(_, let placeholder, _, _): return placeholder
+        case .divider, .label: return nil
+        }
+    }
+}
+
+// MARK: - Keyboard state
+
+/// One open menu's highlighted row, shared by the pointer (hover) and the
+/// keyboard (arrows, Return, type-select), the way a native menu behaves.
+@MainActor @Observable
+final class FLMenuState {
+    let items: [FLContextMenuItem]
+    let isSubmenu: Bool
+    let onCommit: () -> Void
+    var highlightedID: UUID?
+
+    /// Each submenu row's frame on screen, so the keyboard can open it where
+    /// the pointer would.
+    @ObservationIgnored var rowFrames: [UUID: NSRect] = [:]
+    @ObservationIgnored private var typed = ""
+    @ObservationIgnored private var typedAt = Date.distantPast
+
+    init(items: [FLContextMenuItem], isSubmenu: Bool, onCommit: @escaping () -> Void) {
+        self.items = items
+        self.isSubmenu = isSubmenu
+        self.onCommit = onCommit
+    }
+
+    private var navigable: [FLContextMenuItem] { items.filter { $0.navigableTitle != nil } }
+
+    func highlightFirst() { highlightedID = navigable.first?.id }
+
+    /// Up or down one row, stopping at the ends as Mac menus do.
+    func move(_ delta: Int) {
+        let rows = navigable
+        guard !rows.isEmpty else { return }
+        if let id = highlightedID, let i = rows.firstIndex(where: { $0.id == id }) {
+            highlightedID = rows[min(max(i + delta, 0), rows.count - 1)].id
+        } else {
+            highlightedID = (delta > 0 ? rows.first : rows.last)?.id
+        }
+    }
+
+    /// Return on the highlighted row: runs a button or opens a submenu.
+    /// `submenusOnly` is the right arrow, which never runs a button.
+    @discardableResult
+    func activate(submenusOnly: Bool = false) -> Bool {
+        guard let id = highlightedID, let item = items.first(where: { $0.id == id }) else { return false }
+        switch item {
+        case .button(_, _, _, _, let action):
+            guard !submenusOnly else { return false }
+            onCommit()
+            action()
+            return true
+        case .submenu(_, _, _, let children):
+            openSubmenu(id: id, children: children)
+            return true
+        case .textField, .divider, .label:
+            return false
+        }
+    }
+
+    func openSubmenu(id: UUID, children: [FLContextMenuItem]) {
+        guard let frame = rowFrames[id] else { return }
+        FLContextMenuWindow.presentChild(
+            items: children,
+            anchor: FLContextMenuWindow.submenuAnchor(rowScreenFrame: frame),
+            onCommit: onCommit
+        )
+        FLContextMenuController.shared.childWindow?.state?.highlightFirst()
+    }
+
+    /// Typing a title's first letters jumps to it; a pause starts over.
+    func typeSelect(_ characters: String) {
+        let now = Date()
+        typed = now.timeIntervalSince(typedAt) > 1 ? characters : typed + characters
+        typedAt = now
+        let query = typed.lowercased()
+        if let match = navigable.first(where: { $0.navigableTitle?.lowercased().hasPrefix(query) == true }) {
+            highlightedID = match.id
+        }
+    }
 }
 
 // MARK: - Result Builder
@@ -90,7 +178,9 @@ final class FLContextMenuController {
     func register(_ catcher: FLRightClickTarget) {
         catchers.add(catcher)
         guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { event in
+        // Control-click is the Mac's other right-click (one-button mice,
+        // trackpads without secondary click).
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown, .leftMouseDown]) { event in
             MainActor.assumeIsolated { FLContextMenuController.shared.route(event) } ? nil : event
         }
     }
@@ -99,6 +189,10 @@ final class FLContextMenuController {
 
     /// Opens the right menu for this click; false if no menu claims it.
     private func route(_ event: NSEvent) -> Bool {
+        if event.type == .leftMouseDown {
+            let mods = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard mods.contains(.control), mods.isDisjoint(with: [.command, .option, .shift]) else { return false }
+        }
         guard let window = event.window else { return false }
         let point = event.locationInWindow
         let candidates = catchers.allObjects.filter { $0.window === window && $0.isUnder(point) }
@@ -163,16 +257,56 @@ final class FLContextMenuController {
         childWindow?.closeImmediately()
         childWindow = nil
     }
+
+    /// Keys while a menu is open; true when the menu used the key.
+    func handleKey(_ event: NSEvent) -> Bool {
+        guard let active = childWindow ?? rootWindow, let state = active.state else { return false }
+        let (escape, down, up, right, left) = (53 as UInt16, 125 as UInt16, 126 as UInt16, 124 as UInt16, 123 as UInt16)
+        if event.keyCode == escape {
+            dismissAll()
+            return true
+        }
+        // A text field row is being typed in: it keeps its keys, except up
+        // and down, which leave the field for the rows around it.
+        if active.firstResponder is NSTextView {
+            guard event.keyCode == down || event.keyCode == up else { return false }
+            active.makeFirstResponder(nil)
+            state.move(event.keyCode == down ? 1 : -1)
+            return true
+        }
+        switch event.keyCode {
+        case down: state.move(1)
+        case up: state.move(-1)
+        case right: return state.activate(submenusOnly: true)
+        case left:
+            guard childWindow != nil else { return false }
+            dismissChild()
+            rootWindow?.makeKey()
+        case 36, 76, 49: // Return, Enter, Space
+            state.activate()
+        default:
+            let mods = event.modifierFlags.intersection([.command, .control, .option])
+            guard mods.isEmpty, let characters = event.charactersIgnoringModifiers,
+                  !characters.isEmpty, characters.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) })
+            else { return false }
+            state.typeSelect(characters)
+        }
+        return true
+    }
 }
 
 // MARK: - Menu View
 
 struct FLContextMenuView: View {
-    let items: [FLContextMenuItem]
-    let isSubmenu: Bool
-    let onCommit: () -> Void
+    let state: FLMenuState
 
-    @State private var hoveredID: UUID? = nil
+    private var items: [FLContextMenuItem] { state.items }
+    private var isSubmenu: Bool { state.isSubmenu }
+    private var onCommit: () -> Void { state.onCommit }
+    private var hoveredID: UUID? {
+        get { state.highlightedID }
+        nonmutating set { state.highlightedID = newValue }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -191,6 +325,8 @@ struct FLContextMenuView: View {
                 .strokeBorder(Theme.divider, lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.35), radius: 14, x: 0, y: 6)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Menu")
         .onHover { hovering in
             if hovering, !isSubmenu {
                 // Mouse moved over the root menu (not on a submenu row) —
@@ -250,6 +386,7 @@ struct FLContextMenuView: View {
                 systemImage: systemImage,
                 children: children,
                 isHovered: hoveredID == item.id,
+                onFrame: { state.rowFrames[item.id] = $0 },
                 onHover: { hovering, rect in
                     if hovering {
                         hoveredID = item.id
@@ -269,6 +406,7 @@ struct FLContextMenuView: View {
             FLMenuTextFieldRow(
                 placeholder: placeholder,
                 systemImage: systemImage,
+                isHighlighted: hoveredID == item.id,
                 onSubmit: { text in
                     let trimmed = text.trimmingCharacters(in: .whitespaces)
                     guard !trimmed.isEmpty else { return }
@@ -283,6 +421,8 @@ struct FLContextMenuView: View {
 private struct FLMenuTextFieldRow: View {
     let placeholder: String
     let systemImage: String?
+    /// The keyboard arrived on this row: put the caret in the field.
+    let isHighlighted: Bool
     let onSubmit: (String) -> Void
 
     @State private var text: String = ""
@@ -317,6 +457,9 @@ private struct FLMenuTextFieldRow: View {
             // Defer one runloop tick so the hosting window has finished
             // becoming key before we ask for focus.
             DispatchQueue.main.async { focused = true }
+        }
+        .onChange(of: isHighlighted) { _, highlighted in
+            if highlighted { focused = true }
         }
     }
 }
@@ -367,6 +510,10 @@ private struct FLMenuRow: View {
         )
         .onHover(perform: onHover)
         .onTapGesture { onTap() }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { onTap() }
     }
 }
 
@@ -375,6 +522,7 @@ private struct SubmenuRow: View {
     let systemImage: String?
     let children: [FLContextMenuItem]
     let isHovered: Bool
+    let onFrame: (NSRect) -> Void
     let onHover: (Bool, NSRect) -> Void
 
     @State private var rowScreenFrame: NSRect = .zero
@@ -393,7 +541,10 @@ private struct SubmenuRow: View {
                 onHover(true, FLContextMenuWindow.submenuAnchor(rowScreenFrame: rowScreenFrame))
             }
         )
-        .background(RowFrameReporter { rowScreenFrame = $0 })
+        .background(RowFrameReporter {
+            rowScreenFrame = $0
+            onFrame($0)
+        })
     }
 }
 
@@ -421,12 +572,17 @@ final class FLContextMenuWindow: NSPanel {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var isChild: Bool = false
+    /// The highlighted row, which the keyboard moves.
+    private(set) var state: FLMenuState?
 
-    static func present(items: [FLContextMenuItem], at screenPoint: NSPoint) {
+    /// `fromKeyboard` highlights the first row, as a menu opened without
+    /// the pointer does.
+    static func present(items: [FLContextMenuItem], at screenPoint: NSPoint, fromKeyboard: Bool = false) {
         FLContextMenuController.shared.dismissAll()
         let window = FLContextMenuWindow()
         window.configure(items: items, at: screenPoint, isChild: false)
         FLContextMenuController.shared.rootWindow = window
+        if fromKeyboard { window.state?.highlightFirst() }
         window.orderFrontRegardless()
         window.makeKey()
     }
@@ -480,20 +636,22 @@ final class FLContextMenuWindow: NSPanel {
 
     func configure(items: [FLContextMenuItem], at screenPoint: NSPoint, isChild: Bool) {
         self.isChild = isChild
-        let view = FLContextMenuView(items: items, isSubmenu: isChild) { [weak self] in
+        let state = FLMenuState(items: items, isSubmenu: isChild) {
             FLContextMenuController.shared.dismissAll()
-            _ = self
         }
-        installHosting(view: AnyView(view), origin: screenPoint, anchorRight: false)
+        self.state = state
+        installHosting(view: AnyView(FLContextMenuView(state: state)), origin: screenPoint, anchorRight: false)
         installDismissMonitors()
     }
 
     func configureChild(items: [FLContextMenuItem], anchor: NSRect, onCommit: @escaping () -> Void) {
         self.isChild = true
-        let view = FLContextMenuView(items: items, isSubmenu: true) {
+        let state = FLMenuState(items: items, isSubmenu: true) {
             onCommit()
             FLContextMenuController.shared.dismissAll()
         }
+        self.state = state
+        let view = FLContextMenuView(state: state)
         // anchor.origin.y is the desired top edge of the submenu window in
         // screen coords; `installHosting` subtracts height to convert this
         // top edge into an AppKit bottom-left origin.
@@ -560,17 +718,15 @@ final class FLContextMenuWindow: NSPanel {
         // Fires for events inside our app. Dismiss when the click lands on a
         // window that isn't part of the menu tower; let clicks inside the menu
         // itself flow through so button taps can fire.
+        let isChild = self.isChild
         localMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown, .keyDown, .scrollWheel]
         ) { event in
             if event.type == .keyDown {
-                if event.keyCode == 53 { // escape
-                    Task { @MainActor in
-                        FLContextMenuController.shared.dismissAll()
-                    }
-                    return nil
-                }
-                return event
+                // The root's monitor alone handles keys, for whichever menu
+                // of the pair is frontmost; a submenu's would act twice.
+                guard !isChild else { return event }
+                return MainActor.assumeIsolated { FLContextMenuController.shared.handleKey(event) } ? nil : event
             }
             let target = event.window
             let controller = FLContextMenuController.shared
@@ -614,18 +770,50 @@ extension View {
     /// (e.g. a floating panel over the main content) all receive the same
     /// right-click. Higher value wins; default is 0.
     func flContextMenu(priority: Int = 0, @FLContextMenuBuilder items: @escaping () -> [FLContextMenuItem]) -> some View {
-        self.overlay(FLRightClickCatcher(itemsProvider: items, priority: priority))
+        modifier(FLContextMenuModifier(priority: priority, items: items))
+    }
+}
+
+/// The right-click catcher, plus VoiceOver's Show Menu (VO-Shift-M), which
+/// opens the same menu at the element with its first row highlighted.
+private struct FLContextMenuModifier: ViewModifier {
+    let priority: Int
+    let items: () -> [FLContextMenuItem]
+    @State private var anchor = FLMenuAnchor()
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(FLRightClickCatcher(itemsProvider: items, priority: priority, anchor: anchor))
+            .accessibilityAction(.showMenu) { anchor.present() }
+    }
+}
+
+/// Where a menu opened without the pointer appears: near the top-left of
+/// the element it belongs to.
+@MainActor
+final class FLMenuAnchor {
+    weak var view: FLRightClickTarget?
+
+    func present() {
+        guard let view, let window = view.window else { return }
+        let items = view.items()
+        guard !items.isEmpty else { return }
+        let frame = window.convertToScreen(view.convert(view.bounds, to: nil))
+        let point = NSPoint(x: frame.minX + min(24, frame.width / 2), y: frame.maxY - min(8, frame.height / 2))
+        FLContextMenuWindow.present(items: items, at: point, fromKeyboard: true)
     }
 }
 
 private struct FLRightClickCatcher: NSViewRepresentable {
     let itemsProvider: () -> [FLContextMenuItem]
     var priority: Int = 0
+    let anchor: FLMenuAnchor
 
     func makeNSView(context: Context) -> RightClickView {
         let v = RightClickView()
         v.itemsProvider = itemsProvider
         v.menuPriority = priority
+        anchor.view = v
         return v
     }
 

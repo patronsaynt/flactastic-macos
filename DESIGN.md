@@ -15,7 +15,7 @@ colors:
   ink-secondary-dark: "#A6A6A6"
   ink-secondary-light: "#595959"
   ink-tertiary-dark: "#737373"
-  ink-tertiary-light: "#8C8C8C"
+  ink-tertiary-light: "#666666"
   hairline-dark: "#2E2E2E"
   hairline-light: "#CCCCCC"
   accent-dark: "#FFFFFF"
@@ -25,7 +25,7 @@ colors:
   quality-cd-dark: "#4DD966"
   quality-cd-light: "#268040"
   quality-mid-dark: "#F2BF33"
-  quality-mid-light: "#AD7A0D"
+  quality-mid-light: "#875E05"
   quality-low-dark: "#F24D4D"
   quality-low-light: "#B82E2E"
 typography:
@@ -224,7 +224,7 @@ The palette is a monochrome ladder of nine adaptive greys. Two non-UI colour sou
 - **Ground** (background): window and stage background. True black in dark mode, paper grey in light mode.
 - **Surface / Surface Elevated / Surface Hover**: three tonal steps used for older containers, pill toggles and press states. Each step is one notch further from the ground.
 - **Ink Secondary**: subtitles, detail lines, action words on option rows.
-- **Ink Tertiary**: running counts, hints ("Return to continue"), unplayed track numbers, group labels, detail under row titles. Keep it at its Theme value; the user confirmed on 2026-11-02 that it should not be raised for contrast.
+- **Ink Tertiary**: running counts, hints ("Return to continue"), unplayed track numbers, group labels, detail under row titles. Keep it at its Theme value. The light value was raised on 2026-11-20 to 4.5:1 on the light page and surface; the dark value is unchanged, as confirmed on 2026-11-02.
 - **Hairline** (divider): 0.5px row dividers in settings groups. On newer surfaces the same role is drawn as ink-primary at 10% opacity, 1px.
 
 ### Named Rules

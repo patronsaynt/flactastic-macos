@@ -30,6 +30,8 @@ struct MixDetailView: View {
     @State private var editingTrack: Track?
     @State private var removalRequest: LibraryRemovalRequest?
     @State private var backdrop: NSImage?
+    /// The row the arrow keys are on; Return plays it.
+    @State private var keyboardCursor: UUID?
 
     private static let heroHeight: CGFloat = 540
 
@@ -50,6 +52,7 @@ struct MixDetailView: View {
                     trackList
                 }
                 .padding(.horizontal, collectionGutter)
+                .trackListColumns()
                 .padding(.top, 8)
                 .arrival(hasEntered, calm: calmMotion, animation: arrive.delay(0.8))
             }
@@ -208,16 +211,22 @@ struct MixDetailView: View {
     // MARK: - Tracks
 
     private var trackList: some View {
-        LazyVStack(alignment: .leading, spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 2) {
             ForEach(Array(mix.tracks.enumerated()), id: \.element.id) { index, track in
                 let isCurrent = player.currentTrack?.id == track.id
                 TrackRow(track: track, isPlaying: isCurrent, displayNumber: index + 1,
                          showDragHandle: false, showAlbumArt: true)
-                    .flRowStyle(fill: isCurrent ? Theme.surfaceElevated : nil)
+                    .flRowStyle(fill: isCurrent ? Theme.surfaceElevated
+                                : keyboardCursor == track.id ? Theme.surfaceElevated.opacity(0.55) : nil)
                     .contentShape(Rectangle())
                     .onTapGesture(count: 2) { onPlay(index, false) }
+                    .simultaneousGesture(TapGesture().onEnded { keyboardCursor = track.id })
+                    .playableRowAccessibility { onPlay(index, false) }
                     .flContextMenu { menu(for: track) }
             }
+        }
+        .rowKeyboardNav(ids: mix.tracks.map(\.id), cursor: $keyboardCursor, clearsOnBlur: true) { id in
+            if let index = mix.tracks.firstIndex(where: { $0.id == id }) { onPlay(index, false) }
         }
     }
 

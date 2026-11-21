@@ -271,6 +271,8 @@ struct FLTrackListHeader: View {
     /// duration column rather than the handle beside it.
     var showDragHandle: Bool = false
 
+    @Environment(\.trackListShowsFormat) private var showsFormat
+
     var body: some View {
         HStack(spacing: 14) {
             Text("#")
@@ -283,10 +285,12 @@ struct FLTrackListHeader: View {
                 .tracking(1.5)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text("FORMAT")
-                .font(.system(size: 11))
-                .tracking(1.5)
-                .frame(width: TrackRow.formatColumnWidth, alignment: .center)
+            if showsFormat {
+                Text("FORMAT")
+                    .font(.system(size: 11))
+                    .tracking(1.5)
+                    .frame(width: TrackRow.formatColumnWidth, alignment: .center)
+            }
 
             Text("QUALITY")
                 .font(.system(size: 11))
@@ -311,6 +315,32 @@ struct FLTrackListHeader: View {
                 .frame(height: 1)
         }
     }
+}
+
+extension EnvironmentValues {
+    /// Whether a track list is wide enough for its FORMAT column. Narrow
+    /// lists drop it first: the quality badge beside it already says
+    /// lossless or lossy, and the title needs the room more.
+    @Entry var trackListShowsFormat = true
+}
+
+/// Measures a track list (header and rows together) and drops the FORMAT
+/// column below `TrackRow.formatColumnMinListWidth`.
+private struct TrackListColumns: ViewModifier {
+    @State private var showsFormat = true
+
+    func body(content: Content) -> some View {
+        content
+            .environment(\.trackListShowsFormat, showsFormat)
+            .onGeometryChange(for: Bool.self) {
+                $0.size.width >= TrackRow.formatColumnMinListWidth
+            } action: { showsFormat = $0 }
+    }
+}
+
+extension View {
+    /// Apply where a track list's header and rows share one width.
+    func trackListColumns() -> some View { modifier(TrackListColumns()) }
 }
 
 // MARK: - Row / card hover affordances

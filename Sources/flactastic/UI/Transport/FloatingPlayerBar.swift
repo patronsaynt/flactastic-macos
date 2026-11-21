@@ -105,6 +105,7 @@ struct FloatingPlayerBar: View {
         .buttonStyle(GlassIconButtonStyle())
         .frame(width: 26, height: 26)
         .help("Add to playlist")
+        .accessibilityLabel("Add to Playlist")
     }
 
     private func buildAddToPlaylistItems() -> [FLContextMenuItem] {
@@ -151,6 +152,7 @@ struct FloatingPlayerBar: View {
         }
         .buttonStyle(GlassIconButtonStyle(isOn: player.isQueueVisible))
         .help(player.isQueueVisible ? "Hide queue" : "Show queue")
+        .accessibilityLabel(player.isQueueVisible ? "Hide Queue" : "Show Queue")
     }
 
 }
@@ -272,6 +274,8 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isOn: player.isShuffleEnabled, showsDot: true))
             .help(player.isShuffleEnabled ? "Shuffle on" : "Shuffle off")
+            .accessibilityLabel("Shuffle")
+            .accessibilityValue(player.isShuffleEnabled ? "On" : "Off")
 
             Button { player.engine.previous() } label: {
                 Image(systemName: "backward.fill")
@@ -280,6 +284,7 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
             .help("Previous")
+            .accessibilityLabel("Previous")
 
             Button { player.engine.togglePlayPause() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
@@ -288,6 +293,7 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
             .help(player.isPlaying ? "Pause" : "Play")
+            .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
 
             Button { player.next() } label: {
                 Image(systemName: "forward.fill")
@@ -296,6 +302,7 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isProminent: true))
             .help("Next")
+            .accessibilityLabel("Next")
 
             Button {
                 switch player.repeatMode {
@@ -310,6 +317,16 @@ struct PlayerTransportControls: View {
             }
             .buttonStyle(GlassIconButtonStyle(isOn: player.repeatMode != .off, showsDot: true))
             .help(repeatHelp)
+            .accessibilityLabel("Repeat")
+            .accessibilityValue(repeatValue)
+        }
+    }
+
+    private var repeatValue: String {
+        switch player.repeatMode {
+        case .off: "Off"
+        case .all: "All"
+        case .one: "One"
         }
     }
 

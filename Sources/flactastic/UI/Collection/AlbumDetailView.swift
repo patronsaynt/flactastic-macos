@@ -39,6 +39,8 @@ struct AlbumDetailView: View {
     @State private var hasEntered = false
     /// The cover, blurred once off the main thread for the backdrop.
     @State private var backdrop: NSImage?
+    /// The track row the arrow keys are on; Return plays it.
+    @State private var keyboardCursor: UUID?
     /// Width of one "More by" cover, so it decodes at the size it's drawn.
     @State private var moreCellWidth: CGFloat = 180
     /// "More by": the album's artists and their other albums, worked out
@@ -304,8 +306,10 @@ struct AlbumDetailView: View {
                     number: track.trackNumber ?? index + 1,
                     fallbackArtist: album.albumArtist ?? album.artist,
                     isCurrent: player.currentTrack?.id == track.id,
+                    isCursor: keyboardCursor == track.id,
                     play: { play(album, from: index) }
                 )
+                .simultaneousGesture(TapGesture().onEnded { keyboardCursor = track.id })
                 .flContextMenu {
                     menus.track(
                         track,
@@ -315,6 +319,9 @@ struct AlbumDetailView: View {
                     )
                 }
             }
+        }
+        .rowKeyboardNav(ids: album.tracks.map(\.id), cursor: $keyboardCursor, clearsOnBlur: true) { id in
+            if let index = album.tracks.firstIndex(where: { $0.id == id }) { play(album, from: index) }
         }
     }
 
@@ -469,6 +476,8 @@ private struct AlbumTrackRow: View {
     /// Shown when the track carries no artist tag of its own.
     let fallbackArtist: String?
     let isCurrent: Bool
+    /// The keyboard's row in the list.
+    var isCursor = false
     let play: () -> Void
 
     @State private var isHovering = false
@@ -524,7 +533,7 @@ private struct AlbumTrackRow: View {
         .frame(minHeight: 64)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isCurrent ? Theme.surfaceElevated : (isHovering ? Theme.surface : .clear))
+                .fill(isCurrent ? Theme.surfaceElevated : (isHovering || isCursor ? Theme.surface : .clear))
         )
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
