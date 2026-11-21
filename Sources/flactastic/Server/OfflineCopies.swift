@@ -101,6 +101,16 @@ final class OfflineCopies {
         refresh()
     }
 
+    /// The copy here no longer matches the server's file (an edit made here
+    /// that the server refused): forget its hash so a refresh fetches it again.
+    func redownload(_ id: UUID) {
+        guard installed[id] != nil else { return }
+        installed[id]?.contentHash = ""
+        saveIndex()
+        publish()
+        refresh()
+    }
+
     /// The server reported track or playlist changes.
     func libraryChanged() {
         publish()

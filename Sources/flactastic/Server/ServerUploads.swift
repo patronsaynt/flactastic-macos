@@ -78,6 +78,12 @@ final class ServerUploads {
         start()
     }
 
+    /// The file was deleted here: nothing left to send.
+    func forget(_ url: URL) {
+        items.removeAll { $0.file == url.path }
+        save()
+    }
+
     func clearFinished() {
         items.removeAll { $0.status == .done }
         save()
@@ -98,7 +104,7 @@ final class ServerUploads {
     }
 
     nonisolated private static func newFiles(in root: URL, since: Date, known: Set<String>, queued: Set<String>) -> [URL] {
-        let keys: [URLResourceKey] = [.isRegularFileKey, .creationDateKey]
+        let keys: [URLResourceKey] = [.isRegularFileKey, .addedToDirectoryDateKey, .creationDateKey]
         guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
                                                           options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
         let rootPath = root.standardizedFileURL.path
@@ -106,7 +112,8 @@ final class ServerUploads {
         for case let url as URL in walker {
             guard AudioFileFormat.classify(url) != nil,
                   let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true,
-                  (values.creationDate ?? .distantPast) >= since,
+                  // When it arrived in the folder: a copied file keeps its creation date.
+                  (values.addedToDirectoryDate ?? values.creationDate ?? .distantPast) >= since,
                   !queued.contains(url.path) else { continue }
             let rel = String(url.standardizedFileURL.path.dropFirst(rootPath.count + 1))
             if !known.contains(rel) { found.append(url) }
@@ -118,10 +125,23 @@ final class ServerUploads {
         guard running == nil else { return }
         running = Task { [weak self] in
             while let self, let i = self.items.firstIndex(where: { $0.status == .waiting }), !Task.isCancelled {
-                await self.upload(self.items[i].id)
+                // Can't reach the server: the rest wait until it's back.
+                guard await self.upload(self.items[i].id) else { break }
             }
             self?.running = nil
         }
+    }
+
+    /// The server is back: send what waited, and what failed only because
+    /// it couldn't be reached.
+    func resume() {
+        let offline = ServerError.unreachable("").localizedDescription
+        for i in items.indices where items[i].status == .failed && items[i].error == offline {
+            items[i].status = .waiting
+            items[i].error = nil
+        }
+        save()
+        start()
     }
 
     private func set(_ id: UUID, _ change: (inout Item) -> Void) {
@@ -129,8 +149,10 @@ final class ServerUploads {
         change(&items[i])
     }
 
-    private func upload(_ id: UUID) async {
-        guard let client = session.client, let item = items.first(where: { $0.id == id }) else { return }
+    /// False when the server couldn't be reached (the item waits).
+    private func upload(_ id: UUID) async -> Bool {
+        guard let client = session.client, session.status != .unreachable else { return false }
+        guard let item = items.first(where: { $0.id == id }) else { return true }
         let url = URL(fileURLWithPath: item.file)
         do {
             var item = item
@@ -148,13 +170,13 @@ final class ServerUploads {
                     handled[item.file] = hash
                     items.removeAll { $0.id == id }
                     save()
-                    return
+                    return true
                 }
                 if handled.values.contains(hash) {
                     handled[item.file] = hash
                     items.removeAll { $0.id == id }
                     save()
-                    return
+                    return true
                 }
             }
             set(id) { $0.status = .sending }
@@ -176,6 +198,11 @@ final class ServerUploads {
             handled[item.file] = item.contentHash
             session.offline.adopt(uploaded: url, as: track, hash: track.contentHash ?? item.contentHash!)
             await session.pullTracks()
+        } catch ServerError.unreachable {
+            set(id) { $0.status = .waiting }
+            save()
+            session.connectionLost()
+            return false
         } catch let error as ServerError {
             session.note(error)
             set(id) {
@@ -188,6 +215,7 @@ final class ServerUploads {
             set(id) { $0.status = .failed; $0.error = error.localizedDescription }
         }
         save()
+        return true
     }
 
     /// PATCHes from `offset` until the server has every byte. A 409 or a

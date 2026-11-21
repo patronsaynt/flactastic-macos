@@ -669,11 +669,16 @@ struct AlbumMetadataEditorView: View {
         let writer = writer
 
         // A server library takes one PATCH for every track sharing an edit
-        // (§10); the first file of each group sends it for the rest.
+        // (§10); the first file of each group sends it for the rest. Tracks
+        // with an offline copy go through the writer instead, which tags the
+        // copy here first and queues the edit for when the server answers;
+        // a file the server doesn't have yet is simply tagged here.
         let server = await writer.server
         var edits: [UUID: TagEdit] = [:]
-        if server != nil {
+        if let server {
             for p in plan {
+                let t = p.item.originalTrack
+                guard server.knows(t), !server.hasCurrentCopy(t) else { continue }
                 edits[p.change.id] = TagEdit.from(
                     p.item.originalTrack, title: p.title, artist: p.artist, album: newAlbum, year: parsedYear,
                     genre: p.genre, secondaryGenres: cleanedSecondary, trackNumber: p.item.trackNumber,
@@ -689,7 +694,13 @@ struct AlbumMetadataEditorView: View {
             if let server, let edit = edits[file.id] {
                 if batched[p.item.originalTrack.id] == nil {
                     let group = (groups[edit] ?? [p]).map(\.item.originalTrack)
-                    for t in try await server.apply(edit, to: group) { batched[t.id] = t }
+                    do {
+                        for t in try await server.apply(edit, to: group) { batched[t.id] = t }
+                    } catch is CancellationError {
+                        throw MetadataWriter.WriteError.serverUnreachable
+                    } catch ServerError.unreachable {
+                        throw MetadataWriter.WriteError.serverUnreachable
+                    }
                 }
                 written[file.id] = batched[p.item.originalTrack.id] ?? p.item.originalTrack
                 return

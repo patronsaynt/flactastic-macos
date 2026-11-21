@@ -177,8 +177,11 @@ enum ServerError: Error, Equatable, LocalizedError {
 /// HTTPS + JSON to one server, through one pinned session (§3, §4).
 final class ServerClient: Sendable {
     let address: ServerAddress
-    let session: URLSession
     let trust: PinningDelegate
+    private let sessionLock: OSAllocatedUnfairLock<URLSession>
+    nonisolated(unsafe) private let protocolClasses: [AnyClass]
+    /// Every request and stream goes through this one pinned session.
+    var session: URLSession { sessionLock.withLock { $0 } }
     private let tokenLock: OSAllocatedUnfairLock<String?>
     private let lostLock = OSAllocatedUnfairLock<(@Sendable () -> Void)?>(initialState: nil)
     /// Told whenever a request or stream can't reach the server.
@@ -195,6 +198,11 @@ final class ServerClient: Sendable {
         self.address = address
         trust = PinningDelegate(pin: pin)
         tokenLock = OSAllocatedUnfairLock(initialState: token)
+        self.protocolClasses = protocolClasses
+        sessionLock = OSAllocatedUnfairLock(initialState: Self.makeSession(trust, protocolClasses))
+    }
+
+    private static func makeSession(_ trust: PinningDelegate, _ protocolClasses: [AnyClass]) -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.tlsMinimumSupportedProtocolVersion = .TLSv13
         config.timeoutIntervalForRequest = 60
@@ -203,10 +211,24 @@ final class ServerClient: Sendable {
         config.httpCookieStorage = nil
         config.httpMaximumConnectionsPerHost = 6
         if !protocolClasses.isEmpty { config.protocolClasses = protocolClasses }
-        session = URLSession(configuration: config, delegate: trust, delegateQueue: nil)
+        return URLSession(configuration: config, delegate: trust, delegateQueue: nil)
     }
 
     deinit { session.finishTasksAndInvalidate() }
+
+    /// Drops every connection and request, and starts a new session. Over
+    /// HTTP/2 everything shares one connection; after the network drops,
+    /// URLSession can keep sending on it while it's dead, so each request
+    /// just times out until a new session opens a new one.
+    func resetConnections() {
+        let fresh = Self.makeSession(trust, protocolClasses)
+        let old = sessionLock.withLock { current in
+            let old = current
+            current = fresh
+            return old
+        }
+        old.invalidateAndCancel()
+    }
 
     var token: String? {
         get { tokenLock.withLock { $0 } }

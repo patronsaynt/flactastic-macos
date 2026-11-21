@@ -71,6 +71,7 @@ final class MetadataWriteSession {
             case .fileOpenFailed: return "The file couldn't be opened for writing. It may be read-only or in use by another app."
             case .saveFailed: return "The file couldn't be saved. Check that it isn't read-only and that the disk has room, then retry."
             case .serverLibrary: return e.localizedDescription
+            case .serverUnreachable: return "Can't reach the server, and this track has no offline copy here to edit. Retry once it's back, or keep the album offline."
             }
         }
         return error.localizedDescription

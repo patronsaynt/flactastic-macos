@@ -406,6 +406,7 @@ final class LibraryStore {
     @ObservationIgnored private var parked: (root: URL, tracks: [Track], artwork: [String: Data?])?
 
     func openFolder(_ url: URL) {
+        localExtraIDs = []
         if let p = parked, p.root.standardizedFileURL == url.standardizedFileURL {
             parked = nil
             willOpen(url)
@@ -504,6 +505,7 @@ final class LibraryStore {
     /// No library: neither a folder nor a server.
     func close() {
         openedFolder = nil
+        localExtraIDs = []
         willOpen(nil)
         scanTask?.cancel()
         metadataTask?.cancel()
@@ -523,6 +525,7 @@ final class LibraryStore {
             parked = (folder, self.tracks, albumArtworkCache)
         }
         openedFolder = nil
+        localExtraIDs = []
         albumArtworkCache = [:] // the server's albums pick their own covers
         willOpen(root)
         scanTask?.cancel()
@@ -539,12 +542,34 @@ final class LibraryStore {
         hasFinishedLaunchWork = true
     }
 
+    /// A server library's files that are only on this Mac (see
+    /// `ServerSession.localOnly`), shown with the server's tracks.
+    @ObservationIgnored private var localExtraIDs: Set<UUID> = []
+
+    /// Replaces the server library's local-only files. One already shown
+    /// keeps its entry, with any edit made to it since.
+    func setLocalExtras(_ extras: [Track]) {
+        let ids = Set(extras.map(\.id))
+        let shown = Set(tracks.map(\.id))
+        let serverURLs = Set(tracks.filter { !localExtraIDs.contains($0.id) }.map(\.url.standardizedFileURL))
+        var next = tracks.filter { !localExtraIDs.contains($0.id) || ids.contains($0.id) }
+        next += extras.filter { !shown.contains($0.id) && !serverURLs.contains($0.url.standardizedFileURL) }
+        localExtraIDs = ids
+        tracks = next.sortedForLibrary()
+        normaliseArtistTags()
+        seedAlbumArtworkCache()
+        scanState = .done(count: tracks.count)
+    }
+
     /// Applies tracks the server created, changed or deleted.
     func applyRemote(updated: [Track], deleted: Set<UUID>) {
         let byID = Dictionary(updated.map { ($0.id, $0) }, uniquingKeysWith: { _, last in last })
+        // A file here that just reached the server shows once, as the server's.
+        let arrived = Set(updated.map(\.url.standardizedFileURL))
         var known = Set<UUID>()
         var next: [Track] = tracks.compactMap { t in
             if deleted.contains(t.id) { return nil }
+            if localExtraIDs.contains(t.id), arrived.contains(t.url.standardizedFileURL) { return nil }
             known.insert(t.id)
             return byID[t.id] ?? t
         }

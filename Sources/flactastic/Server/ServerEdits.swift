@@ -1,13 +1,17 @@
 import Foundation
+import os
 
 /// A tag edit for `PATCH /v2/tracks` (§10). Every field is three-state: a
 /// key that's absent leaves the tag alone, `null` clears it, a value sets it.
-struct TagEdit: Encodable, Hashable, Sendable {
+struct TagEdit: Codable, Hashable, Sendable {
     var fields: [String: JSONValue] = [:]
+
+    init() {}
 
     var isEmpty: Bool { fields.isEmpty }
 
     func encode(to encoder: Encoder) throws { try fields.encode(to: encoder) }
+    init(from decoder: Decoder) throws { fields = try [String: JSONValue](from: decoder) }
 
     /// A cover the server takes in an edit (§17: ≤ 10 MiB, ≤ 6000 px a
     /// side): as is when it fits, else a JPEG at the same size, smaller
@@ -81,13 +85,106 @@ final class ServerTagEditor: Sendable {
     private let streamer: ServerStreamer?
     /// Told about every track the server returns, to refresh the mirror and library.
     private let onApplied: (@Sendable ([ServerTrack]) -> Void)?
+    /// Told when the server refuses a staged edit outright: the offline copy
+    /// already carries it, so the server's own file has to come back.
+    private let onRejected: (@Sendable (UUID) -> Void)?
 
-    init(client: ServerClient, root: URL, streamer: ServerStreamer? = nil,
-         onApplied: (@Sendable ([ServerTrack]) -> Void)? = nil) {
+    /// Edits already written to an offline copy and waiting for the server,
+    /// by server track ID; later edits to a track merge over earlier ones.
+    private let staged: OSAllocatedUnfairLock<[UUID: TagEdit]>
+    /// Where `staged` is kept, so a quit before reconnecting loses nothing.
+    private let stagingFile: URL?
+
+    init(client: ServerClient, root: URL, streamer: ServerStreamer? = nil, stagingFile: URL? = nil,
+         onApplied: (@Sendable ([ServerTrack]) -> Void)? = nil,
+         onRejected: (@Sendable (UUID) -> Void)? = nil) {
         self.client = client
         self.root = root
         self.streamer = streamer
+        self.stagingFile = stagingFile
         self.onApplied = onApplied
+        self.onRejected = onRejected
+        let saved = stagingFile.flatMap { try? Data(contentsOf: $0) }
+            .flatMap { try? JSONDecoder().decode([UUID: TagEdit].self, from: $0) }
+        staged = OSAllocatedUnfairLock(initialState: saved ?? [:])
+    }
+
+    // MARK: Staged edits (written here first, sent when the server answers)
+
+    var stagedCount: Int { staged.withLock { $0.count } }
+
+    /// Queues `edit` for `track`, merged over anything already waiting.
+    func stage(_ edit: TagEdit, for track: Track) {
+        guard !edit.isEmpty else { return }
+        let id = serverID(track)
+        let all = staged.withLock { all in
+            all[id, default: TagEdit()].fields.merge(edit.fields) { _, new in new }
+            return all
+        }
+        save(all)
+    }
+
+    /// Sends what's waiting for `track` now. The server's track when it took
+    /// it; nil when it couldn't be reached, and the edit stays queued.
+    /// Throws when the server refused it (it's dropped from the queue).
+    func sendStaged(_ track: Track) async throws -> Track? {
+        let id = serverID(track)
+        guard let edit = staged.withLock({ $0[id] }) else { return nil }
+        switch await send(edit, id: id) {
+        case .sent(let server): return carry(server, from: track, edit: edit)
+        case .later: return nil
+        case .rejected(let error): throw error
+        }
+    }
+
+    /// Sends everything waiting, stopping at the first that can't get
+    /// through. Run before pulling tracks, so the server's old values
+    /// never overwrite what was edited here.
+    func flushStaged() async {
+        let waiting = staged.withLock { $0 }
+        for (id, edit) in waiting {
+            if case .later = await send(edit, id: id) { return }
+        }
+    }
+
+    private enum Outcome { case sent(ServerTrack), later, rejected(ServerError) }
+
+    private func send(_ edit: TagEdit, id: UUID) async -> Outcome {
+        struct One: Decodable { let track: ServerTrack }
+        do {
+            let result = try await client.json(One.self, "PATCH", "v2/tracks/\(id.uuidString)", body: edit)
+            unstage(id, ifStill: edit)
+            onApplied?([result.track])
+            return .sent(result.track)
+        } catch let error as ServerError {
+            // The server read the edit and won't take it (the track is gone,
+            // a value is invalid): retrying can't help.
+            guard case .api(_, let status, _) = error, [400, 404, 409, 410, 413, 422].contains(status) else {
+                return .later
+            }
+            unstage(id, ifStill: edit)
+            onRejected?(id)
+            return .rejected(error)
+        } catch {
+            // Unreachable, or cancelled by a reconnect resetting the
+            // connection: keep it for next time.
+            return .later
+        }
+    }
+
+    /// Drops a sent edit, unless a newer one merged over it meanwhile.
+    private func unstage(_ id: UUID, ifStill sent: TagEdit) {
+        let all = staged.withLock { all in
+            if all[id] == sent { all[id] = nil }
+            return all
+        }
+        save(all)
+    }
+
+    private func save(_ all: [UUID: TagEdit]) {
+        guard let stagingFile else { return }
+        if all.isEmpty { try? FileManager.default.removeItem(at: stagingFile); return }
+        if let data = try? JSONEncoder().encode(all) { try? data.write(to: stagingFile, options: .atomic) }
     }
 
     /// The server has this track. A file here it doesn't have yet (an

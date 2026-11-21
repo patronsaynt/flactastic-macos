@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Network
 import Observation
@@ -67,9 +68,12 @@ final class ServerSession {
     @ObservationIgnored private var changesTask: Task<Void, Never>?
     @ObservationIgnored private var foregroundObservers: [NSObjectProtocol] = []
     @ObservationIgnored private var retryTask: Task<Void, Never>?
+    /// Holds tag edits made on offline copies until the server takes them.
+    @ObservationIgnored private var tagEditor: ServerTagEditor?
     @ObservationIgnored private var retryRound = 0
     @ObservationIgnored private let path = NWPathMonitor()
     @ObservationIgnored private var pathWasUp = true
+    @ObservationIgnored private var pathInterfaces: Set<String>?
     @ObservationIgnored lazy var artwork = ServerArtwork(session: self)
     @ObservationIgnored lazy var offline = OfflineCopies(session: self)
     @ObservationIgnored lazy var uploads = ServerUploads(session: self)
@@ -82,6 +86,13 @@ final class ServerSession {
     /// Each track's server ID by its standardized file path.
     @ObservationIgnored private var idByPath: [String: UUID] = [:]
     @ObservationIgnored private var isPullingTracks = false
+    /// Files in the offline folder the server doesn't have (yet), by
+    /// standardized path: downloads and imports waiting to upload, or ones
+    /// kept off the server. They show in the library with its tracks.
+    private(set) var localOnly: [String: Track] = [:]
+    @ObservationIgnored private var localScan: Task<Void, Never>?
+    @ObservationIgnored private var localScanAgain = false
+    @ObservationIgnored private let scanner = LibraryScanner()
 
     init(library: LibraryStore, playlists: PlaylistStore, listening: ListeningStore, settings: Settings, writer: MetadataWriter) {
         libraryStore = library
@@ -188,9 +199,13 @@ final class ServerSession {
         let client = ServerClient(address: profile.address, pin: profile.pin, token: token)
         client.onUnreachable = { [weak self] in Task { @MainActor in self?.connectionLost() } }
         self.client = client
-        let editor = ServerTagEditor(client: client, root: profile.offlineRoot, streamer: streamer) { [weak self] tracks in
-            Task { @MainActor in self?.applyServerTracks(tracks) }
-        }
+        let editor = ServerTagEditor(
+            client: client, root: profile.offlineRoot, streamer: streamer,
+            stagingFile: profile.supportDirectory.appendingPathComponent("staged-edits.json"),
+            onApplied: { [weak self] tracks in Task { @MainActor in self?.applyServerTracks(tracks) } },
+            // The copy here already has the refused edit: fetch the server's.
+            onRejected: { [weak self] id in Task { @MainActor in self?.offline.redownload(id) } })
+        tagEditor = editor
         Task { [writer] in await writer.setServer(editor) }
         scope?.enter(dataFolder(profile))
         userData.attach()
@@ -200,11 +215,14 @@ final class ServerSession {
         libraryStore.remoteRemove = { [weak self] tracks in Task { await self?.deleteTracks(tracks) } }
         libraryStore.remoteRefresh = { [weak self] in
             self?.uploads.scanForNewFiles()
+            self?.refreshLocalFiles()
             Task { await self?.pullTracks() }
         }
         rebuildIndex()
         streamerSettingsChanged()
         libraryStore.openServer(root: profile.offlineRoot, tracks: appTracks(mirror.tracks.values))
+        localOnly = [:]
+        refreshLocalFiles()
         playlists.load(from: profile.offlineRoot)
         playlistSync.attach()
         Task {
@@ -249,7 +267,11 @@ final class ServerSession {
         playlistSync.detach()
         prefs.detach()
         streamer.config.withLock { $0 = ServerStreamer.Config() }
+        tagEditor = nil
         idByPath = [:]
+        localScan?.cancel()
+        localScan = nil
+        localOnly = [:]
         Task { [writer] in await writer.setServer(nil) }
         userData.detach()
         scope?.enter(LibraryDataFolder.local)
@@ -349,7 +371,7 @@ final class ServerSession {
             status = .signedOut
             stopChanges()
         case .unreachable:
-            if status != .signedOut, status != .identityChanged { status = .unreachable }
+            connectionLost()
         default:
             break
         }
@@ -373,6 +395,12 @@ final class ServerSession {
     /// didn't delete comes back with the pull that follows.
     func deleteTracks(_ tracks: [Track]) async {
         for track in tracks {
+            // Only on this Mac: there's nothing on the server to delete.
+            if isLocalOnly(track) {
+                try? FileManager.default.trashItem(at: track.url, resultingItemURL: nil)
+                uploads.forget(track.url)
+                continue
+            }
             let id = serverID(for: track) ?? track.id
             guard (try? await call({ try await $0.send("DELETE", "v2/tracks/\(id.uuidString)") })) != nil else { continue }
             offline.trash(id)
@@ -410,6 +438,7 @@ final class ServerSession {
         libraryStore.applyRemote(updated: appTracks(changed), deleted: deleted)
         artwork.fillMissing()
         offline.libraryChanged()
+        refreshLocalFiles()
     }
 
     /// The path → ID index and the streamer's per-track facts, from the mirror.
@@ -447,6 +476,94 @@ final class ServerSession {
             $0.transcoding = transcoding
             $0.cacheDirectory = cache
         }
+    }
+
+    // MARK: - On this Mac
+
+    /// Whether a library track's bytes are on this Mac, and why.
+    enum OnThisMac { case copy, notOnServer }
+
+    func onThisMac(_ track: Track) -> OnThisMac? {
+        let path = track.url.standardizedFileURL.path
+        if localOnly[path] != nil { return .notOnServer }
+        guard let id = idByPath[path] else { return nil }
+        return offline.isCurrent(id) ? .copy : nil
+    }
+
+    func isLocalOnly(_ track: Track) -> Bool { localOnly[track.url.standardizedFileURL.path] != nil }
+
+    /// Finds audio files in the offline folder the server doesn't have, reads
+    /// the new ones' tags, and puts them in the library beside its tracks.
+    func refreshLocalFiles() {
+        guard let profile = active else { return }
+        guard localScan == nil else { localScanAgain = true; return }
+        localScan = Task { [weak self] in
+            repeat {
+                guard let self else { return }
+                self.localScanAgain = false
+                await self.scanLocalFiles(profile)
+            } while self?.localScanAgain == true && !Task.isCancelled
+            self?.localScan = nil
+        }
+    }
+
+    private func scanLocalFiles(_ profile: ServerProfile) async {
+        let root = profile.offlineRoot
+        let known = Set(idByPath.keys).union(offline.installedPaths.map {
+            root.appendingPathComponent($0).standardizedFileURL.path
+        })
+        let found = await Task.detached(priority: .utility) { Self.localFiles(in: root, excluding: known) }.value
+        guard !Task.isCancelled, activeID == profile.id else { return }
+        var next: [String: Track] = [:]
+        var fresh: [Track] = []
+        for stub in found {
+            let key = stub.url.standardizedFileURL.path
+            if let had = localOnly[key] { next[key] = had } else { fresh.append(stub) }
+        }
+        if !fresh.isEmpty {
+            let loaded = await withTaskGroup(of: Track.self) { group in
+                for t in fresh { group.addTask { [scanner] in await scanner.loadMetadata(for: t) } }
+                var out: [Track] = []
+                for await t in group { out.append(t) }
+                return out
+            }
+            for t in loaded { next[t.url.standardizedFileURL.path] = t }
+        }
+        guard !Task.isCancelled, activeID == profile.id else { return }
+        // Something may have reached the server while tags were read.
+        next = next.filter { idByPath[$0.key] == nil }
+        guard Set(next.keys) != Set(localOnly.keys) || !fresh.isEmpty else { return }
+        localOnly = next
+        libraryStore.setLocalExtras(Array(next.values))
+    }
+
+    /// Audio files under `root` that aren't at any of the `excluding` paths.
+    /// Each gets an ID from its path, so it stays the same across launches.
+    nonisolated static func localFiles(in root: URL, excluding known: Set<String>) -> [Track] {
+        let keys: [URLResourceKey] = [.isRegularFileKey, .addedToDirectoryDateKey, .creationDateKey]
+        guard let walker = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys,
+                                                          options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return [] }
+        let rootPath = root.standardizedFileURL.path
+        var out: [Track] = []
+        for case let url as URL in walker {
+            let path = url.standardizedFileURL.path
+            guard !known.contains(path), AudioFileFormat.classify(url) != nil,
+                  let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true,
+                  let stub = Track.makeFromURL(url) else { continue }
+            let rel = String(path.dropFirst(rootPath.count + 1))
+            var track = stub.rebuilt(id: localID(rel))
+            track.dateAdded = values.addedToDirectoryDate ?? values.creationDate
+            out.append(track)
+        }
+        return out
+    }
+
+    nonisolated static func localID(_ relativePath: String) -> UUID {
+        var bytes = Array(SHA256.hash(data: Data("local:\(relativePath)".utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50 // a name-based UUID
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                           bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
     }
 
     // MARK: - Organizer (§12)
@@ -501,6 +618,7 @@ final class ServerSession {
         libraryStore.applyRemote(updated: appTracks(tracks), deleted: [])
         artwork.fillMissing()
         offline.libraryChanged()
+        refreshLocalFiles()
     }
 
     func refreshLibraryInfo() async {
@@ -547,6 +665,9 @@ final class ServerSession {
     }
 
     private func catchUp(_ kinds: Set<String>) async {
+        // Edits made here while away go first, so pulling tracks can't put
+        // the server's old tags back over them.
+        if kinds.contains("tracks") { await tagEditor?.flushStaged() }
         if kinds.contains("library") || kinds.contains("tracks") {
             await refreshLibraryInfo()
             if let info = try? await call({ try await $0.json(ServerInfo.self, "GET", "v2/server") }) {
@@ -585,25 +706,51 @@ final class ServerSession {
         else if changesTask != nil { startChanges() } // a long-poll from before sleep may be dead
     }
 
+    /// The network changed under the app: whatever connection it had is
+    /// gone, so start a new one, and check the server answers on it.
+    private func networkChanged() {
+        guard isActive, let client, status != .signedOut, status != .identityChanged else { return }
+        client.resetConnections()
+        if status == .unreachable { retry(after: 0) }
+        else if changesTask != nil { startChanges() }
+    }
+
     private func retry(after first: Double) {
         retryTask?.cancel()
         retryRound += 1
         let round = retryRound
         retryTask = Task { [weak self] in
             var delay = first
-            while let self, !Task.isCancelled, self.status == .unreachable {
+            while true {
                 if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-                guard !Task.isCancelled else { return }
+                guard let self, !Task.isCancelled else { return }
+                guard self.status == .unreachable, let client = self.client else { break }
+                // Each try on a new connection: the old one may be dead
+                // without saying so (sleep, Wi-Fi, a VPN dropping).
+                client.resetConnections()
                 if (try? await self.call({ try await $0.json(ServerInfo.self, "GET", "v2/server", timeout: 10) })) != nil {
-                    // Back: catch up on everything that changed meanwhile.
-                    if NSApp?.isActive == true { self.startChanges() }
-                    else { await self.catchUp(["tracks", "playlists", "prefs", "history", "library", "userdata"]) }
                     break
                 }
+                guard !Task.isCancelled else { return }
                 delay = min(max(delay * 2, 2), 60)
             }
-            if let self, self.retryRound == round { self.retryTask = nil }
+            guard let self, self.retryRound == round else { return }
+            // Done before catching up, so a request that fails meanwhile
+            // starts trying again rather than finding this one still here.
+            self.retryTask = nil
+            guard self.status == .ready else { return }
+            self.reconnected()
         }
+    }
+
+    /// Back after an outage: send what waited, and catch up on everything
+    /// that changed meanwhile.
+    private func reconnected() {
+        uploads.resume()
+        uploads.scanForNewFiles()
+        offline.libraryChanged()
+        if NSApp?.isActive == true || changesTask != nil { startChanges() }
+        else { Task { await catchUp(["tracks", "playlists", "prefs", "history", "library", "userdata"]) } }
     }
 
     /// Long-polls only while the app is in front; catches up on return.
@@ -614,15 +761,19 @@ final class ServerSession {
             Task { @MainActor in
                 guard let self else { return }
                 let up = p.status == .satisfied
-                defer { self.pathWasUp = up }
-                if !up { self.connectionLost() } else if !self.pathWasUp { self.reconnectNow() }
+                // A VPN or another network coming or going changes the route
+                // to the server even while some network stays up.
+                let interfaces = Set(p.availableInterfaces.map(\.name))
+                defer { self.pathWasUp = up; self.pathInterfaces = interfaces }
+                if !up { self.connectionLost() }
+                else if !self.pathWasUp || (self.pathInterfaces.map { $0 != interfaces } ?? false) { self.networkChanged() }
             }
         }
         path.start(queue: .global(qos: .utility))
         let center = NotificationCenter.default
         foregroundObservers = [
             NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.reconnectNow() }
+                MainActor.assumeIsolated { self?.networkChanged() }
             },
             center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated { self?.stopChanges() }

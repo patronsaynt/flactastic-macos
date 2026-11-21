@@ -55,11 +55,14 @@ actor MetadataWriter {
         case fileOpenFailed(URL)
         case saveFailed(URL)
         case serverLibrary
+        case serverUnreachable
 
         var errorDescription: String? {
             switch self {
             case .serverLibrary:
                 return "On a server, tags can only be changed in the track and album editors."
+            case .serverUnreachable:
+                return "Can't reach the server, and this track has no offline copy to edit here."
 
             case .fileNotFound(let url):
                 return "File not found: \(url.lastPathComponent)"
@@ -129,13 +132,59 @@ actor MetadataWriter {
         labelChange: LabelChange = .unchanged,
         discChange: DiscChange = .unchanged
     ) async throws -> Track {
-        if let server = try serverEditor(for: track) {
-            return try await server.apply(TagEdit.from(
-                track, title: title, artist: artist, album: album, year: year, genre: genre,
-                secondaryGenres: secondaryGenres, trackNumber: trackNumber, artwork: artworkChange,
-                albumArtist: albumArtistChange, compilation: compilationChange, mix: mixCompilationChange,
-                label: labelChange, disc: discChange), to: track)
+        let writeHere = {
+            try self.writeFile(
+                to: track, title: title, artist: artist, album: album, year: year, genre: genre,
+                secondaryGenres: secondaryGenres, trackNumber: trackNumber, artworkChange: artworkChange,
+                albumArtistChange: albumArtistChange, compilationChange: compilationChange,
+                mixCompilationChange: mixCompilationChange, labelChange: labelChange, discChange: discChange)
         }
+        guard let server = try serverEditor(for: track) else { return try writeHere() }
+        let edit = TagEdit.from(
+            track, title: title, artist: artist, album: album, year: year, genre: genre,
+            secondaryGenres: secondaryGenres, trackNumber: trackNumber, artwork: artworkChange,
+            albumArtist: albumArtistChange, compilation: compilationChange, mix: mixCompilationChange,
+            label: labelChange, disc: discChange)
+        return try await serverWrite(edit, to: track, server: server, writeHere: writeHere)
+    }
+
+    /// A server track's edit. With an offline copy here, the copy is tagged
+    /// first and the edit queued for the server: sent now if it answers,
+    /// otherwise once it's back. Without one, only the server can take it.
+    private func serverWrite(_ edit: TagEdit, to track: Track, server: ServerTagEditor,
+                             writeHere: () throws -> Track) async throws -> Track {
+        guard !edit.isEmpty else { return track }
+        guard server.hasCurrentCopy(track) else {
+            do {
+                return try await server.apply(edit, to: track)
+            } catch is CancellationError {
+                throw WriteError.serverUnreachable
+            } catch ServerError.unreachable {
+                throw WriteError.serverUnreachable
+            }
+        }
+        let local = try writeHere()
+        server.stage(edit, for: track)
+        return try await server.sendStaged(track) ?? local
+    }
+
+    /// Writes the tags into the file at `track.url` itself.
+    private func writeFile(
+        to track: Track,
+        title: String,
+        artist: String?,
+        album: String?,
+        year: Int?,
+        genre: String?,
+        secondaryGenres: [String],
+        trackNumber: Int?,
+        artworkChange: ArtworkChange,
+        albumArtistChange: AlbumArtistChange,
+        compilationChange: CompilationChange,
+        mixCompilationChange: MixCompilationChange,
+        labelChange: LabelChange,
+        discChange: DiscChange
+    ) throws -> Track {
         let url = track.url
 
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -405,9 +454,16 @@ actor MetadataWriter {
             var edit = TagEdit()
             edit.fields["cueSheet"] = markers.isEmpty ? .null
                 : .string(CueSheet.encode(markers: markers, fileName: track.url.lastPathComponent))
-            _ = try await server.apply(edit, to: track)
+            _ = try await serverWrite(edit, to: track, server: server) {
+                try self.writeMarkersFile(to: track, markers: markers)
+                return track
+            }
             return
         }
+        try writeMarkersFile(to: track, markers: markers)
+    }
+
+    private func writeMarkersFile(to track: Track, markers: [TrackMarker]) throws {
         let url = track.url
         guard FileManager.default.fileExists(atPath: url.path) else {
             throw WriteError.fileNotFound(url)
