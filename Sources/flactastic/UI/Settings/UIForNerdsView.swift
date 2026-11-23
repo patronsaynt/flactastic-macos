@@ -791,7 +791,7 @@ private struct NerdToggleRow: View {
             HStack(alignment: .center) {
                 NerdRowLabel(label: label, isChanged: isChanged, reset: reset)
                 Toggle(label, isOn: $isOn)
-                    .toggleStyle(FLSwitchStyle())
+                    .toggleStyle(FLSwitchStyle(hiddenLabel: label))
                     .labelsHidden()
             }
             NerdDetail(text: detail)

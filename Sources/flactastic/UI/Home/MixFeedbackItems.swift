@@ -49,7 +49,7 @@ private struct MixRating {
         core = curator.core(of: kept, seedPaths: signals.seeds[mix.id] ?? [])
         inMix = Set(mix.tracks.map(\.url.path))
         rejected = (signals.rejected[mix.id] ?? []).union(gone.map { [$0.url.path] } ?? [])
-        pool = HomeFeed.mixPool(tracks: library.tracks, albums: library.albums)
+        pool = HomeFeed.mixPool(tracks: library.counted.tracks, albums: library.counted.albums)
     }
 
     private func isNew(_ t: Track) -> Bool { !inMix.contains(t.url.path) && !rejected.contains(t.url.path) }

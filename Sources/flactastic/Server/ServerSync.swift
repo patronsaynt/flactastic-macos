@@ -104,9 +104,14 @@ final class PlaylistSync {
 
     private var knownURL: URL? { session.active?.supportDirectory.appendingPathComponent("playlists-known.json") }
 
-    func attach() {
+    /// `fresh`: this Mac holds none of the account's playlists yet, so the
+    /// next pull takes every server playlist as it is: nothing is sent and
+    /// nothing deleted for being missing here.
+    func attach(fresh: Bool = false) {
         known = [:]
-        if let url = knownURL, let data = try? Data(contentsOf: url),
+        if fresh {
+            saveKnown()
+        } else if let url = knownURL, let data = try? Data(contentsOf: url),
            let list = try? ServerClient.decoder.decode([Playlist].self, from: data) {
             known = Dictionary(list.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         }
@@ -408,7 +413,11 @@ final class HistorySync {
     func attach() {
         state = stateURL.flatMap { try? Data(contentsOf: $0) }.flatMap { try? JSONDecoder().decode(State.self, from: $0) } ?? State()
         session.listening.libraryID = { [weak session] track in session?.serverID(for: track) }
-        // Stats count only this library's tracks, and only those plays are sent.
+        // Stats count only this library's tracks, and only plays of the
+        // server's own tracks are sent.
+        // Plays of music only on this Mac don't count yet: they're kept here
+        // under its local ID (staged), and count and are sent once the file
+        // reaches the server (`reassign`).
         session.listening.belongs = { [weak session] event in session?.mirror.tracks[event.trackID] != nil }
         session.listening.onRecord = { [weak self, weak session] event in
             guard session?.mirror.tracks[event.trackID] != nil else { return }
@@ -444,11 +453,20 @@ final class HistorySync {
         }
     }
 
+    /// A local file reached the server: its staged plays become plays of
+    /// the server track and are queued to send.
+    func reassign(from localID: UUID, to trackID: UUID) {
+        let moved = session.listening.reassign(trackID: localID, to: trackID)
+        guard !moved.isEmpty else { return }
+        state.outbox.formUnion(moved)
+        schedulePost()
+    }
+
     private struct Batch: Encodable { let events: [PlayEvent]; let contexts: [RecentContext] }
 
     /// Sends the outbox, ≤ 1000 events per request.
     func post() async {
-        let byID = Dictionary(session.listening.events.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let byID = Dictionary(session.listening.allEvents.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         state.outbox = state.outbox.filter { byID[$0] != nil }
         while !state.outbox.isEmpty || state.contextsDirty {
             let ids = Array(state.outbox.prefix(1000))

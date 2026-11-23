@@ -12,6 +12,7 @@ struct SettingsView: View {
     @Environment(PlayerState.self) private var player
     @Environment(DebugState.self) private var debugState
     @Environment(ServerSession.self) private var server
+    @Environment(NavigationRouter.self) private var router
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedTab: SettingsTab = .general
@@ -72,6 +73,10 @@ struct SettingsView: View {
         .background(Theme.surface)
         .onChange(of: debugState.debuggingEnabled) { _, enabled in
             if !enabled && selectedTab == .debug { selectedTab = .general }
+        }
+        .onAppear {
+            if let name = router.settingsOpensOn, let tab = SettingsTab(rawValue: name) { selectedTab = tab }
+            router.settingsOpensOn = nil
         }
     }
 
@@ -184,7 +189,7 @@ private struct ToggleRow: View {
             }
             Spacer()
             Toggle(label, isOn: $isOn)
-                .toggleStyle(FLSwitchStyle())
+                .toggleStyle(FLSwitchStyle(hiddenLabel: label))
                 .labelsHidden()
                 .disabled(!isEnabled)
         }

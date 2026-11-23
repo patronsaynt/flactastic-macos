@@ -83,7 +83,7 @@ final class HomeHighlight {
             return
         }
 
-        let tracks = library.tracks
+        let tracks = library.counted.tracks
         guard !tracks.isEmpty else { return }
 
         let resolver = library.makeArtistResolver()

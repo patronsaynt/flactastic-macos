@@ -40,7 +40,7 @@ struct HomeView: View {
     /// key) can resolve back to real albums for artwork and playback.
     /// Memoized on `LibraryStore` — building it here ran once per body eval.
     private var albumsByID: [String: Album] {
-        library.albumsByID
+        library.counted.albumsByID
     }
 
     /// Playlist lookup by UUID, so recent playlist entries resolve to artwork,
@@ -92,7 +92,7 @@ struct HomeView: View {
     /// welcome with ways to add music instead of empty stats.
     private var isLibraryEmpty: Bool {
         debugState.emptyLibraryPreviewActive
-            || (library.hasCompletedInitialLoad && library.tracks.isEmpty)
+            || (library.hasCompletedInitialLoad && library.counted.tracks.isEmpty)
     }
 
     /// The lyric pick, unless Home is showing its empty-library welcome
@@ -140,15 +140,15 @@ struct HomeView: View {
         m.streakDays = listening.currentStreakDays
         m.topArtists = listening.topArtists(limit: 5, since: since, resolver: library.makeArtistResolver())
         m.topAlbums = listening.topAlbums(limit: 5, since: since)
-        m.footerAlbumCount = library.albums.count
-        m.footerHours = Int((library.tracks.compactMap(\.duration).reduce(0, +) / 3600).rounded())
+        m.footerAlbumCount = library.counted.albums.count
+        m.footerHours = Int((library.counted.tracks.compactMap(\.duration).reduce(0, +) / 3600).rounded())
         metrics = m
         recomputeChart()
 
         let stored = Self.storedRotation()
         let resolver = library.makeArtistResolver()
         let built = HomeFeed.build(.init(
-            albums: library.albums, tracks: library.tracks, events: listening.events,
+            albums: library.counted.albums, tracks: library.counted.tracks, events: listening.events,
             recentContexts: listening.recentContexts, onThisDay: m.onThisDay,
             storedRotation: stored, resolver: resolver,
             isLibraryLoaded: library.hasCompletedInitialLoad,
@@ -174,7 +174,7 @@ struct HomeView: View {
     /// Starts (or continues) fetching related artists and analysing sound
     /// for the mixes: the library's 150 biggest artists, every mixable track.
     private func refreshMixSignals() {
-        let pool = HomeFeed.mixPool(tracks: library.tracks, albums: library.albums)
+        let pool = HomeFeed.mixPool(tracks: library.counted.tracks, albums: library.counted.albums)
         var counts: [String: Int] = [:]
         for t in pool { if let c = t.albumArtist ?? t.artist { counts[c, default: 0] += 1 } }
         let top = counts.sorted { $0.value > $1.value }.prefix(150).map(\.key)
@@ -342,7 +342,7 @@ struct HomeView: View {
         guard let pick = highlight.pick else { return nil }
         let resolver = library.makeArtistResolver()
         let wanted = Set(resolver.keys(forCredit: pick.artistDisplay))
-        let track = wanted.isEmpty ? nil : library.tracks.first { t in
+        let track = wanted.isEmpty ? nil : library.counted.tracks.first { t in
             t.title == pick.songTitle
                 && !wanted.isDisjoint(with: resolver.keys(forCredit: t.artist ?? t.albumArtist))
         }
@@ -505,7 +505,7 @@ struct HomeView: View {
                         HomeRepeatRow(
                             rank: index + 1, track: row.track, plays: row.plays,
                             onPlay: { play(rows.map(\.track), at: index, source: "On repeat") },
-                            menu: { playbackContextMenuItems(for: [row.track], player: player) }
+                            menu: { playbackContextMenuItems(for: [row.track], player: player) + OfflineMenu.section(for: [row.track]) }
                         )
                     }
                 }
@@ -533,6 +533,8 @@ struct HomeView: View {
                             .button("Shuffle", systemImage: "shuffle") { playMix(mix, shuffle: true) },
                         ]
                         items += playbackContextMenuItems(for: mix.tracks, player: player)
+                        // A mix changes daily: its tracks download one by one.
+                        items += OfflineMenu.section(for: mix.tracks)
                         items.append(.divider)
                         if let saved = savedPlaylist(mix) {
                             items.append(.button("Open Saved Playlist", systemImage: "music.note.list") {
@@ -834,7 +836,7 @@ struct HomeView: View {
     private func rerollMix(_ mix: HomeFeed.Mix) {
         let resolver = library.makeArtistResolver()
         let input = HomeFeed.Inputs(
-            albums: library.albums, tracks: library.tracks, events: listening.events,
+            albums: library.counted.albums, tracks: library.counted.tracks, events: listening.events,
             recentContexts: [], onThisDay: nil, storedRotation: nil, resolver: resolver,
             signals: MixSignals.shared.signals(resolver: resolver, groups: settings.genreGroups)
         )
@@ -902,6 +904,7 @@ struct HomeView: View {
         items.append(.button("View Playlist", systemImage: "music.note.list") {
             router.navigateToPlaylist(id: playlist.id)
         })
+        items.append(contentsOf: OfflineMenu.items(for: tracks, scope: .playlist(playlist.id)))
         return items
     }
 

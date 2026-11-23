@@ -192,6 +192,8 @@ struct AllTracksView: View {
                             FLContextMenuItem.divider
                         }
                         FLContextMenuItem.button("Edit...", systemImage: "pencil") { editingTrack = track }
+                        // Every selected track, on a server library.
+                        OfflineMenu.items(for: tracksForMenu)
                         FLContextMenuItem.divider
                         addToPlaylistMenuItem(tracks: tracksForMenu)
                         let artistItems = artistContextMenuItems(

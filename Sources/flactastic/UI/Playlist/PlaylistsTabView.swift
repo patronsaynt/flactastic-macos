@@ -268,6 +268,7 @@ struct PlaylistsTabView: View {
         items.append(.divider)
         items.append(.button("Open", systemImage: "arrow.up.right") { router.playlistsPath.append(playlist.id) })
         items.append(.button("Edit…", systemImage: "pencil") { editingPlaylistID = playlist.id })
+        items.append(contentsOf: OfflineMenu.items(for: resolved[playlist.id] ?? [], scope: .playlist(playlist.id)))
         items.append(.divider)
         items.append(.button("Delete", destructive: true) {
             playlistStore.deletePlaylist(id: playlist.id)
@@ -457,6 +458,7 @@ private struct PlaylistStage: View {
                     FLContextMenuItem.divider
                     FLContextMenuItem.button("Open", systemImage: "arrow.up.right", action: open)
                     FLContextMenuItem.button("Edit...", systemImage: "pencil", action: edit)
+                    OfflineMenu.items(for: tracks, scope: .playlist(playlist.id))
                 }
 
             VStack(alignment: .leading, spacing: 0) {
@@ -626,10 +628,13 @@ private struct StageTrackRow: View {
             ArtworkView(data: track.artwork, size: 44)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(track.title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(isCurrent ? Theme.accent : Theme.textPrimary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(track.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(isCurrent ? Theme.accent : Theme.textPrimary)
+                        .lineLimit(1)
+                    OfflineCopyMark(track: track, size: 10.5)
+                }
                 Text([ArtistResolver.displayString(track.artist ?? track.albumArtist), track.album]
                     .compactMap { $0 }
                     .joined(separator: " · "))

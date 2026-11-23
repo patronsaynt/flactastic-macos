@@ -232,6 +232,7 @@ private struct PlayerTrackMenu: ViewModifier {
                     router.navigateToAlbum(id: albumID)
                 }
             }
+            OfflineMenu.section(for: [track])
             let artistItems = artistContextMenuItems(
                 credit: track.artist ?? track.albumArtist,
                 library: library,
@@ -497,25 +498,33 @@ struct PlayerQualityBadge: View {
     }
 }
 
-/// Where a server track's audio comes from, after the artist: "· Streaming"
-/// or "· Offline", quiet, in the app's one ink. Nothing for local files.
+/// Where a server track's audio comes from, after the artist: a small gray
+/// download mark when it's playing from the offline copy on this Mac, or
+/// "· Streaming". Server libraries only; nothing for a local library.
 struct PlayerSourceLabel: View {
     let track: Track
     var size: CGFloat = 12
     @Environment(PlayerState.self) private var player
 
     var body: some View {
-        if player.currentTrack?.url == track.url, let source = player.source {
-            let server = ServerSession.current?.active?.serverName ?? "the server"
-            let (text, help) = source == .offline
-                ? ("Offline", "Playing the offline copy on this Mac")
-                : ("Streaming", "Streaming from \(server)")
-            Text(" · \(text)")
-                .font(.system(size: size))
-                .foregroundStyle(Theme.textTertiary)
-                .lineLimit(1)
-                .fixedSize()
-                .help(help)
+        if let session = ServerSession.current, session.isActive,
+           player.currentTrack?.url == track.url, let source = player.source {
+            if source == .offline {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: size - 1.5, weight: .semibold))
+                    .foregroundStyle(Theme.textTertiary)
+                    .padding(.leading, 5)
+                    .fixedSize()
+                    .help("Playing the offline copy on this Mac")
+                    .accessibilityLabel("Playing offline")
+            } else {
+                Text(" · Streaming")
+                    .font(.system(size: size))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .help("Streaming from \(session.active?.serverName ?? "the server")")
+            }
         }
     }
 }

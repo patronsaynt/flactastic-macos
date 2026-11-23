@@ -18,6 +18,7 @@ final class LibraryStore {
         didSet {
             albumsCache = nil
             albumsByIDCache = nil
+            countedCache = nil
             artistResolverCache = nil
             artistSummariesCache = nil
             tracksRevision &+= 1
@@ -82,6 +83,7 @@ final class LibraryStore {
         didSet {
             albumsCache = nil
             albumsByIDCache = nil
+            countedCache = nil
         }
     }
 
@@ -117,6 +119,36 @@ final class LibraryStore {
         let computed = Dictionary(current.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         albumsByIDCache = computed
         return computed
+    }
+
+    // MARK: - What counts
+
+    /// The library as Home, stats and the Fidelidex see it. In a server
+    /// library only the server's own tracks count: music still only on this
+    /// Mac shows in the Collection but counts once it has uploaded. In a
+    /// folder library this is the whole library.
+    struct Counted {
+        let tracks: [Track]
+        let albums: [Album]
+        let albumsByID: [String: Album]
+    }
+
+    @ObservationIgnored private var countedCache: Counted?
+
+    var counted: Counted {
+        let currentTracks = tracks   // observed, as in `albums`
+        if let countedCache { return countedCache }
+        let result: Counted
+        if localExtraIDs.isEmpty {
+            result = Counted(tracks: currentTracks, albums: albums, albumsByID: albumsByID)
+        } else {
+            let kept = currentTracks.filter { !localExtraIDs.contains($0.id) }
+            let grouped = Self.buildAlbums(from: kept, artworkCache: albumArtworkCache)
+            result = Counted(tracks: kept, albums: grouped,
+                             albumsByID: Dictionary(grouped.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first }))
+        }
+        countedCache = result
+        return result
     }
 
     private static func buildAlbums(from tracks: [Track], artworkCache: [String: Data?]) -> [Album] {
@@ -544,7 +576,7 @@ final class LibraryStore {
 
     /// A server library's files that are only on this Mac (see
     /// `ServerSession.localOnly`), shown with the server's tracks.
-    @ObservationIgnored private var localExtraIDs: Set<UUID> = []
+    @ObservationIgnored private var localExtraIDs: Set<UUID> = [] { didSet { countedCache = nil } }
 
     /// Replaces the server library's local-only files. One already shown
     /// keeps its entry, with any edit made to it since.

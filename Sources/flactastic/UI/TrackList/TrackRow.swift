@@ -24,8 +24,6 @@ struct TrackRow: View {
     /// the artist. Used by the flat All Tracks list, where the album isn't
     /// implied by context.
     var showAlbumInSubtitle: Bool = false
-    /// A server library marks what's on this Mac; nil in other windows.
-    @Environment(ServerSession.self) private var server: ServerSession?
     @Environment(\.trackListShowsFormat) private var showsFormat
 
     var body: some View {
@@ -45,7 +43,7 @@ struct TrackRow: View {
                         .font(.system(size: 13.5))
                         .foregroundStyle(isPlaying ? Theme.accent : Theme.textPrimary)
                         .lineLimit(1)
-                    if let kind = server?.onThisMac(track) { OnThisMacMark(kind: kind) }
+                    OfflineCopyMark(track: track)
                 }
 
                 if let subtitle {
@@ -147,23 +145,25 @@ struct TrackRow: View {
     }
 }
 
-/// Beside a server track's title: its bytes are on this Mac, so it plays
-/// without the server. Nothing for a library that is this Mac's own.
-struct OnThisMacMark: View {
-    let kind: ServerSession.OnThisMac
+/// A small download mark beside a track's title when a server library has its
+/// audio on this Mac: an offline copy, or a file the server doesn't have yet.
+/// Draws nothing for a local library, or while no server is active.
+struct OfflineCopyMark: View {
+    let track: Track
+    var size: CGFloat = 10
+    /// Tertiary ink by default; rows drawn on artwork pass their own.
+    var color: Color = Theme.textTertiary
+
+    @Environment(ServerSession.self) private var server: ServerSession?
 
     var body: some View {
-        Image(systemName: "arrow.down.circle.fill")
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(Theme.textTertiary)
-            .help(label)
-            .accessibilityLabel(label)
-    }
-
-    private var label: String {
-        switch kind {
-        case .copy: "Playable offline"
-        case .notOnServer: "Only on this Mac"
+        if let server, server.isActive, let kind = server.onThisMac(track) {
+            let label = kind == .copy ? "Playable offline" : "Only on this Mac"
+            Image(systemName: "arrow.down.circle.fill")
+                .font(.system(size: size, weight: .semibold))
+                .foregroundStyle(color)
+                .help(label)
+                .accessibilityLabel(label)
         }
     }
 }

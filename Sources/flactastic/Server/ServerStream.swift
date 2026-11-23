@@ -78,10 +78,14 @@ final class ServerStreamer: Sendable {
     /// verified offline copy should play instead (never transcoded).
     func open(_ track: Track, at seconds: TimeInterval) async throws -> (any PCMSource)? {
         let c = config.withLock { $0 }
-        guard let client = c.client, let info = c.tracks[track.url.standardizedFileURL.path] else { return nil }
+        guard let info = c.tracks[track.url.standardizedFileURL.path] else { return nil }
+        // The offline copy first, connected or not: it needs no server, and
+        // checking the connection first let an offline copy fall through to
+        // a plain, unmarked file open whenever the client wasn't set yet.
         if c.offline.contains(info.id), FileManager.default.fileExists(atPath: track.url.path) {
             return OfflineCopySource(try AVAudioFile(forReading: track.url, commonFormat: .pcmFormatFloat32, interleaved: false))
         }
+        guard let client = c.client else { return nil }
         let auto = c.quality == .auto && c.transcoding
         let quality = c.transcoding ? pick(c.quality, info) : .original
         if quality != .original {

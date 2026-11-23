@@ -26,13 +26,7 @@ struct LibraryMenus {
         var manage: [FLContextMenuItem] = []
         if let open { manage.append(.button("Open Album", systemImage: "square.grid.2x2", action: open)) }
         if let edit { manage.append(.button("Edit...", systemImage: "pencil", action: edit)) }
-        if let offline = ServerSession.current.flatMap({ $0.isActive ? $0.offline : nil }) {
-            let kept = offline.isKept(album: album.id)
-            manage.append(.button(kept ? "Remove Offline Copy" : "Keep Offline",
-                                  systemImage: kept ? "icloud.slash" : "arrow.down.circle") {
-                offline.setAlbum(album.id, kept: !kept)
-            })
-        }
+        manage.append(contentsOf: OfflineMenu.items(for: album.tracks, scope: .album(album.id)))
         if !manage.isEmpty {
             items.append(.divider)
             items.append(contentsOf: manage)
@@ -50,12 +44,15 @@ struct LibraryMenus {
 
     /// Play Next, Add to Queue, Add to Playlist, View Album, anything the page
     /// adds (Remove from Playlist), Edit, the track's artists, and Remove last.
+    /// `selected`: every track the menu acts on when several rows are
+    /// selected; Download and Remove from This Mac cover all of them.
     func track(
         _ track: Track,
         viewAlbum: Bool = true,
         extra: [FLContextMenuItem] = [],
         edit: (() -> Void)? = nil,
-        remove: (() -> Void)? = nil
+        remove: (() -> Void)? = nil,
+        selected: [Track]? = nil
     ) -> [FLContextMenuItem] {
         var items = playbackContextMenuItems(for: [track], player: player)
         items.append(addToPlaylist([track]))
@@ -66,6 +63,7 @@ struct LibraryMenus {
         }
         var manage = extra
         if let edit { manage.append(.button("Edit...", systemImage: "pencil", action: edit)) }
+        manage.append(contentsOf: OfflineMenu.items(for: selected ?? [track]))
         if !manage.isEmpty {
             items.append(.divider)
             items.append(contentsOf: manage)

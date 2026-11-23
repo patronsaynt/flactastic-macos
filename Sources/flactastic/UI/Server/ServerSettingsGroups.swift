@@ -101,6 +101,11 @@ struct ServerAccountGroups: View {
     @State private var devicesError: String?
     /// Devices whose Revoke is in flight, so a second click doesn't send it twice.
     @State private var revoking: Set<UUID> = []
+    /// While the offline folder is changing (and its files moving).
+    @State private var changingFolder = false
+    @State private var folderMessage: String?
+    /// Every queued file, not just failures.
+    @State private var showsUploadFiles = false
     @State private var password = ""
     @State private var current = ""
     @State private var new = ""
@@ -116,9 +121,11 @@ struct ServerAccountGroups: View {
                     statusRow(profile)
                 }
                 if server.status != .identityChanged {
+                    // First while there's anything to say: it's what the
+                    // status pill's "Uploading…" opens.
+                    if !server.uploads.items.isEmpty { uploads }
                     streaming
                     offline(profile)
-                    if !server.uploads.items.isEmpty { uploads }
                     devicesGroup
                     account(profile)
                 }
@@ -206,7 +213,7 @@ struct ServerAccountGroups: View {
         return SettingsGroup(title: "Offline Copies") {
             Row(title: "Whole Library", detail: "Or keep albums and playlists offline from their menus.") {
                 Toggle("Whole Library", isOn: Binding(get: { copies.selection.everything }, set: { copies.setEverything($0) }))
-                    .toggleStyle(FLSwitchStyle())
+                    .toggleStyle(FLSwitchStyle(hiddenLabel: "Whole Library"))
                     .labelsHidden()
             }
             GroupDivider()
@@ -218,15 +225,60 @@ struct ServerAccountGroups: View {
                         f.excludedFormats = on ? f.excludedFormats.union([.mp3, .aac]) : f.excludedFormats.subtracting([.mp3, .aac])
                         copies.setFilter(f)
                     }))
-                    .toggleStyle(FLSwitchStyle())
+                    .toggleStyle(FLSwitchStyle(hiddenLabel: "Lossless Only"))
                     .labelsHidden()
             }
             GroupDivider()
-            Row(title: offlineTitle(copies), detail: profile.offlineFolder) {
-                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([profile.offlineRoot]) }
-                    .buttonStyle(PillButtonStyle())
+            Row(title: changingFolder ? "Moving your music…" : offlineTitle(copies), detail: profile.offlineFolder) {
+                HStack(spacing: Theme.Spacing.sm) {
+                    Button("Change…") { changeFolder(profile) }
+                        .buttonStyle(PillButtonStyle())
+                        .disabled(changingFolder)
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([profile.offlineRoot]) }
+                        .buttonStyle(PillButtonStyle())
+                }
             }
+            if let folderMessage { message(folderMessage) }
             if let error = copies.lastError { message(error) }
+        }
+    }
+
+    /// Picks a new offline folder, then asks whether the music moves with it.
+    private func changeFolder(_ profile: ServerProfile) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = profile.offlineRoot.deletingLastPathComponent()
+        panel.prompt = "Use Folder"
+        panel.message = "Choose where this Mac keeps music from \(profile.serverName)."
+        guard panel.runModal() == .OK, let url = panel.url,
+              url.standardizedFileURL.path != profile.offlineRoot.standardizedFileURL.path else { return }
+
+        let alert = NSAlert()
+        alert.messageText = "Move your music to “\(url.lastPathComponent)”?"
+        alert.informativeText = "Offline copies and music that's only on this Mac move with it, so nothing downloads again.\n\nIf you don't move it, offline copies download again into the new folder, and music only on this Mac stays in the old folder and leaves the library."
+        alert.addButton(withTitle: "Move")
+        alert.addButton(withTitle: "Don't Move")
+        alert.addButton(withTitle: "Cancel")
+        let answer = alert.runModal()
+        guard answer != .alertThirdButtonReturn else { return }
+        let moving = answer == .alertFirstButtonReturn
+
+        changingFolder = true
+        folderMessage = nil
+        Task {
+            defer { changingFolder = false }
+            do {
+                let left = try await server.changeOfflineFolder(to: url, moving: moving)
+                if !moving { server.offline.refresh() }
+                if left > 0 {
+                    folderMessage = "\(CountText.of(left, "item")) stayed in the old folder because the new one already has something with the same name."
+                }
+            } catch {
+                folderMessage = error.localizedDescription
+            }
         }
     }
 
@@ -238,31 +290,91 @@ struct ServerAccountGroups: View {
 
     // MARK: Uploads
 
+    /// One summary row: what's uploading now (song and artist), how far the
+    /// queue is, Pause/Resume. Failures are always listed; every file only
+    /// on request.
     private var uploads: some View {
-        SettingsGroup(title: "Uploads") {
-            ForEach(server.uploads.items) { item in
-                if item.id != server.uploads.items.first?.id { GroupDivider() }
-                Row(title: item.name, detail: uploadDetail(item)) {
+        let queue = server.uploads
+        return SettingsGroup(title: "Uploads") {
+            VStack(alignment: .leading, spacing: 10) {
+                Row(title: uploadHeadline(queue), detail: uploadSummary(queue)) {
+                    HStack(spacing: Theme.Spacing.sm) {
+                        Button(showsUploadFiles ? "Hide Files" : "Show Files") {
+                            withAnimation(.easeOut(duration: 0.2)) { showsUploadFiles.toggle() }
+                        }
+                        .buttonStyle(QuietTextButtonStyle())
+                        if queue.isBusy {
+                            Button(queue.isPaused ? "Resume" : "Pause") {
+                                if queue.isPaused { queue.resumeSending() } else { queue.pause() }
+                            }
+                            .buttonStyle(PillButtonStyle())
+                        }
+                    }
+                }
+                if queue.totalBytes > 0, queue.isBusy {
+                    UploadProgressBar(fraction: Double(queue.sentBytes) / Double(queue.totalBytes))
+                        .padding(.horizontal, Theme.Spacing.lg)
+                        .padding(.bottom, 4)
+                        .accessibilityLabel("Upload progress")
+                        .accessibilityValue("\(Int(Double(queue.sentBytes) / Double(queue.totalBytes) * 100)) percent")
+                }
+            }
+            ForEach(showsUploadFiles ? queue.items : queue.failed) { item in
+                GroupDivider()
+                Row(title: uploadTitle(item), detail: uploadDetail(item)) {
                     if item.status == .failed {
-                        Button("Remove") { server.uploads.dismiss(item.id) }
+                        Button("Remove") { queue.dismiss(item.id) }
                             .buttonStyle(QuietTextButtonStyle())
                             .help("Stop trying to upload this file. The file stays on this Mac.")
-                        Button("Retry") { server.uploads.retry(item.id) }
+                        Button("Retry") { queue.retry(item.id) }
                             .buttonStyle(PillButtonStyle())
                     }
                 }
             }
-            if server.uploads.items.contains(where: { $0.status == .done }) {
+            if showsUploadFiles, queue.doneCount > 0 {
                 GroupDivider()
                 HStack {
                     Spacer()
-                    Button("Clear Finished") { server.uploads.clearFinished() }
+                    Button("Clear Finished") { queue.clearFinished() }
                         .buttonStyle(QuietTextButtonStyle())
                 }
                 .padding(.horizontal, Theme.Spacing.lg)
                 .padding(.vertical, Theme.Spacing.sm)
             }
         }
+    }
+
+    /// The song uploading now, or why nothing is.
+    private func uploadHeadline(_ queue: ServerUploads) -> String {
+        if queue.isBusy {
+            switch queue.hold {
+            case .paused?: return "Uploads paused"
+            case .streaming?: return "Waiting while you stream"
+            case nil: break
+            }
+        }
+        if let first = queue.current.first {
+            let more = queue.current.count > 1 ? " and 1 more" : ""
+            return uploadTitle(first) + more
+        }
+        if queue.isBusy { return "Getting ready…" }
+        if !queue.failed.isEmpty { return "\(CountText.of(queue.failed.count, "file")) didn't upload" }
+        return "All uploaded"
+    }
+
+    private func uploadSummary(_ queue: ServerUploads) -> String {
+        var parts = ["\(queue.doneCount.formatted()) of \(CountText.of(queue.items.count, "file"))"]
+        if queue.totalBytes > 0 {
+            parts.append("\(Self.bytes(queue.sentBytes)) of \(Self.bytes(queue.totalBytes))")
+        }
+        if queue.laneCount > 1, queue.hold == nil, queue.isBusy { parts.append("2 at a time") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "Title — Artist" once the tags are read, else the file name.
+    private func uploadTitle(_ item: ServerUploads.Item) -> String {
+        guard let song = server.uploads.song(item) else { return item.name }
+        return song.artist.map { "\(song.title) — \($0)" } ?? song.title
     }
 
     private func uploadDetail(_ item: ServerUploads.Item) -> String {
@@ -402,6 +514,23 @@ struct ServerAccountGroups: View {
     }
 
     static func bytes(_ n: Int64) -> String { ByteCountFormatter.string(fromByteCount: n, countStyle: .file) }
+}
+
+/// The queue's progress: a 3pt ink capsule on a hairline track.
+private struct UploadProgressBar: View {
+    let fraction: Double
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Theme.textPrimary.opacity(0.1))
+                Capsule().fill(Theme.textPrimary)
+                    .frame(width: max(3, geo.size.width * min(1, max(0, fraction))))
+                    .animation(.easeOut(duration: 0.3), value: fraction)
+            }
+        }
+        .frame(height: 3)
+    }
 }
 
 /// Title and detail on the left, a control on the right.

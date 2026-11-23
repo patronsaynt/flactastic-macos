@@ -89,6 +89,12 @@ struct FlactasticApp: App {
             streamer.upcoming(current: current, next: next)
         }
         playerState.engine.stalled = { [streamer = serverSession.streamer] in streamer.stalled() }
+        // Uploads hold while a streamed track plays, so playback never
+        // competes with them for the connection. An offline copy doesn't count.
+        serverSession.uploads.isStreaming = { [playerState] in
+            guard playerState.isPlaying, let source = playerState.source else { return false }
+            return source != .offline
+        }
         _playlistRebuildCoordinator = State(initialValue: PlaylistRebuildCoordinator(
             downloads: downloads,
             playlistStore: plStore,

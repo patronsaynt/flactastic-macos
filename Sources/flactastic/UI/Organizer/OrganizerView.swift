@@ -610,7 +610,7 @@ struct OrganizerView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             Toggle(title, isOn: isOn)
-                .toggleStyle(FLSwitchStyle())
+                .toggleStyle(FLSwitchStyle(hiddenLabel: title))
                 .labelsHidden()
         }
         .padding(.vertical, 14)

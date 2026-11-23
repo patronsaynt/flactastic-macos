@@ -55,6 +55,10 @@ struct ContentView: View {
             }
             .ignoresSafeArea(.container, edges: .top)
             .environment(\.topBarInset, inset)
+            // The status pill takes 6 + 26pt under the bar; back buttons
+            // (24pt under it) drop below it, with 12pt between.
+            .environment(\.statusLineInset,
+                         isChromeRevealed && !hidesTopBar(router: router) && server.statusLineText != nil ? 20 : 0)
             // Each tab's one-time tips, over the page but under the top bar
             // so the tabs stay reachable.
             .overlay { if isChromeRevealed { TabTutorialOverlay() } }
@@ -143,7 +147,10 @@ struct ContentView: View {
             Text(duplicateDialogMessage(for: pending))
         }
         .onChange(of: library.scanState) { _, newState in
-            if case .done = newState {
+            // Not for a server library: its tracks arrive in stages, and an
+            // entry missing from a partial list isn't gone. Dropping it here
+            // emptied playlists and sent them empty to the server.
+            if case .done = newState, ServerSession.current?.isActive != true {
                 playlistStore.reconcile(with: library)
             }
         }

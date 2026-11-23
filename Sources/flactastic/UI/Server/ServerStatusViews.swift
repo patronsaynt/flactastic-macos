@@ -9,13 +9,21 @@ struct ServerStatusLine: View {
     var body: some View {
         if let text {
             Button {
-                if server.status == .unreachable { server.reconnectNow() } else { router.showSettings = true }
+                if server.status == .unreachable {
+                    server.reconnectNow()
+                } else {
+                    router.settingsOpensOn = "Library"   // the server's account, uploads and copies
+                    router.showSettings = true
+                }
             } label: {
                 HStack(spacing: 8) {
                     if isBusy { BrandLoader(height: 12) }
                     Text(text)
                         .font(.system(size: 12.5, weight: .semibold))
                         .foregroundStyle(isProblem ? Theme.textPrimary : Theme.textSecondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: 460)
                 }
                 .padding(.horizontal, 12)
                 .frame(height: 26)
@@ -27,8 +35,6 @@ struct ServerStatusLine: View {
         }
     }
 
-    private var name: String { server.active?.serverName ?? "the server" }
-
     private var isProblem: Bool {
         switch server.status {
         case .unreachable, .signedOut, .identityChanged: true
@@ -38,21 +44,7 @@ struct ServerStatusLine: View {
 
     private var isBusy: Bool { !isProblem && text != nil }
 
-    private var text: String? {
-        guard server.isActive else { return nil }
-        switch server.status {
-        case .identityChanged: return "\(name)'s identity changed."
-        case .signedOut: return "Signed out of \(name)."
-        case .unreachable: return "Can't reach \(name). Trying again… Offline copies still play."
-        default: break
-        }
-        if server.library?.state == .offline { return "\(name)'s music folder is offline. Browsing still works." }
-        if server.library?.state == .scanning { return "\(name) is scanning." }
-        let sending = server.uploads.items.filter { $0.status == .sending || $0.status == .hashing || $0.status == .waiting }.count
-        if sending > 0 { return "Uploading \(sending) file\(sending == 1 ? "" : "s")" }
-        if let p = server.offline.progress { return "Downloading \(p.done + 1) of \(p.total) for offline" }
-        return nil
-    }
+    private var text: String? { server.statusLineText }
 }
 
 /// The status line's pill: the player's frosted glass in a capsule, so it
@@ -146,5 +138,41 @@ struct PlaylistConflictSheet: View {
         }
         if theirs.customArtwork != mine.customArtwork { out.append(("Cover", "Theirs", "This Mac's")) }
         return out
+    }
+}
+
+extension ServerSession {
+    private var name: String { active?.serverName ?? "the server" }
+
+    /// What the status line under the top bar says, or nil when it's hidden.
+    var statusLineText: String? {
+        guard isActive else { return nil }
+        switch status {
+        case .identityChanged: return "\(name)'s identity changed."
+        case .signedOut: return "Signed out of \(name)."
+        case .unreachable: return "Can't reach \(name). Trying again… Offline copies still play."
+        default: break
+        }
+        if library?.state == .offline { return "\(name)'s music folder is offline. Browsing still works." }
+        if library?.state == .scanning { return "\(name) is scanning." }
+        if let uploadText { return uploadText }
+        if let p = offline.progress { return "Downloading \(p.done + 1) of \(p.total) for offline" }
+        return nil
+    }
+
+    /// The song uploading now and how many are left, or why uploads wait.
+    private var uploadText: String? {
+        let queue = uploads
+        guard queue.isBusy else { return nil }
+        let left = queue.items.filter { [.waiting, .hashing, .sending].contains($0.status) }.count
+        switch queue.hold {
+        case .paused?: return "Uploads paused · \(CountText.of(left, "file")) left"
+        case .streaming?: return "Uploads wait while you stream · \(CountText.of(left, "file")) left"
+        case nil: break
+        }
+        guard let first = queue.current.first else { return "Uploading \(CountText.of(left, "file"))" }
+        let song = queue.song(first).map { s in s.artist.map { "\(s.title) — \($0)" } ?? s.title } ?? first.name
+        let more = left > 1 ? " · \((left - 1).formatted()) more" : ""
+        return "Uploading \(song)\(more)"
     }
 }

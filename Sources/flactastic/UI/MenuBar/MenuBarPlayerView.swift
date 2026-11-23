@@ -158,7 +158,7 @@ struct MenuBarPlayerView: View {
                     [
                         .button("Play Now", systemImage: "play.fill") { player.jumpTo(index: engineIndex) },
                         .button("Remove from Queue", systemImage: "minus.circle") { player.removeFromQueue(at: engineIndex) },
-                    ]
+                    ] + OfflineMenu.section(for: [track])
                 }
                 .padding(.horizontal, 6)
                 .padding(.bottom, 8)

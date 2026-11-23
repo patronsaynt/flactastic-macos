@@ -134,13 +134,7 @@ struct PlaylistDetailView: View {
                         playbackContextMenuItems(for: tracks, player: player)
                         FLContextMenuItem.divider
                         FLContextMenuItem.button("Edit...", systemImage: "pencil") { showEditor = true }
-                        if let offline = ServerSession.current.flatMap({ $0.isActive ? $0.offline : nil }) {
-                            let kept = offline.isKept(playlist: playlist.id)
-                            FLContextMenuItem.button(kept ? "Remove Offline Copy" : "Keep Offline",
-                                                     systemImage: kept ? "icloud.slash" : "arrow.down.circle") {
-                                offline.setPlaylist(playlist.id, kept: !kept)
-                            }
-                        }
+                        OfflineMenu.items(for: tracks, scope: .playlist(playlist.id))
                     }
                     .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
                     .opacity(hasEntered ? 1 : 0)
@@ -377,11 +371,16 @@ struct PlaylistDetailView: View {
                 selection.remove(entry.id)
             }
         let menus = LibraryMenus(player: player, library: library, playlistStore: playlistStore, playlistAdd: playlistAdd, router: router)
+        let selectedTracks: [Track]? = selectedCount > 1 ? {
+            let lookup = buildTrackLookup()
+            return playlist?.entries.filter { selection.contains($0.id) }.compactMap { resolveEntry($0, lookup: lookup) }
+        }() : nil
         return menus.track(
             track,
             extra: [removeFromPlaylist],
             edit: { editingTrack = track },
-            remove: { removalRequest = LibraryRemovalRequest(title: track.title, tracks: [track]) }
+            remove: { removalRequest = LibraryRemovalRequest(title: track.title, tracks: [track]) },
+            selected: selectedTracks
         )
     }
 

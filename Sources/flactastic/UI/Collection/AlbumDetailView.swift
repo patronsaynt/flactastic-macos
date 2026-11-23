@@ -506,10 +506,13 @@ private struct AlbumTrackRow: View {
             .accessibilityLabel("Play \(track.title)")
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(track.title)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(isCurrent ? Theme.accent : Theme.textPrimary)
-                    .lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(track.title)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(isCurrent ? Theme.accent : Theme.textPrimary)
+                        .lineLimit(1)
+                    OfflineCopyMark(track: track, size: 11)
+                }
                 ArtistLink(
                     credit: track.artist ?? fallbackArtist,
                     font: .system(size: 13),

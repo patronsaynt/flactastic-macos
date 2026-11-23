@@ -13,7 +13,7 @@ struct FidelidexView: View {
 
     @State private var showsDetails = false
 
-    private var fidelity: LibraryFidelity { LibraryFidelity(tracks: library.tracks) }
+    private var fidelity: LibraryFidelity { LibraryFidelity(tracks: library.counted.tracks) }
 
     var body: some View {
         let f = fidelity

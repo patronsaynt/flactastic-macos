@@ -7,6 +7,9 @@ extension EnvironmentValues {
     /// the bar (titles, back buttons) this far down; 0 when the bar is
     /// hidden (fullscreen Visualizer).
     @Entry var topBarInset: CGFloat = 0
+    /// How much further down back buttons sit while the server status pill
+    /// shows under the top bar, so the two never overlap; 0 when it's hidden.
+    @Entry var statusLineInset: CGFloat = 0
 }
 
 /// The window's top bar: a frosted rail that floats over the page, beside

@@ -71,6 +71,9 @@ final class ListeningStore {
     private var all: [PlayEvent] = [] { didSet { refilter() } }
     /// The plays stats are built from: `all`, less any `belongs` rejects.
     private(set) var events: [PlayEvent] = []
+    /// Every play, counted or not, for sync: a play moved to a track this
+    /// Mac hasn't pulled yet must still be sent.
+    var allEvents: [PlayEvent] { all }
     /// Set for a server library: only plays of its own tracks count. Its
     /// history can hold plays of tracks it never had (an imported history).
     @ObservationIgnored var belongs: ((PlayEvent) -> Bool)? { didSet { refilter() } }
@@ -267,6 +270,23 @@ final class ListeningStore {
     /// Adds plays and contexts from other devices. Events are matched by ID,
     /// so merging the same page twice changes nothing; for each context the
     /// newest date wins.
+    /// Moves every play of one track ID to another (a file only on this Mac
+    /// that reached the server). Returns the moved plays' IDs.
+    @discardableResult
+    func reassign(trackID old: UUID, to new: UUID) -> [UUID] {
+        guard old != new else { return [] }
+        var next = all
+        var moved: [UUID] = []
+        for i in next.indices where next[i].trackID == old {
+            next[i].trackID = new
+            moved.append(next[i].id)
+        }
+        guard !moved.isEmpty else { return [] }
+        all = next
+        save()
+        return moved
+    }
+
     func merge(events incoming: [PlayEvent], contexts: [RecentContext]) {
         let known = Set(all.map(\.id))
         let fresh = incoming.filter { !known.contains($0.id) }

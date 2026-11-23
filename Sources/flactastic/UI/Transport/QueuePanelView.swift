@@ -67,6 +67,7 @@ struct QueuePanelView: View {
                 router.navigateToAlbum(id: albumID)
             })
         }
+        items.append(contentsOf: OfflineMenu.section(for: [track]))
         let artists = artistContextMenuItems(credit: track.artist ?? track.albumArtist, library: library, router: router)
         if !artists.isEmpty {
             items.append(.divider)

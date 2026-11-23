@@ -28,8 +28,12 @@ final class PlaylistStore {
     }
 
     private var currentRootURL: URL?
+    /// Set for a server library: its playlists live with the account's own
+    /// data, not in the music folder, which may also hold a local library's.
+    private var storeURL: URL?
 
     private var fileURL: URL? {
+        if let storeURL { return storeURL }
         guard let rootURL = currentRootURL else { return nil }
         let dir = rootURL.appendingPathComponent(".flactastic", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -38,9 +42,22 @@ final class PlaylistStore {
 
     // MARK: - Persistence
 
+    /// A folder library's playlists, kept in its `.flactastic` folder.
     func load(from libraryRootURL: URL) {
         currentRootURL = libraryRootURL
+        storeURL = nil
+        readFile()
+    }
 
+    /// A server library's playlists, kept at `file`.
+    func load(storeAt file: URL) {
+        currentRootURL = nil
+        storeURL = file
+        try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        readFile()
+    }
+
+    private func readFile() {
         // Switching libraries: never keep the previous one's playlists.
         guard let url = fileURL, FileManager.default.fileExists(atPath: url.path) else { playlists = []; return }
         do {

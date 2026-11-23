@@ -105,7 +105,7 @@ struct MixDetailView: View {
             HStack(alignment: .bottom, spacing: 40) {
                 ArtworkView(data: cover, size: 300, id: coverID)
                     .shadow(color: .black.opacity(isLight ? 0.25 : 0.6), radius: 30, y: 24)
-                    .flContextMenu { playbackContextMenuItems(for: mix.tracks, player: player) }
+                    .flContextMenu { playbackContextMenuItems(for: mix.tracks, player: player) + OfflineMenu.section(for: mix.tracks) }
                     .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
                     .opacity(hasEntered ? 1 : 0)
                     .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.9).delay(calmMotion ? 0 : 0.22), value: hasEntered)

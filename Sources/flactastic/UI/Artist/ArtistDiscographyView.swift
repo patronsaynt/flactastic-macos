@@ -562,6 +562,7 @@ private struct AlbumSpotlight: View {
             ) {
                 ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                     SpotlightTrackRow(
+                        track: track,
                         number: track.trackNumber ?? index + 1,
                         title: track.title,
                         duration: FormatUtils.formatDuration(track.duration),
@@ -594,6 +595,7 @@ private struct AlbumSpotlight: View {
 }
 
 private struct SpotlightTrackRow: View {
+    let track: Track
     let number: Int
     let title: String
     let duration: String
@@ -623,6 +625,7 @@ private struct SpotlightTrackRow: View {
                     .foregroundStyle(.white)
                     .fontWeight(isCurrent ? .semibold : .regular)
                     .lineLimit(1)
+                OfflineCopyMark(track: track, size: 9.5, color: .white.opacity(0.62))
                 Spacer(minLength: 8)
                 Text(duration)
                     .foregroundStyle(.white.opacity(0.62))

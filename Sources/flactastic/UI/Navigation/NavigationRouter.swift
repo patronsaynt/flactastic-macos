@@ -32,6 +32,9 @@ final class NavigationRouter {
     /// The Settings sheet, opened from the FLACtastic menu in the top bar or
     /// with ⌘, from anywhere.
     var showSettings = false
+    /// The Settings tab to open on next time (its name, e.g. "Library"),
+    /// for links that lead somewhere particular. Cleared once used.
+    var settingsOpensOn: String?
 
     /// Where a cross-tab jump started, so Back can return there instead of
     /// popping to the destination tab's root.

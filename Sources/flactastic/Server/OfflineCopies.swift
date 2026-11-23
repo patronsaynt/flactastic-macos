@@ -13,6 +13,36 @@ final class OfflineCopies {
         var albumIDs: Set<String> = []
         var playlistIDs: Set<UUID> = []
         var filter = SyncFilter()
+        /// Tracks downloaded on their own (a track, a mix, a few picked).
+        var trackIDs: Set<UUID> = []
+        /// Tracks removed from this Mac although their album, playlist or
+        /// the whole library is kept. Downloading them again clears them.
+        var excludedTrackIDs: Set<UUID> = []
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            everything = try c.decodeIfPresent(Bool.self, forKey: .everything) ?? false
+            albumIDs = try c.decodeIfPresent(Set<String>.self, forKey: .albumIDs) ?? []
+            playlistIDs = try c.decodeIfPresent(Set<UUID>.self, forKey: .playlistIDs) ?? []
+            filter = try c.decodeIfPresent(SyncFilter.self, forKey: .filter) ?? SyncFilter()
+            trackIDs = try c.decodeIfPresent(Set<UUID>.self, forKey: .trackIDs) ?? []
+            excludedTrackIDs = try c.decodeIfPresent(Set<UUID>.self, forKey: .excludedTrackIDs) ?? []
+        }
+
+        /// Which of `manifest`'s tracks (as chosen by album, playlist or
+        /// everything) plus `extra` (the whole library's entries, for picked
+        /// tracks) stay on this Mac.
+        func wanted(_ manifest: [TrackManifestEntry], extra: [TrackManifestEntry]) -> [TrackManifestEntry] {
+            var seen = Set<UUID>()
+            var out: [TrackManifestEntry] = []
+            for entry in manifest + extra.filter({ trackIDs.contains($0.trackID) })
+            where !excludedTrackIDs.contains(entry.trackID) && seen.insert(entry.trackID).inserted {
+                out.append(entry)
+            }
+            return out
+        }
     }
 
     /// A copy on disk, as the server described it when it was installed.
@@ -24,6 +54,17 @@ final class OfflineCopies {
         var format: AudioFileFormat
         /// Kept after an upload rather than chosen; never removed by a refresh.
         var kept = false
+        /// Set for a file the user brought that holds the same recording as
+        /// the server's track (its FLAC audio checksum matched) but not the
+        /// same bytes: the server hash it was checked against. Such a file is
+        /// the user's own (their tags, their artwork), so it's never
+        /// overwritten or deleted outright, only moved to the Trash.
+        var audioMatch: String? = nil
+
+        /// The hash to compare with the server's: its own, or the server's it
+        /// was verified to match in audio.
+        var matchHash: String { audioMatch ?? contentHash }
+        var isUsersOwn: Bool { audioMatch != nil }
     }
 
     struct Progress: Equatable {
@@ -47,12 +88,14 @@ final class OfflineCopies {
     init(session: ServerSession) { self.session = session }
 
     var usedBytes: Int64 { installed.values.reduce(0) { $0 + $1.fileSize } }
-    var isEmpty: Bool { !selection.everything && selection.albumIDs.isEmpty && selection.playlistIDs.isEmpty }
+    var isEmpty: Bool {
+        !selection.everything && selection.albumIDs.isEmpty && selection.playlistIDs.isEmpty && selection.trackIDs.isEmpty
+    }
 
     /// Installed and identical to what the server has now.
     func isCurrent(_ id: UUID) -> Bool {
         guard let copy = installed[id], let hash = session.mirror.tracks[id]?.contentHash else { return false }
-        return copy.contentHash == hash
+        return copy.matchHash == hash
     }
 
     func isKept(album id: String) -> Bool { selection.everything || selection.albumIDs.contains(id) }
@@ -67,6 +110,17 @@ final class OfflineCopies {
             .flatMap { try? JSONDecoder().decode(Selection.self, from: $0) } ?? Selection()
         installed = dir.flatMap { try? Data(contentsOf: $0.appendingPathComponent("offline-index.json")) }
             .flatMap { try? JSONDecoder().decode([UUID: Installed].self, from: $0) } ?? [:]
+        // A copy that isn't in the folder any more (the folder changed, or
+        // the file was removed in Finder) isn't one: forget it, so the next
+        // refresh downloads it again if it's still wanted.
+        if let root = session.active?.offlineRoot {
+            let fm = FileManager.default
+            let gone = installed.filter { !fm.fileExists(atPath: root.appendingPathComponent($0.value.relativePath).path) }.map(\.key)
+            if !gone.isEmpty {
+                for id in gone { installed[id] = nil }
+                saveIndex()
+            }
+        }
         progress = nil
         lastError = nil
         publish()
@@ -90,10 +144,83 @@ final class OfflineCopies {
 
     // MARK: - Choosing
 
-    func setEverything(_ on: Bool) { update { $0.everything = on } }
+    /// Turning the whole library on clears tracks removed one by one: it
+    /// means every track.
+    func setEverything(_ on: Bool) {
+        update {
+            $0.everything = on
+            if on { $0.excludedTrackIDs = [] }
+        }
+    }
     func setFilter(_ filter: SyncFilter) { update { $0.filter = filter } }
     func setAlbum(_ id: String, kept: Bool) { update { if kept { $0.albumIDs.insert(id) } else { $0.albumIDs.remove(id) } } }
     func setPlaylist(_ id: UUID, kept: Bool) { update { if kept { $0.playlistIDs.insert(id) } else { $0.playlistIDs.remove(id) } } }
+
+    // MARK: - Download / Remove from This Mac
+
+    /// How many of `ids` have a current copy here.
+    func countHere(_ ids: [UUID]) -> Int { ids.filter(isCurrent).count }
+
+    /// Downloads these tracks on their own.
+    func download(tracks ids: [UUID]) {
+        update {
+            $0.trackIDs.formUnion(ids)
+            $0.excludedTrackIDs.subtract(ids)
+        }
+    }
+
+    /// Keeps the album here, every track of it, now and as it changes.
+    func download(album id: String, tracks ids: [UUID]) {
+        update {
+            $0.albumIDs.insert(id)
+            $0.excludedTrackIDs.subtract(ids)
+        }
+    }
+
+    func download(playlist id: UUID, tracks ids: [UUID]) {
+        update {
+            $0.playlistIDs.insert(id)
+            $0.excludedTrackIDs.subtract(ids)
+        }
+    }
+
+    /// Removes these tracks' copies from this Mac; they stream again. Still
+    /// covered by a kept album, playlist or the whole library, they're left
+    /// out of it until downloaded again. Copies kept after an upload go too:
+    /// the server has them.
+    func removeFromThisMac(tracks ids: [UUID]) {
+        let set = Set(ids)
+        selection.trackIDs.subtract(set)
+        selection.excludedTrackIDs.formUnion(set)
+        deleteCopies(set)
+        saveSelection()
+        refresh()
+    }
+
+    func removeFromThisMac(album id: String, tracks ids: [UUID]) {
+        selection.albumIDs.remove(id)
+        removeFromThisMac(tracks: ids)
+    }
+
+    func removeFromThisMac(playlist id: UUID, tracks ids: [UUID]) {
+        selection.playlistIDs.remove(id)
+        removeFromThisMac(tracks: ids)
+    }
+
+    private func deleteCopies(_ ids: Set<UUID>) {
+        guard let root = session.active?.offlineRoot else { return }
+        var changed = false
+        for id in ids {
+            guard let copy = installed[id] else { continue }
+            Self.discard(root.appendingPathComponent(copy.relativePath), usersOwn: copy.isUsersOwn)
+            installed[id] = nil
+            changed = true
+        }
+        guard changed else { return }
+        saveIndex()
+        publish()
+        session.refreshLocalFiles()
+    }
 
     private func update(_ change: (inout Selection) -> Void) {
         change(&selection)
@@ -106,6 +233,7 @@ final class OfflineCopies {
     func redownload(_ id: UUID) {
         guard installed[id] != nil else { return }
         installed[id]?.contentHash = ""
+        installed[id]?.audioMatch = nil
         saveIndex()
         publish()
         refresh()
@@ -146,6 +274,14 @@ final class OfflineCopies {
         if !isEmpty {
             do {
                 (incoming, pending) = try await manifest(client)
+                // Picked tracks and exclusions are applied here: the server
+                // chooses by album and playlist only.
+                if !selection.trackIDs.isEmpty || !selection.excludedTrackIDs.isEmpty {
+                    let extra = selection.trackIDs.isEmpty || selection.everything ? [] : try await manifest(client, everything: true).0.tracks
+                    incoming = LibraryManifest(deviceID: incoming.deviceID,
+                                               tracks: selection.wanted(incoming.tracks, extra: extra),
+                                               playlists: incoming.playlists)
+                }
             } catch let error as ServerError {
                 session.note(error)
                 lastError = error.localizedDescription
@@ -159,10 +295,10 @@ final class OfflineCopies {
 
         // Copies the server moved (the Organizer, a tag edit) move here too;
         // a copy matching by content under another ID adopts the server's.
-        let byHash = Dictionary(installed.map { ($0.value.contentHash, $0.key) }, uniquingKeysWith: { a, _ in a })
+        let byHash = Dictionary(installed.map { ($0.value.matchHash, $0.key) }, uniquingKeysWith: { a, _ in a })
         for entry in incoming.tracks {
             if let copy = installed[entry.trackID] {
-                if copy.contentHash == entry.contentHash, copy.relativePath != entry.relativePath {
+                if copy.matchHash == entry.contentHash, copy.relativePath != entry.relativePath {
                     relocate(entry.trackID, to: entry, root: root)
                 }
             } else if let other = byHash[entry.contentHash], let copy = installed[other] {
@@ -173,7 +309,7 @@ final class OfflineCopies {
         }
 
         let local = LibraryManifest(deviceID: profile.id, tracks: installed.map { id, c in
-            TrackManifestEntry(trackID: id, relativePath: c.relativePath, fileSize: c.fileSize, contentHash: c.contentHash,
+            TrackManifestEntry(trackID: id, relativePath: c.relativePath, fileSize: c.fileSize, contentHash: c.matchHash,
                                format: c.format, tagFingerprint: c.tagFingerprint, title: "", artist: nil, album: nil)
         }, playlists: [])
         let plan = SyncDiff.plan(incoming: incoming, local: local, direction: .pull, filter: selection.filter)
@@ -196,6 +332,13 @@ final class OfflineCopies {
         progress = Progress(done: 0, total: todo.count, bytesDone: 0, bytesTotal: todo.reduce(0) { $0 + $1.fileSize })
         for entry in todo {
             guard !Task.isCancelled, session.active?.id == profile.id else { break }
+            // The server's file changed since the user's own copy was matched
+            // to it: theirs goes to the Trash, not overwritten.
+            if let copy = installed[entry.trackID], copy.isUsersOwn {
+                try? FileManager.default.trashItem(at: root.appendingPathComponent(copy.relativePath), resultingItemURL: nil)
+                installed[entry.trackID] = nil
+                saveIndex()
+            }
             do {
                 try await download(entry, client: client, root: root)
                 progress?.done += 1
@@ -214,10 +357,17 @@ final class OfflineCopies {
         FileTransfer.sweepAbandonedPartFiles(libraryRoot: root)
     }
 
-    private func manifest(_ client: ServerClient) async throws -> (LibraryManifest, Int) {
+    /// The server's manifest for the albums and playlists chosen, or for the
+    /// whole library with `everything`.
+    private func manifest(_ client: ServerClient, everything: Bool = false) async throws -> (LibraryManifest, Int) {
         struct Pick: Encodable { let albumIDs: [String]?; let playlistIDs: [UUID]? }
         struct Request: Encodable { let selection: Pick?; let filter: SyncFilter }
-        let pick = selection.everything ? nil : Pick(
+        // Only single tracks picked: an empty pick would mean everything to
+        // the server, so there's nothing to ask for here.
+        if !everything, !selection.everything, selection.albumIDs.isEmpty, selection.playlistIDs.isEmpty {
+            return (LibraryManifest(deviceID: session.active?.serverID ?? UUID(), tracks: [], playlists: []), 0)
+        }
+        let pick = selection.everything || everything ? nil : Pick(
             albumIDs: selection.albumIDs.isEmpty ? nil : Array(selection.albumIDs),
             playlistIDs: selection.playlistIDs.isEmpty ? nil : Array(selection.playlistIDs))
         let body = try ServerClient.encoder.encode(Request(selection: pick, filter: selection.filter))
@@ -298,7 +448,7 @@ final class OfflineCopies {
     /// An uploaded file stays as an offline copy, filed where the server put it.
     /// `hash` is the one the upload was checked against: a new track's
     /// reply has none until the server hashes it in the background.
-    func adopt(uploaded file: URL, as track: ServerTrack, hash: String) {
+    func adopt(uploaded file: URL, as track: ServerTrack, hash: String, audioMatch: String? = nil) {
         guard let root = session.active?.offlineRoot,
               let format = AudioFileFormat(rawValue: track.format),
               let destination = try? PathSanitizer.destinationForIncomingTrack(remoteRelativePath: track.relativePath, under: root)
@@ -313,7 +463,7 @@ final class OfflineCopies {
         }
         Self.writeTrackID(track.id, to: destination)
         installed[track.id] = Installed(relativePath: track.relativePath, contentHash: hash, tagFingerprint: track.tagFingerprint,
-                                        fileSize: track.fileSize, format: format, kept: true)
+                                        fileSize: track.fileSize, format: format, kept: true, audioMatch: audioMatch)
         saveIndex()
         publish()
     }
@@ -324,7 +474,7 @@ final class OfflineCopies {
     /// Removes one copy the user no longer wants on this Mac.
     func remove(_ id: UUID) {
         guard let root = session.active?.offlineRoot, let copy = installed[id] else { return }
-        try? FileManager.default.removeItem(at: root.appendingPathComponent(copy.relativePath))
+        Self.discard(root.appendingPathComponent(copy.relativePath), usersOwn: copy.isUsersOwn)
         installed[id] = nil
         saveIndex()
         publish()
@@ -337,6 +487,15 @@ final class OfflineCopies {
         installed[id] = nil
         saveIndex()
         publish()
+    }
+
+    /// Deletes a downloaded copy; a file the user brought goes to the Trash.
+    nonisolated static func discard(_ url: URL, usersOwn: Bool) {
+        if usersOwn {
+            try? FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        } else {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     nonisolated static func writeTrackID(_ id: UUID, to url: URL) {

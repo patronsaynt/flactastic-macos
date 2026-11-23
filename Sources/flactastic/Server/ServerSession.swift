@@ -20,7 +20,7 @@ struct ServerProfile: Codable, Identifiable, Hashable, Sendable {
     var userID: UUID?
     /// Where offline copies live, laid out by the server's relative paths.
     var offlineFolder: String
-    /// Files that appear in the offline folder after this are uploaded.
+    /// When this Mac signed in to the account.
     var created = Date()
 
     var offlineRoot: URL { URL(fileURLWithPath: offlineFolder, isDirectory: true) }
@@ -77,6 +77,9 @@ final class ServerSession {
     @ObservationIgnored lazy var artwork = ServerArtwork(session: self)
     @ObservationIgnored lazy var offline = OfflineCopies(session: self)
     @ObservationIgnored lazy var uploads = ServerUploads(session: self)
+    /// Watches the offline folder: new downloads and imports join the library
+    /// and the upload queue as soon as they land.
+    @ObservationIgnored private var folderWatcher: FolderWatcher?
     @ObservationIgnored lazy var history = HistorySync(session: self)
     @ObservationIgnored lazy var playlistSync = PlaylistSync(session: self)
     @ObservationIgnored lazy var prefs = PrefsSync(session: self)
@@ -223,8 +226,18 @@ final class ServerSession {
         libraryStore.openServer(root: profile.offlineRoot, tracks: appTracks(mirror.tracks.values))
         localOnly = [:]
         refreshLocalFiles()
-        playlists.load(from: profile.offlineRoot)
-        playlistSync.attach()
+        folderWatcher = FolderWatcher(folder: profile.offlineRoot) { [weak self] in
+            guard let self, self.activeID == id else { return }
+            self.refreshLocalFiles()
+            if self.status != .signedOut { self.uploads.scanForNewFiles() }
+        }
+        // The account's playlists, apart from any local library that shares
+        // the offline folder. Opening a profile that kept them in the folder
+        // starts from the server's list as it is.
+        let playlistFile = profile.supportDirectory.appendingPathComponent("playlists.json")
+        let freshPlaylists = !FileManager.default.fileExists(atPath: playlistFile.path)
+        playlists.load(storeAt: playlistFile)
+        playlistSync.attach(fresh: freshPlaylists)
         Task {
             await listening.loadAsync(from: profile.offlineRoot)
             history.attach()
@@ -263,6 +276,9 @@ final class ServerSession {
         retryTask?.cancel()
         retryTask = nil
         offline.cancel()
+        uploads.stop()
+        folderWatcher?.stop()
+        folderWatcher = nil
         history.detach()
         playlistSync.detach()
         prefs.detach()
@@ -301,6 +317,66 @@ final class ServerSession {
         scope?.enter(dataFolder(profile))
         userData.attach()
         await userData.sync()
+    }
+
+    enum OfflineFolderChange: Error, LocalizedError {
+        case nested
+        var errorDescription: String? {
+            "Pick a folder that isn't inside the current one, or the other way round."
+        }
+    }
+
+    /// Points this profile's offline copies at `folder`. With `moving`,
+    /// everything in the old folder moves there first: the copies, music
+    /// only on this Mac, and the hidden `.flactastic` data (playlists and
+    /// this Mac's history key), so nothing downloads again. Without it,
+    /// the copies download again into the new folder and the old one is
+    /// left as it is. Returns how many items stayed behind because the new
+    /// folder already had something with the same name.
+    @discardableResult
+    func changeOfflineFolder(to folder: URL, moving: Bool) async throws -> Int {
+        guard var profile = active else { return 0 }
+        let old = profile.offlineRoot.standardizedFileURL
+        let new = folder.standardizedFileURL
+        guard old.path != new.path else { return 0 }
+        if new.path.hasPrefix(old.path + "/") || old.path.hasPrefix(new.path + "/") { throw OfflineFolderChange.nested }
+        let id = profile.id
+        deactivate()
+        var leftBehind = 0
+        if moving {
+            leftBehind = await Task.detached(priority: .userInitiated) { Self.moveContents(of: old, into: new) }.value
+            ServerUploads.rebasePaths(in: profile.supportDirectory, from: old, to: new)
+        } else {
+            try? FileManager.default.createDirectory(at: new, withIntermediateDirectories: true)
+        }
+        profile.offlineFolder = new.path
+        replace(profile)
+        activate(id)
+        return leftBehind
+    }
+
+    /// Moves everything in `source` into `destination`, merging folders that
+    /// exist in both. A file whose name is already taken there stays put.
+    /// Returns how many stayed.
+    nonisolated static func moveContents(of source: URL, into destination: URL) -> Int {
+        let fm = FileManager.default
+        try? fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        guard let items = try? fm.contentsOfDirectory(at: source, includingPropertiesForKeys: [.isDirectoryKey]) else { return 0 }
+        func isFolder(_ url: URL) -> Bool { (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        var left = 0
+        for item in items where item.lastPathComponent != ".DS_Store" {
+            let target = destination.appendingPathComponent(item.lastPathComponent)
+            if !fm.fileExists(atPath: target.path) {
+                do { try fm.moveItem(at: item, to: target) } catch { left += 1 }
+            } else if isFolder(item), isFolder(target) {
+                left += moveContents(of: item, into: target)
+                let rest = (try? fm.contentsOfDirectory(atPath: item.path))?.filter { $0 != ".DS_Store" } ?? []
+                if rest.isEmpty { try? fm.removeItem(at: item) }
+            } else {
+                left += 1
+            }
+        }
+        return left
     }
 
     func replace(_ profile: ServerProfile) {
@@ -462,6 +538,9 @@ final class ServerSession {
     }
 
     func serverID(for track: Track) -> UUID? { idByPath[track.url.standardizedFileURL.path] }
+    /// Standardized paths of every server track in this library.
+    var serverTrackPaths: Set<String> { Set(idByPath.keys) }
+    func isServerTrackPath(_ path: String) -> Bool { idByPath[URL(fileURLWithPath: path).standardizedFileURL.path] != nil }
 
     /// Server track IDs by standardized file path.
     var trackIDsByPath: [String: UUID] { idByPath }
@@ -492,6 +571,17 @@ final class ServerSession {
 
     func isLocalOnly(_ track: Track) -> Bool { localOnly[track.url.standardizedFileURL.path] != nil }
 
+    /// A file that was only on this Mac reached the server as `trackID`:
+    /// the plays staged under its local ID move to the server track and go
+    /// up with the next history post.
+    func fileReachedServer(_ file: String, as trackID: UUID) {
+        guard let root = active?.offlineRoot else { return }
+        let rootPath = root.standardizedFileURL.path
+        let path = URL(fileURLWithPath: file).standardizedFileURL.path
+        guard path.hasPrefix(rootPath + "/") else { return }
+        history.reassign(from: Self.localID(String(path.dropFirst(rootPath.count + 1))), to: trackID)
+    }
+
     /// Finds audio files in the offline folder the server doesn't have, reads
     /// the new ones' tags, and puts them in the library beside its tracks.
     func refreshLocalFiles() {
@@ -509,9 +599,11 @@ final class ServerSession {
 
     private func scanLocalFiles(_ profile: ServerProfile) async {
         let root = profile.offlineRoot
+        // Songs the server has in another format stay out too (see
+        // `ServerUploads.settleIfOnServer`).
         let known = Set(idByPath.keys).union(offline.installedPaths.map {
             root.appendingPathComponent($0).standardizedFileURL.path
-        })
+        }).union(uploads.duplicates.keys.map { URL(fileURLWithPath: $0).standardizedFileURL.path })
         let found = await Task.detached(priority: .utility) { Self.localFiles(in: root, excluding: known) }.value
         guard !Task.isCancelled, activeID == profile.id else { return }
         var next: [String: Track] = [:]

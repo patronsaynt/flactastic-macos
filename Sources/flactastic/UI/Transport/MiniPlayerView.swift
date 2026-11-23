@@ -96,6 +96,11 @@ struct MiniPlayerView: View {
                     router.navigateToAlbum(id: albumID)
                 })
             }
+            let offline = OfflineMenu.items(for: [track])
+            if !offline.isEmpty {
+                if !items.isEmpty { items.append(.divider) }
+                items.append(contentsOf: offline)
+            }
             let artistItems = artistContextMenuItems(credit: track.artist ?? track.albumArtist, library: library, router: router)
             if !artistItems.isEmpty {
                 if !items.isEmpty { items.append(.divider) }

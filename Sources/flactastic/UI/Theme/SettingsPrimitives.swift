@@ -40,9 +40,14 @@ struct GroupDivider: View {
 /// in light) when on, a quiet grey when off. Replaces the system switch in
 /// the sheets so it matches the rest of the app.
 struct FLSwitchStyle: ToggleStyle {
+    /// Set where the row already shows the title: the label isn't drawn
+    /// (a custom style always draws it, so `.labelsHidden()` alone doesn't
+    /// hide it) and this names the switch for VoiceOver instead.
+    var hiddenLabel: String? = nil
+
     func makeBody(configuration: Configuration) -> some View {
         HStack(spacing: Theme.Spacing.md) {
-            configuration.label
+            if hiddenLabel == nil { configuration.label }
             // A Button, so a disabled toggle can't be flipped.
             Button { configuration.isOn.toggle() } label: {
                 Capsule()
@@ -58,8 +63,17 @@ struct FLSwitchStyle: ToggleStyle {
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
+            .modifier(SwitchName(name: hiddenLabel))
             .accessibilityValue(configuration.isOn ? "On" : "Off")
         }
+    }
+}
+
+/// Names a switch whose label isn't drawn; leaves the others alone.
+private struct SwitchName: ViewModifier {
+    let name: String?
+    func body(content: Content) -> some View {
+        if let name { content.accessibilityLabel(name) } else { content }
     }
 }
 

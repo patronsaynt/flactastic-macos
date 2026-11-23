@@ -42,6 +42,7 @@ struct HeroPillStyle: ButtonStyle {
 /// Back control that reads over imagery: a frosted dark circle.
 struct HeroBackButton: View {
     var action: () -> Void
+    @Environment(\.statusLineInset) private var statusLineInset
 
     var body: some View {
         Button(action: action) {
@@ -54,5 +55,8 @@ struct HeroBackButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Back")
+        // Below the server status pill while it shows.
+        .offset(y: statusLineInset)
+        .animation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.35), value: statusLineInset)
     }
 }
