@@ -23,7 +23,7 @@ enum ImportCopy {
             case .noLibraryRoot:
                 return "Choose a library folder in Settings before importing."
             case .copyFailed(let url, let underlying):
-                return "Failed to copy \"\(url.lastPathComponent)\": \(underlying.localizedDescription)"
+                return "Couldn't copy “\(url.lastPathComponent)” into your library: \(underlying.localizedDescription)"
             }
         }
     }

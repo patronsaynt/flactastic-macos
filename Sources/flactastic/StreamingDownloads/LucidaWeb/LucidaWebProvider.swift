@@ -95,7 +95,7 @@ final class LucidaWebProvider: NSObject, StreamerProvider {
                 // `success: false` (e.g. region-locked, removed, geo-blocked)
                 // would otherwise come back as a track with empty everything.
                 if raw.success == false {
-                    throw StreamerError.unavailable(raw.error ?? "lucida metadata unavailable")
+                    throw StreamerError.unavailable(raw.error ?? "Lucida couldn't load this link.")
                 }
                 return raw.toRemote(originalURL: url)
             }
@@ -124,7 +124,7 @@ final class LucidaWebProvider: NSObject, StreamerProvider {
         let outer = "https://lucida.to/api/load?url=\(percent(inner))"
             + "&force=\(percent(server))&redirect=true"
         guard let dlURL = URL(string: outer) else {
-            throw StreamerError.unavailable("could not build download URL")
+            throw StreamerError.unavailable("Couldn't start the download. Try again.")
         }
 
         // Set up the writer FIRST and bytes stream eagerly, then start the
@@ -351,7 +351,7 @@ final class LucidaWebProvider: NSObject, StreamerProvider {
             }
             try await Task.sleep(nanoseconds: 750_000_000)
         }
-        throw StreamerError.unavailable("Lucida job timed out after 3 minutes")
+        throw StreamerError.unavailable("Lucida took too long to prepare this track. Try again.")
     }
 
     private func jsString(_ s: String) -> String {

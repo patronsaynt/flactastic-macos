@@ -148,7 +148,7 @@ enum ServerError: Error, Equatable, LocalizedError {
         switch self {
         case .identityChanged: return "This server's identity changed."
         case .unreachable: return "Can't reach the server."
-        case .badResponse: return "The server sent something unexpected."
+        case .badResponse: return "The server sent something unexpected. Try again."
         case .api(let code, _, let retryAfter):
             switch code {
             case "invalidCredentials": return "That username and password didn't work."
@@ -157,13 +157,13 @@ enum ServerError: Error, Equatable, LocalizedError {
             case "forbidden": return "That needs an admin account."
             case "notFound": return "It's no longer on the server."
             case "libraryOffline": return "The server's music folder is offline."
-            case "transcodeUnavailable": return "The server is busy."
+            case "transcodeUnavailable": return "The server is busy. Try again in a moment."
             case "insufficientStorage": return "There isn't enough space on the server."
             case "sizeExceeded": return "That's too large for the server."
             case "unsupportedFormat": return "The server doesn't take that file type."
             case "hashMismatch": return "The file arrived damaged. Try again."
-            case "planStale": return "The library changed since the preview."
-            case "offsetMismatch": return "The upload got out of step."
+            case "planStale": return "The library changed since the preview. Preview again, then apply."
+            case "offsetMismatch": return "The upload got out of step. Try it again."
             default: return "Something went wrong on the server."
             }
         }

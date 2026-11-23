@@ -1209,7 +1209,7 @@ struct DownloadTabView: View {
             do {
                 resolved = try await registry.resolve(result.link)
             } catch {
-                self.error = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
             isWorking = false
         }
@@ -1297,7 +1297,7 @@ struct DownloadTabView: View {
             do {
                 resolved = try await registry.resolve(url)
             } catch {
-                self.error = (error as? LocalizedError)?.errorDescription ?? "\(error)"
+                self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             }
             isWorking = false
         }

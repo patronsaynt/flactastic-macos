@@ -187,7 +187,7 @@ struct SyncPlanSheet: View {
                         indent: 0,
                         mark: picks.isIncluded(playlist: playlist.id) ? .all : .none,
                         title: playlist.entry.name,
-                        detail: "\(playlist.entry.entryCount) tracks",
+                        detail: CountText.of(playlist.entry.entryCount, "track"),
                         note: playlist.replacesExisting ? "Replaces · contents differ" : nil,
                         expanded: nil,
                         onToggle: { picks.togglePlaylist(playlist.id) },

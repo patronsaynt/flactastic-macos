@@ -114,14 +114,19 @@ struct HomeTop: View {
     private func songLine(_ song: Song) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
+                // One line however long the names run: the title keeps
+                // the room first, the artist truncates, the pin stays put.
                 Text(song.title)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .layoutPriority(1)
                 if let artist = song.artist {
                     Text("—")
                         .font(.system(size: 14))
                         .foregroundStyle(Theme.textSecondary)
                     ArtistLink(credit: artist, font: .system(size: 14), color: Theme.textSecondary)
+                        .lineLimit(1)
                 }
                 Button(action: onPin) {
                     Image(systemName: isPinned ? "pin.fill" : "pin")

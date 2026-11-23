@@ -3,7 +3,7 @@ import SwiftUI
 /// A playlist, in the album page's language: a hero on a blurred wash of
 /// its cover, then its tracks, which can be dragged to reorder. Arrives
 /// with the same entrance as the artist and album pages: the page zooms in
-/// from blurred, then the cover, title, details and buttons follow.
+/// and fades up, then the cover, title, details and buttons follow.
 struct PlaylistDetailView: View {
     let playlistID: UUID
 
@@ -69,7 +69,6 @@ struct PlaylistDetailView: View {
                 .padding(.bottom, 100)
             }
             .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
-            .blur(radius: hasEntered || calmMotion ? 0 : 28)
             .opacity(hasEntered ? 1 : 0)
             .background(Theme.background)
             .onAppear {

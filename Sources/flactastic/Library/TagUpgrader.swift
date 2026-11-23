@@ -197,7 +197,7 @@ final class TagUpgrader {
         var errorDescription: String? {
             switch self {
             case .unreadable: return "The file couldn't be opened."
-            case .saveFailed: return "TagLib couldn't save the tags."
+            case .saveFailed: return "The tags couldn't be saved to the file."
             case .verifyFailed: return "The rewritten tags didn't read back the same, so the original was kept."
             case .outsideLibrary: return "The path is outside the music folder."
             case .implausibleBackup: return "The backup's values for this file don't look like tags, so they weren't written."

@@ -267,7 +267,7 @@ struct SyncContent: View {
                     progressBar(progress.fraction)
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("\(progress.completedFiles) of \(progress.totalFiles) files")
+                            Text("\(progress.completedFiles.formatted()) of \(CountText.of(progress.totalFiles, "file"))")
                                 .font(Theme.Font.caption)
                                 .foregroundStyle(Theme.textSecondary)
                             if let name = progress.currentFileName {

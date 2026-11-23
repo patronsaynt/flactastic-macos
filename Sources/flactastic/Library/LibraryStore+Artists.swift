@@ -196,16 +196,6 @@ extension LibraryStore {
         }
     }
 
-    func artist(
-        forKey key: String,
-        resolver: ArtistResolver,
-        overrides: [String: ArtistOverride] = [:]
-    ) -> ArtistSummary? {
-        // Only build the bucket for this key — cheaper than allArtists when
-        // navigating into a single page.
-        allArtists(resolver: resolver, overrides: overrides).first { $0.id == key }
-    }
-
     private static func albumOrder(_ a: Album, _ b: Album) -> Bool {
         let ya = a.year ?? 0
         let yb = b.year ?? 0

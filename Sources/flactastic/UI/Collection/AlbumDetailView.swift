@@ -2,7 +2,7 @@ import SwiftUI
 
 /// An album, in the artist page's language: a hero on a blurred wash of the
 /// cover, then the tracklist and more from the same artist. Arrives with the
-/// artist page's entrance: the page zooms in from blurred, then the cover,
+/// artist page's entrance: the page zooms in and fades up, then the cover,
 /// title, details and buttons follow in sequence.
 struct AlbumDetailView: View {
     let albumID: String
@@ -80,7 +80,6 @@ struct AlbumDetailView: View {
                 .padding(.bottom, 110)
             }
             .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
-            .blur(radius: hasEntered || calmMotion ? 0 : 28)
             .opacity(hasEntered ? 1 : 0)
             .background(Theme.background)
             .onAppear {

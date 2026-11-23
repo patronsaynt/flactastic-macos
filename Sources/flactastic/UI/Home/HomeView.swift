@@ -24,7 +24,6 @@ struct HomeView: View {
     @Environment(Settings.self) private var settings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(ImportCoordinator.self) private var importCoordinator
 
     /// Time window for the listening-stats section. Persisted so the choice
     /// survives navigating away and back, and across launches.
@@ -359,47 +358,12 @@ struct HomeView: View {
 
     // MARK: - Getting started
 
-    /// Home for an empty library: the ways to bring music in, as cards.
+    /// Home for an empty library: the ways to bring music in, beside the
+    /// blank case (the same view Collection shows).
     private var gettingStarted: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            sectionHeader("Get started")
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 230), spacing: 18)],
-                alignment: .leading,
-                spacing: 18
-            ) {
-                StartCard(
-                    icon: "square.stack",
-                    title: "Import an album",
-                    detail: "Copy an album's files into your library and tag them all at once."
-                ) { importCoordinator.begin(.album) }
-                StartCard(
-                    icon: "music.note",
-                    title: "Import a track",
-                    detail: "Add a single song from anywhere on your Mac, checking its tags first."
-                ) { importCoordinator.begin(.track) }
-                if settings.showDownloadTab {
-                    StartCard(
-                        icon: "arrow.down.circle",
-                        title: "Find music",
-                        detail: "Search for albums and tracks in lossless quality."
-                    ) { router.selectedTab = .download }
-                }
-                if let root = library.rootURL {
-                    StartCard(
-                        icon: "folder",
-                        title: "Open library folder",
-                        detail: "Drop music in yourself; FLACtastic picks it up."
-                    ) { NSWorkspace.shared.open(root) }
-                }
-            }
-            if library.rootURL != nil {
-                Text("Added files outside the app? They show up on their own, or refresh with ⌘R.")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-        }
-        .rise(hasEntered, calm: calmMotion, delay: 0.6)
+        LibraryGetStarted()
+            .padding(.top, 12)
+            .rise(hasEntered, calm: calmMotion, delay: 0.6)
     }
 
     private var homeFooter: some View {
@@ -954,13 +918,6 @@ struct HomeView: View {
     private var homePalette: HomePalette? {
         UIStyle.shared.palette(from: highlight.palette)
     }
-
-    private func sectionHeader(_ title: String) -> some View {
-        Text(title)
-            .font(.system(size: 20, weight: .bold))
-            .tracking(-0.2)
-            .foregroundStyle(Theme.textPrimary)
-    }
 }
 
 // MARK: - Listening chart
@@ -1347,46 +1304,3 @@ private extension View {
     }
 }
 
-/// One way to add music on the empty Home: an icon, a title and a line on
-/// what it does. Lifts a little on hover.
-private struct StartCard: View {
-    let icon: String
-    let title: String
-    let detail: String
-    let action: () -> Void
-
-    @State private var isHovering = false
-
-    var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 0) {
-                Image(systemName: icon)
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundStyle(Theme.textPrimary)
-                    .frame(width: 44, height: 44)
-                    .background(Circle().fill(Theme.textPrimary.opacity(0.08)))
-                Text(title)
-                    .font(.system(size: 17, weight: .bold))
-                    .tracking(-0.3)
-                    .foregroundStyle(Theme.textPrimary)
-                    .padding(.top, 18)
-                Text(detail)
-                    .font(.system(size: 13))
-                    .foregroundStyle(Theme.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 6)
-            }
-            .frame(maxWidth: .infinity, minHeight: 168, alignment: .topLeading)
-            .padding(22)
-            .background(
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(isHovering ? Theme.surfaceElevated : Theme.surface)
-            )
-            .offset(y: isHovering ? -3 : 0)
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovering = $0 }
-        .animation(.easeOut(duration: 0.18), value: isHovering)
-    }
-}

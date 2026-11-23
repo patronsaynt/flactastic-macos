@@ -214,11 +214,11 @@ final class DownloadCoordinator {
         let track = job.track
 
         guard let provider = registry.provider(serviceID: track.serviceID) else {
-            finish(jobID, .failed("Provider \"\(track.serviceID)\" no longer registered."))
+            finish(jobID, .failed("This download's source isn't available anymore."))
             return
         }
         guard let rootURL = library.rootURL else {
-            finish(jobID, .failed("No music folder selected. Open Settings → Config first."))
+            finish(jobID, .failed("Choose a music folder in Settings → Library first."))
             return
         }
 
@@ -361,7 +361,7 @@ final class DownloadCoordinator {
             // Must be `finish`, not `update`: a caller awaiting via
             // `enqueueAndAwait` (the playlist rebuild) needs its continuation
             // resolved here, or a single failed track hangs the whole rebuild.
-            finish(jobID, .failed((error as? LocalizedError)?.errorDescription ?? "\(error)"))
+            finish(jobID, .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription))
         }
     }
 

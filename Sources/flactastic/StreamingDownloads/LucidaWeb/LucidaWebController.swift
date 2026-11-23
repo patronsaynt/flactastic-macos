@@ -152,7 +152,7 @@ final class LucidaWebController: NSObject {
     func awaitReady() async throws {
         switch phase {
         case .ready: return
-        case .failed(let msg): throw StreamerError.unavailable("Lucida unavailable: \(msg)")
+        case .failed(let msg): throw StreamerError.unavailable("Couldn't connect to Lucida: \(msg)")
         case .idle: warmUp(); fallthrough
         case .loading:
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
@@ -183,7 +183,7 @@ final class LucidaWebController: NSObject {
             let env = try JSONDecoder().decode(BridgeEnvelope<T>.self, from: data)
             if !env.ok {
                 addLog(.error, "bridge !ok: \(env.error ?? "<nil>")")
-                throw StreamerError.unavailable(env.error ?? "lucida bridge error")
+                throw StreamerError.unavailable(env.error ?? "Lucida ran into a problem. Try again.")
             }
             guard let v = env.value else {
                 throw StreamerError.decoding("bridge ok=true but value missing")
@@ -374,7 +374,7 @@ extension LucidaWebController: WKNavigationDelegate {
                 let msg = (error as NSError).localizedDescription
                 self.phase = .failed(msg)
                 self.addLog(.error, "bridge install failed: \(msg)")
-                self.resolveWaiters(.failure(StreamerError.unavailable("Lucida bridge install failed: \(msg)")))
+                self.resolveWaiters(.failure(StreamerError.unavailable("Couldn't connect to Lucida: \(msg)")))
             }
         }
     }

@@ -99,6 +99,8 @@ struct ServerAccountGroups: View {
     @Environment(ServerSession.self) private var server
     @State private var devices: [ServerDevice] = []
     @State private var devicesError: String?
+    /// Devices whose Revoke is in flight, so a second click doesn't send it twice.
+    @State private var revoking: Set<UUID> = []
     @State private var password = ""
     @State private var current = ""
     @State private var new = ""
@@ -282,8 +284,9 @@ struct ServerAccountGroups: View {
                 Row(title: device.current ? "\(device.name) (this Mac)" : device.name,
                     detail: "Last seen \(device.lastSeen.formatted(.relative(presentation: .named)))") {
                     if !device.current {
-                        Button("Revoke") { Task { await revoke(device) } }
+                        Button(revoking.contains(device.id) ? "Revoking…" : "Revoke") { Task { await revoke(device) } }
                             .buttonStyle(PillButtonStyle())
+                            .disabled(revoking.contains(device.id))
                     }
                 }
             }
@@ -352,11 +355,15 @@ struct ServerAccountGroups: View {
     }
 
     private func revoke(_ device: ServerDevice) async {
+        guard revoking.insert(device.id).inserted else { return }
+        defer { revoking.remove(device.id) }
         do {
             try await server.revoke(device)
+            devicesError = nil
             await loadDevices()
         } catch {
             devicesError = (error as? LocalizedError)?.errorDescription
+                ?? "Couldn't revoke \(device.name). Try again."
         }
     }
 

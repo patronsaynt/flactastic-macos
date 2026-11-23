@@ -33,13 +33,13 @@ actor SpotifyPlaylistService {
             case .notASpotifyPlaylist:
                 return "That doesn't look like a Spotify playlist link."
             case .fetchFailed(let code):
-                return "Couldn't reach Spotify (HTTP \(code))."
+                return "Couldn't reach Spotify (HTTP \(code)). Try again in a moment."
             case .parseFailed:
                 return "Couldn't read the playlist from Spotify. It may be private."
             case .authFailed(let code):
-                return "Spotify rejected the request (HTTP \(code)). Try reconnecting your Spotify account in Settings."
+                return "Spotify turned down the request (HTTP \(code)). Reconnect your account in Settings → Connections."
             case .apiError(let code, let message):
-                return "Spotify refused the request (HTTP \(code)): \(message)"
+                return "Spotify said: \(message) (HTTP \(code))"
             }
         }
     }

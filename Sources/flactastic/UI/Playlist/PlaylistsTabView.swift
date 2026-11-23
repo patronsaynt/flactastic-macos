@@ -20,6 +20,7 @@ struct PlaylistsTabView: View {
     @Environment(ListeningStore.self) private var listening
     @Environment(NavigationRouter.self) private var router
     @Environment(DebugState.self) private var debugState
+    @Environment(Settings.self) private var settings
 
     @State private var searchText = ""
     @AppStorage("flactastic.playlistSort") private var sortOption: PlaylistSortOption = .recentlyPlayed
@@ -227,21 +228,36 @@ struct PlaylistsTabView: View {
         }
     }
 
+    /// No playlists at all (not just none matching a search), and the
+    /// Download tab, where Spotify playlists are brought over, is on.
+    private var offersSpotify: Bool {
+        searchText.isEmpty && settings.showDownloadTab
+    }
+
     private var emptyStage: some View {
         VStack(spacing: Theme.Spacing.md) {
             Image(systemName: "music.note.list")
                 .font(.system(size: 40, weight: .light))
                 .foregroundStyle(Theme.textTertiary)
-            Text("Make a playlist to get started")
+            Text(offersSpotify ? "Make one, or bring yours over from Spotify." : "Make a playlist to get started")
                 .font(.system(size: 15))
                 .foregroundStyle(Theme.textSecondary)
-            Button {
-                newPlaylistName = ""
-                showNewPlaylistPrompt = true
-            } label: {
-                Label("New Playlist", systemImage: "plus")
+            HStack(spacing: Theme.Spacing.sm) {
+                Button {
+                    newPlaylistName = ""
+                    showNewPlaylistPrompt = true
+                } label: {
+                    Label("New Playlist", systemImage: "plus")
+                }
+                .buttonStyle(FLActionPillStyle(isPrimary: true))
+                if offersSpotify {
+                    // Your Spotify playlists are listed on Download, ready to
+                    // fetch whole.
+                    Button("From Spotify") { router.selectedTab = .download }
+                        .buttonStyle(FLActionPillStyle())
+                        .help("See your Spotify playlists on Download")
+                }
             }
-            .buttonStyle(FLActionPillStyle(isPrimary: true))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(RoundedRectangle(cornerRadius: 20, style: .continuous).fill(Theme.surface))
@@ -343,7 +359,7 @@ private struct PlaylistIndexRow: View {
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.18), value: isHovering)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(name), \(trackCount) tracks")
+        .accessibilityLabel("\(name), \(CountText.of(trackCount, "track"))")
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }

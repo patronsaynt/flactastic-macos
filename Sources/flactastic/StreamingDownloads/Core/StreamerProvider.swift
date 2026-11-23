@@ -55,15 +55,16 @@ enum StreamerError: LocalizedError {
         case .notLoggedIn(let s):
             return "\(s) is not logged in."
         case .unsupportedURL(let u):
-            return "No streaming provider claims \(u.host ?? u.absoluteString)."
+            // Keeps "Unsupported": playlist rebuilds treat it as permanent.
+            return "Unsupported link: FLACtastic can't download from \(u.host ?? u.absoluteString)."
         case .unsupportedFormat(let f):
-            return "Unsupported audio format: \(f)."
+            return "Unsupported audio format: \(f) files can't be saved."
         case .authenticationFailed(let s, let reason):
-            return "\(s) authentication failed\(reason.map { ": \($0)" } ?? "")."
-        case .http(let status, let body):
-            return "HTTP \(status)\(body.map { ": \($0)" } ?? "")"
-        case .decoding(let msg):
-            return "Could not decode response: \(msg)"
+            return "Couldn't sign in to \(s)\(reason.map { ": \($0)" } ?? ".")"
+        case .http(let status, _):
+            return "The download service returned an error (HTTP \(status)). Try again."
+        case .decoding:
+            return "Lucida sent a reply FLACtastic couldn't read. Try again."
         case .unavailable(let msg):
             return msg
         }

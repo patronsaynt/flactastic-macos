@@ -401,10 +401,11 @@ struct ContentView: View {
     /// the cache is already warm — `ensureImage` no-ops on hits.
     private func prefetchArtistImages() {
         guard settings.autoFetchArtistImages else { return }
-        let resolver = library.makeArtistResolver()
         // Artists hidden from the lineup (feature-only, unless "Show All
         // Artists" is on) fetch their image when their page opens instead.
-        let summaries = library.allArtists(resolver: resolver, overrides: artistStore.overrides)
+        // The cached list, so this also warms it for the Artists view and
+        // artist pages.
+        let summaries = library.cachedAllArtists(overrides: artistStore.overrides, overridesRevision: artistStore.revision)
             .filter { settings.showAllArtists || !$0.albums.isEmpty || !$0.singles.isEmpty }
         let artists = summaries.map { (key: $0.id, displayName: $0.displayName) }
         artistImageFetcher.prefetchAll(artists)

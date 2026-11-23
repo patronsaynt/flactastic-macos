@@ -131,7 +131,7 @@ struct PlaylistConflictSheet: View {
     /// What this Mac's copy would replace: (field, server's, this Mac's).
     private var rows: [(String, String, String)] {
         let mine = conflict.local
-        guard let theirs = conflict.server else { return [("Tracks", "Deleted", "\(mine.entries.count) tracks")] }
+        guard let theirs = conflict.server else { return [("Tracks", "Deleted", CountText.of(mine.entries.count, "track"))] }
         let theirIDs = Set(theirs.entries.map { $0.trackID?.uuidString ?? $0.relativePath })
         let myIDs = Set(mine.entries.map { $0.trackID?.uuidString ?? $0.relativePath })
         var out: [(String, String, String)] = []

@@ -1258,7 +1258,7 @@ private struct DebugSettingsPane: View {
                     "Lyrics",
                     detail: cleared.contains("lyrics")
                         ? "Cleared. Lyrics are fetched again as songs play. Lyrics saved into your files stay."
-                        : "Fetched lyrics for \(lyricsCache.entries.count) songs · \(Self.size(lyricsCache.fileSize))",
+                        : "Fetched lyrics for \(CountText.of(lyricsCache.entries.count, "song")) · \(Self.size(lyricsCache.fileSize))",
                     button: cleared.contains("lyrics") ? "Cleared" : "Clear"
                 ) {
                     lyricsCache.removeAll()
@@ -1269,7 +1269,7 @@ private struct DebugSettingsPane: View {
                     "Artist images",
                     detail: cleared.contains("artists")
                         ? "Cleared. Pictures and banners you set yourself stay."
-                        : "Fetched pictures for \(artistCache.entries.count) artists · \(Self.size(artistCache.fileSize))",
+                        : "Fetched pictures for \(CountText.of(artistCache.entries.count, "artist")) · \(Self.size(artistCache.fileSize))",
                     button: cleared.contains("artists") ? "Cleared" : "Clear"
                 ) {
                     artistCache.removeAll()

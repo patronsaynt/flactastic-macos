@@ -19,7 +19,7 @@ struct ArtistDetailView: View {
     /// Decoded banner/profile images and the light-mode tint, rebuilt only
     /// when the underlying image data changes rather than on every render.
     @State private var art = HeroArt()
-    /// Drives the entrance: the page zooms in from blurred, then the hero
+    /// Drives the entrance: the page zooms in and fades up, then the hero
     /// elements arrive in sequence.
     @State private var hasEntered = false
     @State private var showsCompactHeader = false
@@ -43,11 +43,12 @@ struct ArtistDetailView: View {
     }
 
     private func buildSummary() -> ArtistSummary? {
-        library.artist(
-            forKey: artistKey,
-            resolver: library.makeArtistResolver(),
-            overrides: artistStore.overrides
-        )
+        // From the library's cached list of every artist (shared with the
+        // Artists view), so opening a page doesn't rebuild all of them.
+        library.cachedAllArtists(
+            overrides: artistStore.overrides,
+            overridesRevision: artistStore.revision
+        ).first { $0.id == artistKey }
     }
 
     private func refreshSummary() {
@@ -86,7 +87,6 @@ struct ArtistDetailView: View {
                     }
                     .coordinateSpace(name: Self.scrollSpace)
                     .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
-                    .blur(radius: hasEntered || calmMotion ? 0 : 28)
                     .opacity(hasEntered ? 1 : 0)
                 }
                 .overlay(alignment: .top) {

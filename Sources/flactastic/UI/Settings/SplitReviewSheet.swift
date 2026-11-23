@@ -106,6 +106,6 @@ private struct SplitReviewRow: View {
         }
         .padding(.vertical, 9)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(item.raw), \(item.trackCount) tracks")
+        .accessibilityLabel("\(item.raw), \(CountText.of(item.trackCount, "track"))")
     }
 }

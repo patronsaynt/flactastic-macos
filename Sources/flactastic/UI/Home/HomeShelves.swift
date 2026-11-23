@@ -291,7 +291,7 @@ struct HomeMixTile: View {
         .onHover { hovering in
             withAnimation(.timingCurve(0.16, 1, 0.3, 1, duration: 0.3)) { isHovering = hovering }
         }
-        .help("Play \(mix.name) · \(mix.tracks.count) tracks")
+        .help("Play \(mix.name) · \(CountText.of(mix.tracks.count, "track"))")
         .flContextMenu { menu() }
     }
 }

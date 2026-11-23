@@ -133,7 +133,7 @@ struct ConnectServerSheet: View {
     }
 
     private var history: some View {
-        OnboardingDoneRow(title: "Signed in", detail: "\(historyCount) plays on this Mac") { EmptyView() }
+        OnboardingDoneRow(title: "Signed in", detail: "\(CountText.of(historyCount, "play")) on this Mac") { EmptyView() }
     }
 
     @ViewBuilder

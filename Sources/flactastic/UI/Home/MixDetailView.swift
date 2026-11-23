@@ -60,7 +60,6 @@ struct MixDetailView: View {
         }
         .scrollIndicators(.hidden)
         .scaleEffect(hasEntered || calmMotion ? 1 : 0.86)
-        .blur(radius: hasEntered || calmMotion ? 0 : 28)
         .opacity(hasEntered ? 1 : 0)
         .background(Theme.background)
         .onAppear {

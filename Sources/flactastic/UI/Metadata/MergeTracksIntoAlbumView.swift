@@ -130,8 +130,9 @@ struct MergeTracksIntoAlbumView: View {
                                     .font(Theme.Font.body)
                                     .foregroundStyle(Theme.textSecondary)
                             }
-                            Spacer()
+                            Spacer(minLength: 0)
                         }
+                        .lineLimit(1)
                         .padding(.horizontal, Theme.Spacing.xl)
                         .padding(.vertical, 2)
                     }

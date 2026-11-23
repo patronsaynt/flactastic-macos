@@ -151,6 +151,13 @@ struct CollectionView: View {
         }
     }
 
+    /// Loaded, and nothing in it (or Settings → Debug → "Preview an empty
+    /// library").
+    private var isLibraryEmpty: Bool {
+        debugState.emptyLibraryPreviewActive
+            || (library.hasCompletedInitialLoad && library.tracks.isEmpty)
+    }
+
     private var rootContent: some View {
         VStack(spacing: 0) {
             header
@@ -160,14 +167,16 @@ struct CollectionView: View {
 
             // Crossfade between sections and views rather than hard-cutting.
             Group {
-                if debugState.emptyLibraryPreviewActive {
-                    // Settings → Debug → "Preview an empty library".
-                    Text("No \(contentMode.rawValue.lowercased()) in your library")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.textTertiary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .padding(.horizontal, collectionGutter)
-                        .padding(.top, 24)
+                if isLibraryEmpty {
+                    // The same in Albums, Artists and Tracks: there's nothing
+                    // to sort or search yet, only music to bring in.
+                    ScrollView {
+                        LibraryGetStarted()
+                            .padding(.horizontal, collectionGutter)
+                            .padding(.top, 36)
+                            .padding(.bottom, 120)   // clear the floating player bar
+                    }
+                    .scrollIndicators(.hidden)
                 } else {
                 switch contentMode {
                 case .albums:

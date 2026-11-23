@@ -65,11 +65,11 @@ actor MetadataWriter {
                 return "Can't reach the server, and this track has no offline copy to edit here."
 
             case .fileNotFound(let url):
-                return "File not found: \(url.lastPathComponent)"
+                return "“\(url.lastPathComponent)” isn't where it was. Refresh the library with ⌘R and try again."
             case .fileOpenFailed(let url):
-                return "Could not open \"\(url.lastPathComponent)\" for writing. Check file permissions."
+                return "Can't write to “\(url.lastPathComponent)”. Check in Finder that it isn't locked or read-only."
             case .saveFailed(let url):
-                return "Failed to save changes to \"\(url.lastPathComponent)\"."
+                return "Couldn't save the changes to “\(url.lastPathComponent)”. Try again."
             }
         }
     }
