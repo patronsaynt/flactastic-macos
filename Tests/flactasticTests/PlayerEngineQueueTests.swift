@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import os
 import Testing
 @testable import flactastic
 
@@ -13,6 +14,7 @@ private final class ClockGraph: AudioGraphProtocol, @unchecked Sendable {
     private var scheduledEnd: AVAudioFramePosition = 0
     private var pending: [(AVAudioFramePosition, @Sendable (AVAudioPlayerNodeCompletionCallbackType) -> Void)] = []
     private(set) var flushCount = 0
+    private(set) var pauseCount = 0
 
     func prepare() throws {}
     func reprepare() {}
@@ -22,7 +24,7 @@ private final class ClockGraph: AudioGraphProtocol, @unchecked Sendable {
         pending.append((scheduledEnd, completionHandler)); lock.unlock()
     }
     func play() {}
-    func pause() {}
+    func pause() { lock.lock(); pauseCount += 1; lock.unlock() }
     func flush() {
         lock.lock(); sampleTime = 0; scheduledEnd = 0; pending = []; flushCount += 1; lock.unlock()
     }
@@ -257,4 +259,80 @@ private func organize(_ tracks: [Track]) throws -> [String: URL] {
     await play(engine, graph, seconds: 31)
     #expect(engine.filesInUse.isEmpty)
     guardian.filesInUse = { [] }
+}
+
+/// Dragging upcoming tracks around while the playing one is still being read
+/// must leave its audio alone: no restart, no flush, and no hold. The hold
+/// was the audible stutter — a replaced decode pass zeroed the throttle's
+/// count while ~10 s still sat in the node, so the starvation check paused
+/// output until the new pass reopened the track (a network round trip for a
+/// stream). The opener here is slow, like a stream.
+@MainActor
+@Test func reorderingUpcomingTracksDoesNotInterruptPlayback() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try track("DragA", 60), b = try track("DragB", 20), c = try track("DragC", 20)
+    engine.setQueue([a, b, c], startAt: 0)
+    engine.play()
+    try? await Task.sleep(for: .milliseconds(200))
+    await play(engine, graph, seconds: 5)
+
+    let opens = OSAllocatedUnfairLock(initialState: 0)
+    engine.sourceOpener = { _, _ in
+        opens.withLock { $0 += 1 }
+        try await Task.sleep(for: .milliseconds(600))
+        return nil
+    }
+    let pausesBefore = graph.pauseCount
+    engine.reorderQueue([a, c, b], currentIndex: 0)
+    try? await Task.sleep(for: .milliseconds(300))
+
+    #expect(!engine.isHolding)
+    #expect(graph.pauseCount == pausesBefore)
+    #expect(graph.flushCount == 1) // the initial setQueue only
+    #expect(opens.withLock { $0 } == 0) // A was never reopened
+
+    // The new order plays: C follows A.
+    await play(engine, graph, seconds: 56)
+    await waitUntil { engine.currentTrack?.title == "DragC" }
+    #expect(engine.currentTrack?.title == "DragC")
+    engine.pause()
+}
+
+/// A reorder that moves the playing track's index (shuffle, or a played
+/// track dragged after it) still restarts the decoder from where it's read
+/// to. The audio already in the node keeps playing meanwhile: no hold while
+/// the slow reopen is in progress, and nothing skipped or repeated.
+@MainActor
+@Test func reorderThatRestartsDecodeKeepsPlayingWhileReopening() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try track("ShufA", 60), b = try track("ShufB", 20), c = try track("ShufC", 20)
+    engine.setQueue([a, b, c], startAt: 0)
+    engine.play()
+    try? await Task.sleep(for: .milliseconds(200))
+    await play(engine, graph, seconds: 5)
+
+    engine.sourceOpener = { _, _ in
+        try await Task.sleep(for: .milliseconds(600))
+        return nil
+    }
+    let pausesBefore = graph.pauseCount
+    engine.reorderQueue([b, a, c], currentIndex: 1)
+    // Keep playing through the reopen; the tick would hold within 50 ms.
+    await play(engine, graph, seconds: 1)
+
+    #expect(!engine.isHolding)
+    #expect(graph.pauseCount == pausesBefore)
+    #expect(graph.flushCount == 1)
+    await waitUntil { abs(engine.currentTime - 6) < 0.1 }
+    #expect(abs(engine.currentTime - 6) < 0.1)
+
+    // A plays to its full length, then C.
+    await play(engine, graph, seconds: 53.5)
+    #expect(engine.currentTrack?.title == "ShufA")
+    await play(engine, graph, seconds: 1)
+    await waitUntil { engine.currentTrack?.title == "ShufC" }
+    #expect(engine.currentTrack?.title == "ShufC")
+    engine.pause()
 }

@@ -57,6 +57,10 @@ final class PlayerEngine {
     private var tickTask: Task<Void, Never>?
     private var isPrepared = false
     private var isDecoding = false
+    /// The queue index the decode pass is reading (or about to open). The
+    /// pass reads `_queue[i]` live as it reaches each track, so an edit that
+    /// leaves this index and everything before it alone needs no restart.
+    private var decodingIndex: Int?
     private var seekTimeOffset: TimeInterval = 0
     /// The queue played to its end (cleared when anything starts again).
     private var hasFinished = false
@@ -464,6 +468,14 @@ final class PlayerEngine {
 
         _queue.remove(at: index)
 
+        // The decoder is still reading the playing track: removing a later one
+        // doesn't move it, and it reads what follows from the queue when it gets
+        // there. Nothing to restart.
+        if isDecoding, decodingIndex == _currentIndex, !alreadyScheduled, !nextTrackAlreadyScheduled {
+            notifyStateUpdate()
+            return
+        }
+
         // Common case: decoder is still on the current track and the removed track's
         // audio hasn't been loaded. Cancel and restart from the current continuation
         // point — no flush, so the playing audio is uninterrupted.
@@ -474,7 +486,7 @@ final class PlayerEngine {
             let preScheduledSeconds = Double(endFrame - currentEntryStart) / canonicalRate
             let continuationOffset = seekTimeOffset + preScheduledSeconds
 
-            cancelDecode()
+            cancelDecode(keepScheduled: true)
             nextScheduleFrame = endFrame
             notifyStateUpdate()
             startDecoding(from: _currentIndex, seekOffset: continuationOffset, appendingEntry: !scheduledEntries.isEmpty)
@@ -604,11 +616,23 @@ final class PlayerEngine {
     /// been pre-scheduled (current track has < ~10 s remaining).
     func reorderQueue(_ tracks: [Track], currentIndex: Int) {
         guard !tracks.isEmpty else { return }
+        let oldIndex = _currentIndex
+        let oldCurrentID = oldIndex < _queue.count ? _queue[oldIndex].id : nil
         _queue = tracks
         _currentIndex = currentIndex
 
         if remote != nil {
             remoteQueueDidChange()
+            return
+        }
+
+        // Upcoming tracks moved around while the decoder is still reading the
+        // playing one at the same index: it reads the next track from the
+        // queue when it gets there, so it'll find the new order by itself.
+        // Nothing to cancel or reopen — for a stream, reopening is a new request.
+        if isDecoding, decodingIndex == oldIndex, currentIndex == oldIndex,
+           tracks[currentIndex].id == oldCurrentID {
+            notifyStateUpdate()
             return
         }
 
@@ -637,7 +661,7 @@ final class PlayerEngine {
         let preScheduledSeconds = Double(endFrame - currentEntryStart) / canonicalRate
         let continuationOffset = seekTimeOffset + preScheduledSeconds
 
-        cancelDecode()
+        cancelDecode(keepScheduled: true)
 
         // Tell the new decode task where in the player-node frame timeline to start
         // appending buffers.
@@ -657,12 +681,22 @@ final class PlayerEngine {
         startDecoding(from: currentIndex, seekOffset: continuationOffset, appendingEntry: !scheduledEntries.isEmpty)
     }
 
-    private func cancelDecode() {
+    /// Stop the decode pass. `keepScheduled` is for queue edits that leave
+    /// the node's buffers playing: their frames stay counted (and are
+    /// released as they play), so the starvation check still sees the
+    /// seconds already queued instead of a false empty — which held the node
+    /// and cut the audio for as long as the replacement pass took to open.
+    private func cancelDecode(keepScheduled: Bool = false) {
         decodeTask?.cancel()
         decodeTask = nil
         generation.withLock { $0 &+= 1 }
-        throttle.reset()
+        if keepScheduled {
+            throttle.wakeWaiters()
+        } else {
+            throttle.reset()
+        }
         isDecoding = false
+        decodingIndex = nil
     }
 
     private func startDecoding(from index: Int, seekOffset: TimeInterval = 0, appendingEntry: Bool = false) {
@@ -674,6 +708,10 @@ final class PlayerEngine {
         let myGeneration = generation.withLock { $0 }
         let generation = self.generation
         let scheduleEnd = self.liveScheduleEnd  // captured by reference (struct wraps OS pointer)
+        // Frames are given back under the epoch they were taken in: a flush
+        // starts a new one, so buffers it dropped don't count twice, while a
+        // pass replaced without a flush still frees what it left playing.
+        let throttleEpoch = throttle.epoch
         let opener = sourceOpener
         // A pass started for upcoming tracks (append/insert while the decoder is
         // idle) begins at a track that isn't playing yet — its length must not
@@ -700,6 +738,7 @@ final class PlayerEngine {
                 // a stale pass must not touch the new one's state.
                 let nextTrack: Track? = await MainActor.run { [weak self] () -> Track? in
                     guard let self, generation.withLock({ $0 }) == myGeneration else { return nil }
+                    self.decodingIndex = trackIndex
                     if trackIndex >= self._queue.count {
                         self.isDecoding = false
                         return nil
@@ -844,14 +883,15 @@ final class PlayerEngine {
                                 let frameCount = Int64(destBuffer.frameLength)
 
                                 await throttle.acquire(frames: frameCount)
-                                if generation.withLock({ $0 }) != myGeneration { return }
+                                if generation.withLock({ $0 }) != myGeneration {
+                                    throttle.release(frames: frameCount, epoch: throttleEpoch)
+                                    return
+                                }
 
                                 PlaybackTrace.mark("decoded")
                                 totalScheduledFrames += AVAudioFramePosition(frameCount)
                                 graphRef.schedule(destBuffer, completionCallbackType: .dataConsumed) { _ in
-                                    if generation.withLock({ $0 }) == myGeneration {
-                                        throttle.release(frames: frameCount)
-                                    }
+                                    throttle.release(frames: frameCount, epoch: throttleEpoch)
                                 }
                                 // Keep live pointer current so reorderQueue() always knows
                                 // the exact end of scheduled audio without needing a flush.
@@ -885,14 +925,15 @@ final class PlayerEngine {
                             let frameCount = Int64(destBuffer.frameLength)
 
                             await throttle.acquire(frames: frameCount)
-                            if generation.withLock({ $0 }) != myGeneration { return }
+                            if generation.withLock({ $0 }) != myGeneration {
+                                throttle.release(frames: frameCount, epoch: throttleEpoch)
+                                return
+                            }
 
                             PlaybackTrace.mark("decoded")
                             totalScheduledFrames += AVAudioFramePosition(frameCount)
                             graphRef.schedule(destBuffer, completionCallbackType: .dataConsumed) { _ in
-                                if generation.withLock({ $0 }) == myGeneration {
-                                    throttle.release(frames: frameCount)
-                                }
+                                throttle.release(frames: frameCount, epoch: throttleEpoch)
                             }
                             // Keep live pointer current (same reason as converter path above).
                             let liveEnd = startFrame + totalScheduledFrames
@@ -1308,7 +1349,11 @@ final class BufferThrottle: @unchecked Sendable {
         var inFlight: Int64 = 0
         var limit: Int64 = 441_000 // default ~10s at 44.1 kHz, updated at prepare
         var waiters: [CheckedContinuation<Void, Never>] = []
+        /// Bumped by `reset` (a flush): releases from before it are ignored.
+        var epoch: UInt64 = 0
     }
+
+    var epoch: UInt64 { state.withLock { $0.epoch } }
 
     func setLimit(_ limit: Int64) {
         state.withLock { $0.limit = limit }
@@ -1326,8 +1371,9 @@ final class BufferThrottle: @unchecked Sendable {
         }
     }
 
-    func release(frames: Int64) {
+    func release(frames: Int64, epoch: UInt64) {
         let waiter: CheckedContinuation<Void, Never>? = state.withLock { s in
+            guard s.epoch == epoch else { return nil }
             s.inFlight -= frames
             if s.inFlight <= s.limit, !s.waiters.isEmpty {
                 return s.waiters.removeFirst()
@@ -1340,9 +1386,22 @@ final class BufferThrottle: @unchecked Sendable {
     /// Frames scheduled on the node and not yet consumed.
     var inFlightFrames: Int64 { state.withLock { $0.inFlight } }
 
-    /// Cancel all backpressure — unblock any waiting decode task so it can check cancellation.
+    /// Unblock a waiting decode task so it can see it was replaced, keeping
+    /// the count of frames still scheduled (nothing was flushed).
+    func wakeWaiters() {
+        let waiters: [CheckedContinuation<Void, Never>] = state.withLock { s in
+            let w = s.waiters
+            s.waiters.removeAll()
+            return w
+        }
+        for w in waiters { w.resume() }
+    }
+
+    /// The node was flushed: nothing is in flight. Unblock any waiting decode
+    /// task so it can check cancellation.
     func reset() {
         let waiters: [CheckedContinuation<Void, Never>] = state.withLock { s in
+            s.epoch &+= 1
             s.inFlight = 0
             let w = s.waiters
             s.waiters.removeAll()
