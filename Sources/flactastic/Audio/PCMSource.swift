@@ -27,6 +27,26 @@ enum PlaybackSource: Equatable, Sendable {
     case streaming
     /// A transcode, streamed.
     case transcode(StreamQuality)
+    /// Played from this Mac's stream cache: the original (`.original`) or a
+    /// transcode, kept from an earlier play. No network.
+    case cached(StreamQuality)
+
+    /// Whether playing it uses the connection to the server.
+    var usesNetwork: Bool {
+        switch self {
+        case .streaming, .transcode: true
+        case .offline, .cached: false
+        }
+    }
+
+    /// The lossy stream being heard, if it's a transcode (streamed or cached).
+    var transcodeQuality: StreamQuality? {
+        switch self {
+        case .transcode(let q): q
+        case .cached(let q) where q != .original: q
+        default: nil
+        }
+    }
 }
 
 /// An offline copy of a server track: the file, marked as such.

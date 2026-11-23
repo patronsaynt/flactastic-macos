@@ -89,11 +89,17 @@ struct FlactasticApp: App {
             streamer.upcoming(current: current, next: next)
         }
         playerState.engine.stalled = { [streamer = serverSession.streamer] in streamer.stalled() }
+        // Reads the session's status, so a queue drawn with it redraws when
+        // the server goes away or comes back.
+        playerState.canPlayNow = { [serverSession] track in
+            _ = serverSession.status
+            return serverSession.streamer.canPlay(track)
+        }
         // Uploads hold while a streamed track plays, so playback never
         // competes with them for the connection. An offline copy doesn't count.
         serverSession.uploads.isStreaming = { [playerState] in
             guard playerState.isPlaying, let source = playerState.source else { return false }
-            return source != .offline
+            return source.usesNetwork
         }
         _playlistRebuildCoordinator = State(initialValue: PlaylistRebuildCoordinator(
             downloads: downloads,

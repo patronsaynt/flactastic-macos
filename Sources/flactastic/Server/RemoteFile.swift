@@ -71,14 +71,14 @@ final class StreamTask: NSObject, URLSessionDataDelegate, @unchecked Sendable {
 /// up to `cap`, and keeps everything until it's dropped, so rewinds and
 /// repeat seeks stay local.
 ///
-/// The download is a run of bounded ranges, one at a time, each about a
-/// quarter second of link time. Over one HTTP/2 connection, bytes already
-/// sent can't be recalled, so a cancel leaves at most that much ahead of the
-/// next response.
+/// The download is a run of bounded ranges, each about a quarter second of
+/// link time, with the next one asked for as soon as the current one
+/// answers — so the link never sits idle for a round trip between them
+/// (over Tailscale, that idle time was a quarter of the transfer). Over one
+/// HTTP/2 connection, bytes already sent can't be recalled, so a cancel
+/// leaves at most two windows ahead of the next response.
 final class RemoteFile: @unchecked Sendable {
     static let cap: Int64 = 200 << 20
-    /// Waiting longer than this for bytes is a stall (Auto quality reacts).
-    static let stallSeconds: TimeInterval = 2
     /// Stalls so far, across the app (for tests and the trace).
     static let stalls = OSAllocatedUnfairLock(initialState: 0)
 
@@ -114,11 +114,30 @@ final class RemoteFile: @unchecked Sendable {
     func newReader() -> Int { condition.withLock { readers += 1; return readers } }
     var stallThrows = false
     private var stallNow = false
+    /// Reads waiting for bytes right now.
+    private var waiting = 0
     private let onSpeed: @Sendable (Double) -> Void
+    /// The link's rate, measured over the time bytes are actually arriving:
+    /// the wait for a first response, and pauses (read-ahead full, a seek),
+    /// don't count against it.
+    private var meterBytes: Int64 = 0
+    private var meterTime: TimeInterval = 0
+    private var lastDataAt: Date?
+    /// Kept in the stream cache: the file outlives this object, and what's
+    /// on disk is reported as it completes and when this goes away
+    /// (`closing`). Nil for a throwaway download, deleted on close.
+    private let persist: (@Sendable (_ have: IndexSet, _ etag: String?, _ closing: Bool) -> Void)?
+    /// Whole on disk from the start: played from the cache, no network.
+    let openedComplete: Bool
 
+    /// `existing`: what a cached copy already has on disk (read on from it).
     init(client: ServerClient, trackID: UUID, size: Int64, file: URL, readAheadLimit: Int64? = nil,
+         existing: (have: IndexSet, etag: String?)? = nil,
+         persist: (@Sendable (_ have: IndexSet, _ etag: String?, _ closing: Bool) -> Void)? = nil,
          onSpeed: @escaping @Sendable (Double) -> Void = { _ in }) throws {
         self.client = client
+        self.persist = persist
+        openedComplete = (existing?.have.count ?? 0) >= Int(size)
         // Playback goes through /stream (§9.2: the original there is /file
         // with the same Range semantics), so the server counts it as a
         // stream; /file is for downloads.
@@ -128,24 +147,34 @@ final class RemoteFile: @unchecked Sendable {
         self.readAheadLimit = readAheadLimit
         self.onSpeed = onSpeed
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        fd = open(file.path, O_RDWR | O_CREAT | O_TRUNC, 0o600)
+        fd = open(file.path, O_RDWR | O_CREAT | (existing == nil ? O_TRUNC : 0), 0o600)
         guard fd >= 0, ftruncate(fd, size) == 0 else { throw ServerError.badResponse }
+        if let existing {
+            have = existing.have
+            etag = existing.etag
+        }
         condition.withLock { fetch(from: 0) }
     }
 
     deinit {
         windows.forEach { $0.task?.cancel() }
         close(fd)
-        try? FileManager.default.removeItem(at: file)
+        if let persist { persist(have, etag, true) } else { try? FileManager.default.removeItem(at: file) }
     }
 
-    func drop() { condition.withLock { stop() } }
+    /// No longer playing or read ahead: stop downloading, and note what's here.
+    func drop() {
+        let state: (IndexSet, String?) = condition.withLock { stop(); return (have, etag) }
+        persist?(state.0, state.1, false)
+    }
 
-    /// Playback ran dry on this file: with Auto, the waiting read gives up
-    /// so the track reopens at a quality the link carries.
+    /// The engine's buffer ran low while this file was being read: with
+    /// Auto, the waiting read gives up so the track reopens at a quality the
+    /// link carries. Only a read that's actually waiting is affected — a
+    /// file that's all here (its tail playing out) has nothing to give up.
     func stalled() {
         condition.withLock {
-            guard stallThrows else { return }
+            guard stallThrows, waiting > 0 else { return }
             stallNow = true
             condition.broadcast()
         }
@@ -191,7 +220,9 @@ final class RemoteFile: @unchecked Sendable {
             newestReader = reader
         }
         lastRead = offset
-        var waited = Date(), haveThen = have.count
+        var waited = Date()
+        waiting += 1
+        defer { waiting -= 1 }
         while let gap = nextGap(after: offset), gap < end {
             if reader != 0, reader < newestReader { throw CancellationError() }
             if let failure { self.failure = nil; throw failure }
@@ -204,17 +235,14 @@ final class RemoteFile: @unchecked Sendable {
             }
             // Move the download unless it's about to reach these bytes:
             // within 128 KB of where it's writing (about 50 ms at 20 Mbit/s).
-            if let at = windows.first?.pos, gap >= at, gap - at < 128 << 10 {} else {
-                fetch(from: gap); waited = Date(); haveThen = have.count
+            if windows.contains(where: { gap >= $0.pos && gap < $0.end && gap - $0.pos < 128 << 10 }) {} else {
+                fetch(from: gap); waited = Date()
             }
-            if !condition.wait(until: Date() + 0.25) {
-                let stalled = Date().timeIntervalSince(waited)
-                if stallThrows, stalled > Self.stallSeconds {
-                    Self.stalls.withLock { $0 += 1 }
-                    onSpeed(Double(have.count - haveThen) / stalled) // what the link managed meanwhile
-                    throw ServerError.unreachable("Stalled")
-                }
-                if stalled > 30 { throw ServerError.unreachable("Stalled") }
+            // A wait alone doesn't change quality: the engine has seconds
+            // queued and says when they run low (`stalled`). Only a link
+            // that's gone gives up here.
+            if !condition.wait(until: Date() + 0.25), Date().timeIntervalSince(waited) > 30 {
+                throw ServerError.unreachable("Stalled")
             }
         }
         stallNow = false
@@ -235,10 +263,16 @@ final class RemoteFile: @unchecked Sendable {
 
     /// Asks for the next window from `offset` if anything there is missing:
     /// always for a read, otherwise only while read-ahead allows.
-    private func request(from offset: Int64, force: Bool = false) {
+    /// `pipelined`: asked for while another window is still arriving, for
+    /// the bytes right after it.
+    private func request(from offset: Int64, force: Bool = false, pipelined: Bool = false) {
         guard force || Int64(have.count) < min(readAheadLimit ?? Self.cap, size),
-              let start = nextGap(after: offset) ?? nextGap(after: 0) else { return }
-        let window = Window(start, min(size, start + windowSize))
+              let start = pipelined ? nextGap(after: offset) : (nextGap(after: offset) ?? nextGap(after: 0)),
+              !windows.contains(where: { start >= $0.start && start < $0.end }) else { return }
+        // Up to the next bytes already here (a cached copy, an earlier seek).
+        var end = min(size, start + windowSize)
+        if let here = have.integerGreaterThanOrEqualTo(Int(start)) { end = min(end, Int64(here)) }
+        let window = Window(start, end)
         var request = client.request("GET", path, query: [URLQueryItem(name: "quality", value: "original")], timeout: 30)
         request.setValue("bytes=\(window.start)-\(window.end - 1)", forHTTPHeaderField: "Range")
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-Range") }
@@ -253,14 +287,24 @@ final class RemoteFile: @unchecked Sendable {
                     window.start = 0; window.pos = 0; window.end = self.size
                 }
                 self.etag = http.value(forHTTPHeaderField: "ETag")
+                // Ask for the next window now, so it's already coming when this one ends.
+                if http.statusCode == 206, self.windows.count < 2, let last = self.windows.last {
+                    self.request(from: last.end, pipelined: true)
+                }
             }
         }, onData: { [weak self] data in
             guard let self else { return }
             self.condition.withLock {
                 guard self.windows.contains(where: { $0 === window }) else { return }
+                let now = Date()
+                if let last = self.lastDataAt, now.timeIntervalSince(last) < 0.5 { self.meterTime += now.timeIntervalSince(last) }
+                self.lastDataAt = now
+                self.meterBytes += Int64(data.count)
                 _ = data.withUnsafeBytes { pwrite(self.fd, $0.baseAddress, data.count, off_t(window.pos)) }
                 self.have.insert(integersIn: Int(window.pos)..<Int(window.pos) + data.count)
                 window.pos += Int64(data.count)
+                // Whole now: recorded at once, so it's kept even if the app quits mid-song.
+                if self.have.count == Int(self.size) { self.persist?(self.have, self.etag, false) }
                 self.condition.broadcast()
             }
         }, onEnd: { [weak self] error in
@@ -268,10 +312,10 @@ final class RemoteFile: @unchecked Sendable {
             self.condition.withLock {
                 guard let i = self.windows.firstIndex(where: { $0 === window }) else { return }
                 self.windows.remove(at: i)
-                let seconds = Date().timeIntervalSince(window.began)
-                let bytes = window.pos - window.start
-                if error == nil, bytes >= 128 << 10, seconds > 0.005 {
-                    let rate = Double(bytes) / seconds
+                if error == nil, self.meterBytes >= 128 << 10, self.meterTime > 0.005 {
+                    let rate = Double(self.meterBytes) / self.meterTime
+                    self.meterBytes = 0
+                    self.meterTime = 0
                     self.onSpeed(rate)
                     // About a quarter second of this link per window.
                     self.windowSize = min(16 << 20, max(256 << 10, Int64(rate / 4)))
@@ -283,8 +327,9 @@ final class RemoteFile: @unchecked Sendable {
                     DispatchQueue.global().asyncAfter(deadline: .now() + 1) { [weak self] in
                         self?.condition.withLock { if self?.windows.isEmpty == true { self?.fetch(from: resume) } }
                     }
-                } else if self.windows.isEmpty {
-                    self.request(from: window.end)
+                } else if self.windows.count < 2 {
+                    // Keep one window coming behind the one still arriving.
+                    self.request(from: self.windows.last?.end ?? window.end, pipelined: !self.windows.isEmpty)
                 }
                 self.condition.broadcast()
             }
@@ -425,7 +470,7 @@ struct FLACLayout {
 /// decide which bytes a seek needs; a FLAC without a seek table jumps by
 /// estimate (`FLACLayout`).
 final class RemoteAudioSource: PCMSource, @unchecked Sendable {
-    var playbackSource: PlaybackSource? { .streaming }
+    var playbackSource: PlaybackSource? { remote.openedComplete ? .cached(.original) : .streaming }
     let remote: RemoteFile
     private let hint: AudioFileTypeID
     private let flac: FLACLayout?

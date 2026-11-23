@@ -300,11 +300,11 @@ private func organize(_ tracks: [Track]) throws -> [String: URL] {
 }
 
 /// A reorder that moves the playing track's index (shuffle, or a played
-/// track dragged after it) still restarts the decoder from where it's read
-/// to. The audio already in the node keeps playing meanwhile: no hold while
-/// the slow reopen is in progress, and nothing skipped or repeated.
+/// track dragged after it) used to restart the decoder and reopen the
+/// stream mid-song. The decoder now follows the track it's reading by ID,
+/// so nothing restarts: no reopen, no hold, nothing skipped or repeated.
 @MainActor
-@Test func reorderThatRestartsDecodeKeepsPlayingWhileReopening() async throws {
+@Test func reorderThatMovesTheCurrentIndexDoesNotRestartDecode() async throws {
     let graph = ClockGraph()
     let engine = PlayerEngine(graph: graph)
     let a = try track("ShufA", 60), b = try track("ShufB", 20), c = try track("ShufC", 20)
@@ -313,26 +313,226 @@ private func organize(_ tracks: [Track]) throws -> [String: URL] {
     try? await Task.sleep(for: .milliseconds(200))
     await play(engine, graph, seconds: 5)
 
+    let opens = OSAllocatedUnfairLock(initialState: 0)
     engine.sourceOpener = { _, _ in
-        try await Task.sleep(for: .milliseconds(600))
+        opens.withLock { $0 += 1 }
         return nil
     }
     let pausesBefore = graph.pauseCount
     engine.reorderQueue([b, a, c], currentIndex: 1)
-    // Keep playing through the reopen; the tick would hold within 50 ms.
     await play(engine, graph, seconds: 1)
 
     #expect(!engine.isHolding)
     #expect(graph.pauseCount == pausesBefore)
     #expect(graph.flushCount == 1)
+    #expect(opens.withLock { $0 } == 0)
     await waitUntil { abs(engine.currentTime - 6) < 0.1 }
     #expect(abs(engine.currentTime - 6) < 0.1)
 
-    // A plays to its full length, then C.
+    // A plays to its full length, then C (B is now behind it).
     await play(engine, graph, seconds: 53.5)
     #expect(engine.currentTrack?.title == "ShufA")
     await play(engine, graph, seconds: 1)
     await waitUntil { engine.currentTrack?.title == "ShufC" }
     #expect(engine.currentTrack?.title == "ShufC")
+    engine.pause()
+}
+
+/// Near a track's end the next one is already loaded. Edits further down
+/// the queue leave it alone (no flush); moving the loaded track itself has
+/// to rebuild, and the new order then plays.
+@MainActor
+@Test func editsNearTheEndOnlyFlushWhenTheyMoveLoadedAudio() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try track("EndA", 30), b = try track("EndB", 20), c = try track("EndC", 20), d = try track("EndD", 20)
+    engine.setQueue([a, b, c, d], startAt: 0)
+    engine.play()
+    try? await Task.sleep(for: .milliseconds(200))
+    await play(engine, graph, seconds: 25) // B is read ahead now
+
+    engine.reorderQueue([a, b, d, c], currentIndex: 0)
+    engine.removeFromQueue(at: 3)
+    try? await Task.sleep(for: .milliseconds(100))
+    #expect(graph.flushCount == 1)
+
+    engine.reorderQueue([a, d, b], currentIndex: 0)
+    try? await Task.sleep(for: .milliseconds(100))
+    #expect(graph.flushCount == 2)
+    await waitUntil { abs(engine.currentTime - 25) < 0.2 }
+    #expect(engine.currentTrack?.title == "EndA")
+
+    await play(engine, graph, seconds: 6)
+    await waitUntil { engine.currentTrack?.title == "EndD" }
+    #expect(engine.currentTrack?.title == "EndD")
+    engine.pause()
+}
+
+/// Inserting at or before the playing track shifts its index. The decoder
+/// follows tracks by ID, so it still moves on to the right one.
+@MainActor
+@Test func insertingBeforeTheCurrentTrackKeepsTheNextOneRight() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try track("InsA", 30), b = try track("InsB", 20), x = try track("InsX", 20)
+    engine.setQueue([a, b], startAt: 0)
+    engine.play()
+    try? await Task.sleep(for: .milliseconds(200))
+    await play(engine, graph, seconds: 5)
+
+    engine.insertTracks([x], at: 0)
+    #expect(engine.currentIndex == 1)
+    #expect(graph.flushCount == 1)
+    await play(engine, graph, seconds: 26)
+    await waitUntil { engine.currentTrack?.title == "InsB" }
+    #expect(engine.currentTrack?.title == "InsB")
+    engine.pause()
+}
+
+/// A track whose reads take only what `budget` allows, waiting otherwise —
+/// a stream whose link can be throttled from the test.
+private final class MeteredSource: PCMSource, @unchecked Sendable {
+    let file: AVAudioFile
+    let budget = OSAllocatedUnfairLock<Int64>(initialState: .max)
+    init(_ url: URL) throws { file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false) }
+    var processingFormat: AVAudioFormat { file.processingFormat }
+    var length: AVAudioFramePosition { file.length }
+    var framePosition: AVAudioFramePosition {
+        get { file.framePosition }
+        set { file.framePosition = newValue }
+    }
+    func read(into buffer: AVAudioPCMBuffer, frameCount frames: AVAudioFrameCount) throws {
+        var n: Int64 = 0
+        while n == 0 {
+            n = budget.withLock { b in let take = min(b, Int64(frames)); b -= take; return take }
+            if n == 0 { Thread.sleep(forTimeInterval: 0.005) }
+        }
+        try file.read(into: buffer, frameCount: AVAudioFrameCount(n))
+    }
+}
+
+/// Running dry mid-song holds output until a few seconds are queued again,
+/// not the half second a start needs — on a slow link, resuming at once
+/// just runs dry again (a stutter loop).
+@MainActor
+@Test func afterRunningDryPlaybackWaitsForSecondsNotAFraction() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try track("DryA", 60)
+    let source = try MeteredSource(a.url)
+    engine.sourceOpener = { _, _ in source }
+    engine.setQueue([a], startAt: 0)
+    engine.play()
+    // Started and well stocked (slow under a loaded test run, so wait for it).
+    await waitUntil { !engine.isHolding && engine.currentTime >= 0 }
+    try? await Task.sleep(for: .milliseconds(300))
+    #expect(!engine.isHolding)
+
+    source.budget.withLock { $0 = 0 }
+    await play(engine, graph, seconds: 12)
+    await waitUntil { engine.isHolding }
+    #expect(engine.isHolding)
+
+    // Two seconds arrive: enough to start, not enough after running dry.
+    source.budget.withLock { $0 = 2 * 44_100 }
+    try? await Task.sleep(for: .milliseconds(300))
+    #expect(engine.isHolding)
+
+    source.budget.withLock { $0 = 3 * 44_100 }
+    await waitUntil { !engine.isHolding }
+    #expect(!engine.isHolding)
+
+    // A seek starts quickly again: half a second will do.
+    source.budget.withLock { $0 = 0 }
+    engine.seek(to: 30)
+    source.budget.withLock { $0 = 44_100 }
+    await waitUntil { !engine.isHolding }
+    #expect(!engine.isHolding)
+    source.budget.withLock { $0 = .max }
+    engine.pause()
+}
+
+/// Offline copies and streamed tracks in one queue, with the server away:
+/// the streamed one is skipped at once and the next offline copy follows
+/// straight on.
+@MainActor
+@Test func mixedQueueSkipsStreamedTracksWhileTheServerIsAway() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try track("MixA", 20), c = try track("MixC", 20)
+    let b = Track(url: URL(fileURLWithPath: "/nonexistent/flactastic/MixB.flac"), title: "MixB", duration: 20, fileFormat: .flac)
+    func info(_ t: Track) -> ServerStreamer.TrackInfo {
+        ServerStreamer.TrackInfo(id: UUID(), format: .wav, fileSize: 1000, contentHash: nil,
+                                 sampleRate: 44_100, bitrate: 1411, frames: nil, duration: 20)
+    }
+    let (ia, ib, ic) = (info(a), info(b), info(c))
+    let streamer = ServerStreamer()
+    streamer.config.withLock {
+        $0 = .init(client: ServerClient(address: ServerAddress(host: "away.invalid"), pin: nil, token: "t"),
+                   quality: .original, transcoding: false,
+                   tracks: [a.url.standardizedFileURL.path: ia, b.url.standardizedFileURL.path: ib, c.url.standardizedFileURL.path: ic],
+                   offline: [ia.id, ic.id], reachable: false)
+    }
+    engine.sourceOpener = { track, seconds in try await streamer.open(track, at: seconds) }
+    engine.setQueue([a, b, c], startAt: 0)
+    engine.play()
+    try? await Task.sleep(for: .milliseconds(200))
+    await play(engine, graph, seconds: 21)
+    await waitUntil { engine.currentTrack?.title == "MixC" }
+    #expect(engine.currentTrack?.title == "MixC")
+    #expect(abs(engine.currentTime - 1) < 0.2, "C follows A straight on")
+    engine.pause()
+}
+
+/// Automatic quality hears about a struggling stream from the engine's
+/// buffer: once, when it falls from healthy (5 s) below 2 s while playing —
+/// not while it's still filling at the start, and not again until it has
+/// recovered.
+@MainActor
+@Test func lowBufferIsReportedOnceAfterBeingHealthy() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try track("LowA", 60)
+    let source = try MeteredSource(a.url)
+    source.budget.withLock { $0 = 3 * 44_100 }
+    engine.sourceOpener = { _, _ in source }
+    var reports = 0
+    engine.stalled = { reports += 1 }
+    engine.setQueue([a], startAt: 0)
+    engine.play()
+    try? await Task.sleep(for: .milliseconds(300))
+    #expect(reports == 0, "3 s queued at the start: still filling")
+
+    source.budget.withLock { $0 = .max }
+    try? await Task.sleep(for: .milliseconds(300)) // ~10 s queued: healthy
+    source.budget.withLock { $0 = 0 }
+    await play(engine, graph, seconds: 8.6)
+    await waitUntil { reports == 1 }
+    #expect(reports == 1)
+    #expect(!engine.isHolding, "told before running dry")
+    await play(engine, graph, seconds: 0.5)
+    #expect(reports == 1, "once per dip")
+    source.budget.withLock { $0 = .max }
+    engine.pause()
+}
+
+/// A playlist can list the same song twice, both copies under one ID. After
+/// the second copy the decoder must go on to what follows *it*, not loop
+/// back to what follows the first.
+@MainActor
+@Test func aSongListedTwicePlaysOnAfterItsSecondCopy() async throws {
+    let graph = ClockGraph()
+    let engine = PlayerEngine(graph: graph)
+    let a = try track("TwiceA", 5), b = try track("TwiceB", 5), c = try track("TwiceC", 5)
+    engine.setQueue([a, b, a, c], startAt: 0)
+    engine.play()
+    try? await Task.sleep(for: .milliseconds(200))
+    await play(engine, graph, seconds: 12)
+    await waitUntil { engine.currentIndex == 2 }
+    #expect(engine.currentIndex == 2)
+    await play(engine, graph, seconds: 4)
+    await waitUntil { engine.currentTrack?.title == "TwiceC" }
+    #expect(engine.currentTrack?.title == "TwiceC")
+    #expect(engine.currentIndex == 3)
     engine.pause()
 }

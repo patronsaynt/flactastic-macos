@@ -41,6 +41,10 @@ final class PlayerState {
 
     var currentTrack: Track?
     var isPlaying: Bool = false
+    /// Whether a queued track can play right now. A server track with no
+    /// offline copy can't while the server is away; the queue greys it out
+    /// and playback skips it. Set by the app; true for everything otherwise.
+    @ObservationIgnored var canPlayNow: @MainActor (Track) -> Bool = { _ in true }
     /// Playing, but waiting for a stream to deliver: the clock is held.
     var isBuffering = false
     /// Where the playing track comes from in a server library; nil for local files.

@@ -468,7 +468,7 @@ struct PlayerQualityBadge: View {
 
     @ViewBuilder
     private var badge: some View {
-        if case .transcode(let q)? = source {
+        if let q = source?.transcodeQuality {
             // What's heard is the lossy stream (§9.2: AAC-LC at the source rate
             // up to 48 kHz, else 44.1 or 48 kHz by rate family).
             let rate = track.sampleRate ?? 44_100
@@ -500,7 +500,7 @@ struct PlayerQualityBadge: View {
 
 /// Where a server track's audio comes from, after the artist: a small gray
 /// download mark when it's playing from the offline copy on this Mac, or
-/// "· Streaming". Server libraries only; nothing for a local library.
+/// "· Cached" or "· Streaming". Server libraries only; nothing for a local library.
 struct PlayerSourceLabel: View {
     let track: Track
     var size: CGFloat = 12
@@ -517,6 +517,13 @@ struct PlayerSourceLabel: View {
                     .fixedSize()
                     .help("Playing the offline copy on this Mac")
                     .accessibilityLabel("Playing offline")
+            } else if case .cached = source {
+                Text(" · Cached")
+                    .font(.system(size: size))
+                    .foregroundStyle(Theme.textTertiary)
+                    .lineLimit(1)
+                    .fixedSize()
+                    .help("Playing from this Mac's cache of recent streams")
             } else {
                 Text(" · Streaming")
                     .font(.system(size: size))

@@ -139,7 +139,7 @@ final class OfflineCopies {
     /// Tells the player which copies it may play instead of streaming.
     private func publish() {
         let current = Set(installed.keys.filter(isCurrent))
-        session.streamer.config.withLock { $0.offline = current }
+        session.streamer.setOffline(current)
     }
 
     // MARK: - Choosing

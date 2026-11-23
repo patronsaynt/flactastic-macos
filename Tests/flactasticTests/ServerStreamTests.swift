@@ -117,7 +117,15 @@ final class SlowRangeServer: URLProtocol, @unchecked Sendable {
     nonisolated(unsafe) static var requests: [String] = []
     nonisolated(unsafe) static var open = 0
     nonisolated(unsafe) static var maxOpen = 0
+    /// Delay before each response, like a round trip over the internet.
+    nonisolated(unsafe) static var latency: TimeInterval = 0
+    /// Bytes sent and time spent sending them: the link's true rate.
+    nonisolated(unsafe) static var sent = 0
+    nonisolated(unsafe) static var sending: TimeInterval = 0
     static let lock = NSLock()
+    static let link = NSLock()
+    /// Requests at once share one link's rate (off: each gets its own).
+    nonisolated(unsafe) static var sharedLink = false
     private let stopped = OSAllocatedUnfairLock(initialState: false)
 
     override class func canInit(with request: URLRequest) -> Bool { true }
@@ -138,14 +146,22 @@ final class SlowRangeServer: URLProtocol, @unchecked Sendable {
         if ifRange != nil && ifRange != etag { start = 0; stop = body.count; status = 200 }
         let headers = status == 206 ? ["ETag": etag, "Content-Range": "bytes \(start)-\(stop - 1)/\(body.count)"] : ["ETag": etag]
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: headers)!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        let latency = Self.lock.withLock { Self.latency }
         DispatchQueue.global().async {
+            if latency > 0 { Thread.sleep(forTimeInterval: latency) }
+            self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             var at = start
             while at < stop, !self.stopped.withLock({ $0 }) {
+                // One link: requests at once share it, as they would.
+                let shared = Self.lock.withLock { Self.sharedLink }
+                if shared { Self.link.lock() }
+                let began = Date()
                 let end = min(stop, at + 4 << 10)
                 self.client?.urlProtocol(self, didLoad: body.subdata(in: at..<end))
-                at = end
                 Thread.sleep(forTimeInterval: 0.005)
+                Self.lock.withLock { Self.sent += end - at; Self.sending += Date().timeIntervalSince(began) }
+                if shared { Self.link.unlock() }
+                at = end
             }
             if !self.stopped.withLock({ let was = $0; $0 = true; return was }) {
                 Self.lock.withLock { Self.open -= 1 }
@@ -155,7 +171,7 @@ final class SlowRangeServer: URLProtocol, @unchecked Sendable {
     }
 
     static func serve(_ data: Data) {
-        lock.withLock { body = data; etag = "\"a\""; requests = []; open = 0; maxOpen = 0 }
+        lock.withLock { body = data; etag = "\"a\""; requests = []; open = 0; maxOpen = 0; latency = 0; sent = 0; sending = 0; sharedLink = false }
     }
 }
 
@@ -205,7 +221,7 @@ struct RemoteOriginalTests {
         #expect(there == (try frames(local, at: target, count: 4096)), "the same samples as the file at 30 s")
         #expect(Date().timeIntervalSince(began) < 0.5, "a seek ahead doesn't wait for the download")
         #expect(SlowRangeServer.lock.withLock { SlowRangeServer.requests.contains { $0 != "bytes=0-" } })
-        #expect(peak.withLock { $0 } <= 1, "one request in flight")
+        #expect(peak.withLock { $0 } <= 2, "at most one request coming behind another")
 
         // Back to the start: already here, no request.
         let before = SlowRangeServer.lock.withLock { SlowRangeServer.requests.count }
@@ -234,6 +250,276 @@ struct RemoteOriginalTests {
         #expect(try await bytes(at: 1_500_000) == second.subdata(in: 1_500_000..<1_500_100))
         remote.drop()
     }
+}
+
+// MARK: - Mixed queues: offline copies beside streamed tracks
+
+// In the same serialized suite as the other SlowRangeServer tests: they
+// share its static state.
+extension RemoteOriginalTests {
+    /// An offline track and a streamed one, as the streamer knows them.
+    private func rig(reachable: Bool, streamedSize: Int, hash: String? = nil) -> (ServerStreamer, Track, Track, ServerStreamer.TrackInfo) {
+        let a = Track(url: scratch("mixA.flac"), title: "A", duration: 60, fileFormat: .flac)
+        let b = Track(url: scratch("mixB.flac"), title: "B", duration: 60, fileFormat: .flac)
+        let ia = ServerStreamer.TrackInfo(id: UUID(), format: .flac, fileSize: 1000, contentHash: nil,
+                                          sampleRate: 44_100, bitrate: 1000, frames: nil, duration: 60)
+        let ib = ServerStreamer.TrackInfo(id: UUID(), format: .flac, fileSize: Int64(streamedSize), contentHash: hash,
+                                          sampleRate: 44_100, bitrate: 1000, frames: nil, duration: 60)
+        let streamer = ServerStreamer()
+        streamer.config.withLock {
+            $0 = .init(client: slowClient(), quality: .original, transcoding: false,
+                       tracks: [a.url.standardizedFileURL.path: ia, b.url.standardizedFileURL.path: ib],
+                       offline: [ia.id], cacheDirectory: scratch("mix-cache"), reachable: reachable)
+        }
+        return (streamer, a, b, ib)
+    }
+
+    @Test("After an offline track, the next streamed one preloads at once — there's no download of the offline one to wait on")
+    func preloadAfterOfflineTrack() async throws {
+        let body = Data(repeating: 1, count: 3_000_000)
+        SlowRangeServer.serve(body)
+        let (streamer, a, b, ib) = rig(reachable: true, streamedSize: body.count)
+        streamer.upcoming(current: a, next: b)
+        let deadline = Date() + 1.5
+        while SlowRangeServer.lock.withLock({ SlowRangeServer.requests.isEmpty }), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(SlowRangeServer.lock.withLock { !SlowRangeServer.requests.isEmpty })
+        #expect(streamer.holds(ib.id))
+        streamer.upcoming(current: nil, next: nil)
+    }
+
+    @Test("A cached transcode doesn't stop the original being preloaded when the original is what will play")
+    func preloadIgnoresACacheThatWontBeUsed() async throws {
+        let body = Data(repeating: 1, count: 3_000_000)
+        SlowRangeServer.serve(body)
+        let (streamer, a, b, ib) = rig(reachable: true, streamedSize: body.count, hash: "lowonly")
+        let cache = try #require(streamer.cache(streamer.config.withLock { $0 }))
+        cache.storeTranscode(try #require(StreamCache.key(hash: "lowonly", quality: .low)), trackID: ib.id,
+                             quality: .low, data: Data(count: 10), priming: 0, frames: nil)
+        streamer.upcoming(current: a, next: b)
+        let deadline = Date() + 1.5
+        while SlowRangeServer.lock.withLock({ SlowRangeServer.requests.isEmpty }), Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(SlowRangeServer.lock.withLock { !SlowRangeServer.requests.isEmpty })
+        streamer.upcoming(current: nil, next: nil)
+    }
+
+    @Test("While the server is away, a streamed track fails at once and reads as unplayable; an offline copy doesn't")
+    func unreachableServerFailsFast() async throws {
+        SlowRangeServer.serve(Data(count: 1000))
+        let (streamer, a, b, _) = rig(reachable: false, streamedSize: 1000)
+        #expect(streamer.canPlay(a))
+        #expect(!streamer.canPlay(b))
+        let began = Date()
+        await #expect(throws: (any Error).self) { _ = try await streamer.open(b, at: 0) }
+        #expect(Date().timeIntervalSince(began) < 0.2)
+        #expect(SlowRangeServer.lock.withLock { SlowRangeServer.requests.isEmpty })
+        streamer.upcoming(current: a, next: b)
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(SlowRangeServer.lock.withLock { SlowRangeServer.requests.isEmpty }, "no preload while away")
+    }
+}
+
+// MARK: - Stream cache
+
+nonisolated(unsafe) private let flac16: [String: Any] = [AVFormatIDKey: kAudioFormatFLAC, AVSampleRateKey: 44_100,
+                                     AVNumberOfChannelsKey: 2, AVLinearPCMBitDepthKey: 16]
+
+private func info(_ size: Int, hash: String?, format: AudioFileFormat = .flac) -> ServerStreamer.TrackInfo {
+    ServerStreamer.TrackInfo(id: UUID(), format: format, fileSize: Int64(size), contentHash: hash,
+                             sampleRate: 44_100, bitrate: 1000, frames: nil, duration: 5)
+}
+
+extension RemoteOriginalTests {
+    @Test("A track played before comes from the cache, even after a relaunch: the same audio, no request, marked cached")
+    func replayComesFromTheCache() async throws {
+        let original = scratch("replay.flac")
+        try write(tone(frames: 44_100 * 5), to: original, settings: flac16)
+        let bytes = try Data(contentsOf: original)
+        SlowRangeServer.serve(bytes)
+        let t = Track(url: scratch("replay-track.flac"), title: "R", duration: 5, fileFormat: .flac)
+        let i = info(bytes.count, hash: "sha256:replay")
+        let dir = scratch("cache")
+        func streamer() -> ServerStreamer {
+            let s = ServerStreamer()
+            s.config.withLock { $0 = .init(client: slowClient(), quality: .original, transcoding: false,
+                                           tracks: [t.url.standardizedFileURL.path: i], cacheDirectory: dir) }
+            return s
+        }
+        let first = streamer()
+        var source: (any PCMSource)? = try await first.open(t, at: 0)
+        #expect(source?.playbackSource == .streaming)
+        let key = try #require(StreamCache.key(hash: "sha256:replay", quality: .original))
+        let cache = try #require(first.cache(first.config.withLock { $0 }))
+        let deadline = Date() + 10
+        while !cache.isComplete(key), Date() < deadline { try await Task.sleep(for: .milliseconds(50)) }
+        #expect(cache.isComplete(key))
+        let heard = try readAll(source!)
+        source = nil
+        first.upcoming(current: nil, next: nil)
+
+        SlowRangeServer.serve(bytes)
+        let again = streamer()
+        #expect(again.canPlay(t))
+        let replay = try #require(try await again.open(t, at: 0))
+        #expect(replay.playbackSource == .cached(.original))
+        #expect(try readAll(replay) == heard)
+        #expect(SlowRangeServer.lock.withLock { SlowRangeServer.requests.isEmpty }, "no request")
+    }
+
+    @Test("A track skipped partway keeps what it downloaded; playing it again asks only for the rest")
+    func partialDownloadResumes() async throws {
+        let body = Data((0..<3_000_000).map { UInt8(truncatingIfNeeded: $0 &* 31 &+ 7) })
+        SlowRangeServer.serve(body)
+        let cache = StreamCache(directory: scratch("partial-cache"))
+        let key = "partial-original", id = UUID(), size = Int64(body.count)
+        func open() throws -> RemoteFile {
+            try RemoteFile(client: slowClient(), trackID: id, size: size, file: cache.fileURL(key, quality: .original),
+                           existing: cache.beginOriginal(key, trackID: id, size: size),
+                           persist: { have, etag, _ in cache.saveOriginal(key, have: have, etag: etag) })
+        }
+        var file: RemoteFile? = try open()
+        try await Task.sleep(for: .milliseconds(300))
+        file?.drop()
+        file = nil
+        let entry = try #require(cache.entry(key))
+        let stored = entry.stored
+        #expect(stored > 0 && stored < size)
+        // Two windows were coming at once, so there may be two runs on disk:
+        // the first missing byte is where the first run stops.
+        let gap = try #require(entry.ranges.first { $0[0] == 0 })[1]
+
+        SlowRangeServer.serve(body)
+        let resumed = try open()
+        try await Task.sleep(for: .milliseconds(100))
+        let first = SlowRangeServer.lock.withLock { SlowRangeServer.requests.first }
+        #expect(first?.hasPrefix("bytes=\(gap)-") == true, "picks up at \(gap), asked \(first ?? "nothing")")
+        let head = try await Task.detached {
+            var b = [UInt8](repeating: 0, count: 100)
+            _ = try resumed.read(into: &b, at: 0, count: 100)
+            return Data(b)
+        }.value
+        #expect(head == body.prefix(100))
+        resumed.drop()
+    }
+}
+
+extension RemoteOriginalTests {
+    @Test("Over a link with a round trip per request, the download keeps the link busy and measures its real rate")
+    func pipelinedWindowsMeasureTheLink() async throws {
+        let body = Data((0..<2_000_000).map { UInt8(truncatingIfNeeded: $0) })
+        SlowRangeServer.serve(body)
+        SlowRangeServer.lock.withLock { SlowRangeServer.latency = 0.2; SlowRangeServer.sharedLink = true }
+        let rates = OSAllocatedUnfairLock(initialState: [Double]())
+        let file = try RemoteFile(client: slowClient(), trackID: UUID(), size: Int64(body.count), file: scratch("pipe.bin"),
+                                  onSpeed: { r in rates.withLock { $0.append(r) } })
+        let deadline = Date() + 15
+        while !file.isComplete, Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(file.isComplete)
+        let truth = SlowRangeServer.lock.withLock { Double(SlowRangeServer.sent) / SlowRangeServer.sending }
+        let measured = try #require(rates.withLock { $0.last })
+        #expect(measured > truth * 0.75, "measured \(Int(measured)) B/s of \(Int(truth))")
+        #expect(SlowRangeServer.lock.withLock { SlowRangeServer.maxOpen } <= 2)
+        file.drop()
+    }
+}
+
+extension RemoteOriginalTests {
+    @Test("With Automatic quality, a slow response alone doesn't give up a read; the engine's low-buffer signal does")
+    func waitingAloneDoesNotDropQuality() async throws {
+        let body = Data((0..<2_000_000).map { UInt8(truncatingIfNeeded: $0 &* 13) })
+        SlowRangeServer.serve(body)
+        let file = try RemoteFile(client: slowClient(), trackID: UUID(), size: Int64(body.count), file: scratch("auto.bin"))
+        file.stallThrows = true
+        try await Task.sleep(for: .milliseconds(50))
+        SlowRangeServer.lock.withLock { SlowRangeServer.latency = 2.5 }
+        // Far ahead of the download: a new request, answered 2.5 s later.
+        let read = try await Task.detached {
+            var b = [UInt8](repeating: 0, count: 100)
+            _ = try file.read(into: &b, at: 1_900_000, count: 100)
+            return Data(b)
+        }.value
+        #expect(read == body.subdata(in: 1_900_000..<1_900_100))
+
+        // Now the engine says its buffer is low while a read waits: it gives up.
+        let waiter = Task.detached {
+            var b = [UInt8](repeating: 0, count: 100)
+            _ = try file.read(into: &b, at: 1_000_000, count: 100)
+        }
+        try await Task.sleep(for: .milliseconds(300))
+        file.stalled()
+        await #expect(throws: (any Error).self) { try await waiter.value }
+        file.drop()
+    }
+}
+
+@Test("Past its limit the cache drops the least recently played first, never one in use")
+func streamCacheEvictsOldestNotInUse() throws {
+    let cache = StreamCache(directory: scratch("evict-cache"), limit: 1000)
+    func put(_ k: String) {
+        cache.storeTranscode(k, trackID: UUID(), quality: .high, data: Data(count: 400), priming: 0, frames: nil)
+        Thread.sleep(forTimeInterval: 0.01)
+    }
+    put("a-high"); put("b-high"); put("c-high")
+    #expect(cache.entry("a-high") == nil)
+    #expect(cache.entry("b-high") != nil && cache.entry("c-high") != nil)
+    cache.lease("b-high")
+    put("d-high")
+    #expect(cache.entry("b-high") != nil, "in use")
+    #expect(cache.entry("c-high") == nil)
+    #expect(!FileManager.default.fileExists(atPath: cache.fileURL("c-high", quality: .high).path))
+    #expect(cache.totalStored <= 1000)
+}
+
+@Test("A track made available offline loses its cached copy")
+func offlineCopyReplacesCachedStream() throws {
+    let streamer = ServerStreamer()
+    streamer.config.withLock { $0 = .init(cacheDirectory: scratch("offline-cache")) }
+    let cache = try #require(streamer.cache(streamer.config.withLock { $0 }))
+    let id = UUID()
+    cache.storeTranscode("x-high", trackID: id, quality: .high, data: Data(count: 10), priming: 0, frames: nil)
+    #expect(cache.entry("x-high") != nil)
+    streamer.setOffline([id])
+    #expect(cache.entry("x-high") == nil)
+    #expect(!FileManager.default.fileExists(atPath: cache.fileURL("x-high", quality: .high).path))
+}
+
+@Test("A cached transcode plays with no server, trimmed as streamed; a lower one isn't used when better is wanted")
+func cachedTranscodePlays() async throws {
+    let frames = 44_100 * 2
+    let url = scratch("cached.aac")
+    try write(tone(frames: frames), to: url, settings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 44_100,
+                                                       AVNumberOfChannelsKey: 2, AVEncoderBitRateKey: 160_000])
+    let adts = try Data(contentsOf: url)
+    let t = Track(url: scratch("cached-track.flac"), title: "C", duration: 2, fileFormat: .flac)
+    let i = info(5_000_000, hash: "cachedtx")
+    let streamer = ServerStreamer()
+    streamer.config.withLock { $0 = .init(client: slowClient(), quality: .normal, transcoding: true,
+                                          tracks: [t.url.standardizedFileURL.path: i],
+                                          cacheDirectory: scratch("tx-cache"), reachable: false) }
+    let cache = try #require(streamer.cache(streamer.config.withLock { $0 }))
+    let key = try #require(StreamCache.key(hash: "cachedtx", quality: .normal))
+    cache.storeTranscode(key, trackID: i.id, quality: .normal, data: adts, priming: applePriming, frames: frames)
+
+    #expect(streamer.canPlay(t))
+    let source = try #require(try await streamer.open(t, at: 0))
+    #expect(source.playbackSource == .cached(.normal))
+    #expect(try readAll(source).count == frames)
+
+    // Reachable and wanting High: Normal isn't good enough, so it isn't used.
+    streamer.config.withLock { $0.quality = .high; $0.reachable = true }
+    let picked = try await Task.detached { () -> PlaybackSource? in
+        try? await withThrowingTaskGroup(of: PlaybackSource?.self) { group in
+            group.addTask { try await streamer.open(t, at: 0)?.playbackSource }
+            group.addTask { try await Task.sleep(for: .milliseconds(300)); return nil }
+            let first = try await group.next() ?? nil
+            group.cancelAll()
+            return first
+        }
+    }.value
+    #expect(picked != .cached(.normal))
 }
 
 // MARK: - Upload resume

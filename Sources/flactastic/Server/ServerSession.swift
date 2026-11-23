@@ -52,7 +52,12 @@ final class ServerSession {
 
     private(set) var profiles: [ServerProfile] = []
     private(set) var activeID: UUID?
-    private(set) var status: Status = .idle
+    private(set) var status: Status = .idle {
+        didSet {
+            let reachable = ![.unreachable, .signedOut, .identityChanged].contains(status)
+            streamer.config.withLock { $0.reachable = reachable }
+        }
+    }
     private(set) var library: LibraryInfo?
     private(set) var serverInfo: ServerInfo?
     /// Bumped when the server reports Organizer changes.
@@ -803,6 +808,7 @@ final class ServerSession {
     private func networkChanged() {
         guard isActive, let client, status != .signedOut, status != .identityChanged else { return }
         client.resetConnections()
+        streamer.networkChanged()
         if status == .unreachable { retry(after: 0) }
         else if changesTask != nil { startChanges() }
     }

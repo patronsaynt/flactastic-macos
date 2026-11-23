@@ -4,7 +4,7 @@ import Foundation
 import os
 
 /// The user's streaming mode, stored on the server as `streamQuality` (§14).
-enum StreamQuality: String, CaseIterable, Identifiable, Sendable {
+enum StreamQuality: String, CaseIterable, Identifiable, Sendable, Codable {
     case auto, original, high, normal, low
     var id: String { rawValue }
     /// AAC-LC bitrate of each transcode (§9.2); 0 for the others.
@@ -59,6 +59,10 @@ final class ServerStreamer: Sendable {
         /// Server IDs whose offline copy is installed and matches the server.
         var offline: Set<UUID> = []
         var cacheDirectory: URL?
+        /// False while the server can't be reached (or the device was signed
+        /// out): a track needing it fails at once, so the queue moves on to
+        /// one that can play rather than waiting out a timeout per track.
+        var reachable = true
     }
 
     private struct Held {
@@ -73,6 +77,74 @@ final class ServerStreamer: Sendable {
     private let held = OSAllocatedUnfairLock(initialState: Held())
     /// Recent download speed in bytes per second, nil until measured; drives `auto`.
     let throughput = OSAllocatedUnfairLock<Double?>(initialState: nil)
+    private let cacheBox = OSAllocatedUnfairLock<StreamCache?>(initialState: nil)
+
+    /// The stream cache for the configured directory (one per server).
+    func cache(_ c: Config) -> StreamCache? {
+        guard let dir = c.cacheDirectory else { return nil }
+        let (cache, created): (StreamCache, Bool) = cacheBox.withLock { box in
+            if let existing = box, existing.directory == dir { return (existing, false) }
+            let made = StreamCache(directory: dir)
+            box = made
+            return (made, true)
+        }
+        if created { cache.remove(trackIDs: c.offline) }
+        return cache
+    }
+
+    /// Offline copies changed. A track that just became one loses its cached
+    /// stream: the same song shouldn't take space twice.
+    func setOffline(_ ids: Set<UUID>) {
+        let (added, c): (Set<UUID>, Config) = config.withLock { c in
+            let added = ids.subtracting(c.offline)
+            c.offline = ids
+            return (added, c)
+        }
+        cache(c)?.remove(trackIDs: added)
+    }
+
+    private static let transcodeRank: [StreamQuality] = [.high, .normal, .low]
+
+    /// What the cache would play for the track now: the original whenever
+    /// it's here whole (the best there is, and free), a whole transcode when
+    /// it's at least the quality wanted — or any, with the server away.
+    /// Nil: it comes from the server. `open`, the preload and `canPlay` all
+    /// go by this, so they agree.
+    private func cachedPick(_ info: TrackInfo, _ c: Config) -> StreamQuality? {
+        guard let cache = cache(c) else { return nil }
+        let whole = { (q: StreamQuality) in StreamCache.key(hash: info.contentHash, quality: q).map(cache.isComplete) ?? false }
+        if c.client != nil, whole(.original) { return .original }
+        let wanted = c.transcoding ? pick(c.quality, info) : .original
+        let acceptable = !c.reachable ? Self.transcodeRank
+            : Self.transcodeRank.firstIndex(of: wanted).map { Array(Self.transcodeRank[...$0]) } ?? []
+        return acceptable.first(where: whole)
+    }
+
+    /// A source from the cache, if `cachedPick` chooses one.
+    private func cachedSource(_ info: TrackInfo, _ c: Config, at seconds: TimeInterval) throws -> (any PCMSource)? {
+        guard let q = cachedPick(info, c), let cache = cache(c) else { return nil }
+        if q == .original, let client = c.client {
+            let file = try remoteFile(info, client: client, cache: cache, readAhead: nil)
+            return try RemoteAudioSource(file, format: info.format)
+        }
+        guard let key = StreamCache.key(hash: info.contentHash, quality: q), let kept = cache.transcode(key),
+              let store = ADTSStore.cached(kept.data, quality: q, priming: kept.priming, frames: kept.frames),
+              let reader = store.reader(at: seconds) else { return nil }
+        let client = c.client, auto = c.quality == .auto && c.transcoding
+        return ADTSStreamSource(store: store, reader: reader, duration: info.duration) { [weak self] s in
+            guard let client else { return nil }
+            return try await self?.transcode(info, q, at: s, client: client, stallThrows: auto)
+        }
+    }
+
+    /// Keeps a transcode in the cache once it has arrived whole from the start.
+    private func keeper(_ info: TrackInfo, _ quality: StreamQuality) -> (@Sendable (Data, Int, Int?) -> Void)? {
+        let c = config.withLock { $0 }
+        guard let cache = cache(c), let key = StreamCache.key(hash: info.contentHash, quality: quality) else { return nil }
+        return { data, priming, frames in
+            cache.storeTranscode(key, trackID: info.id, quality: quality, data: data, priming: priming, frames: frames)
+        }
+    }
 
     /// A source for `track`, or nil when it isn't a server track or a
     /// verified offline copy should play instead (never transcoded).
@@ -85,9 +157,12 @@ final class ServerStreamer: Sendable {
         if c.offline.contains(info.id), FileManager.default.fileExists(atPath: track.url.path) {
             return OfflineCopySource(try AVAudioFile(forReading: track.url, commonFormat: .pcmFormatFloat32, interleaved: false))
         }
-        guard let client = c.client else { return nil }
-        let auto = c.quality == .auto && c.transcoding
+        // Played before and still here whole: no network at all.
+        if let cached = try cachedSource(info, c, at: seconds) { return cached }
         let quality = c.transcoding ? pick(c.quality, info) : .original
+        guard let client = c.client else { return nil }
+        guard c.reachable else { throw ServerError.unreachable("The server can't be reached") }
+        let auto = c.quality == .auto && c.transcoding
         if quality != .original {
             // Busy (503): three more tries 250 ms apart, then the original.
             for attempt in 0...3 {
@@ -97,15 +172,17 @@ final class ServerStreamer: Sendable {
                 } catch ServerError.api(code: "transcodeUnavailable", _, _) { break }
             }
         }
-        guard let dir = c.cacheDirectory else { return nil }
-        let file = try remoteFile(info, client: client, dir: dir, readAhead: nil)
+        guard let cache = cache(c) else { return nil }
+        let file = try remoteFile(info, client: client, cache: cache, readAhead: nil)
         file.stallThrows = auto
         return try RemoteAudioSource(file, format: info.format)
     }
 
     /// Auto (§9.2): the original when the link carries 1.5 times its average
-    /// rate, else the highest transcode under half of it. Per track; a stall
-    /// lowers the measure, and the engine's reopen then picks again.
+    /// rate, else the highest transcode under half of it. Chosen per track,
+    /// so quality changes at track boundaries, back up too once the link
+    /// recovers. Mid-track it drops only when the engine's buffer runs low
+    /// (`stalled`): the measure is lowered and the reopen picks again.
     func pick(_ mode: StreamQuality, _ info: TrackInfo) -> StreamQuality {
         guard mode == .auto else { return mode }
         guard let bytes = throughput.withLock({ $0 }) else { return .original }
@@ -114,25 +191,56 @@ final class ServerStreamer: Sendable {
         return [StreamQuality.high, .normal].first { Double($0.kbps * 1000) < bps / 2 } ?? .low
     }
 
-    /// The engine ran dry mid-track: the playing track's download stalled.
+    /// The engine's buffer ran low: the download feeding it is struggling —
+    /// the playing track's or, when the decoder has already moved on to it,
+    /// the next one's. Only a read that's actually waiting reacts.
     func stalled() {
-        let (file, stream) = held.withLock { h in (h.current.flatMap { h.files[$0] }, h.current.flatMap { h.streams[$0] }) }
-        file?.stalled()
-        stream?.stalled()
+        let (files, streams) = held.withLock { h in
+            ([h.current, h.next].compactMap { $0.flatMap { h.files[$0] } }, [h.current, h.next].compactMap { $0.flatMap { h.streams[$0] } })
+        }
+        files.forEach { $0.stalled() }
+        streams.forEach { $0.stalled() }
+    }
+
+    /// Another network (home Wi-Fi to Tailscale, say): the old measure says
+    /// nothing about this one.
+    func networkChanged() {
+        throughput.withLock { $0 = nil }
     }
 
     private func measured(_ bytesPerSecond: Double) {
         throughput.withLock { $0 = $0.map { $0 * 0.6 + bytesPerSecond * 0.4 } ?? bytesPerSecond }
     }
 
-    private func remoteFile(_ info: TrackInfo, client: ServerClient, dir: URL, readAhead: Int64?) throws -> RemoteFile {
+    private func remoteFile(_ info: TrackInfo, client: ServerClient, cache: StreamCache, readAhead: Int64?) throws -> RemoteFile {
         if let file = held.withLock({ $0.files[info.id] }) {
             if readAhead == nil { file.promote() }
             return file
         }
-        let file = try RemoteFile(client: client, trackID: info.id, size: info.fileSize,
-                                  file: dir.appendingPathComponent("\(info.id.uuidString).part"),
+        let file: RemoteFile
+        if let key = StreamCache.key(hash: info.contentHash, quality: .original) {
+            // Kept between plays: read on from whatever an earlier play left.
+            let existing = cache.beginOriginal(key, trackID: info.id, size: info.fileSize)
+            cache.lease(key)
+            do {
+                file = try RemoteFile(client: client, trackID: info.id, size: info.fileSize,
+                                      file: cache.fileURL(key, quality: .original), readAheadLimit: readAhead,
+                                      existing: existing,
+                                      persist: { [weak cache] have, etag, closing in
+                                          cache?.saveOriginal(key, have: have, etag: etag)
+                                          if closing { cache?.release(key) }
+                                      },
+                                      onSpeed: { [weak self] in self?.measured($0) })
+            } catch {
+                cache.release(key)
+                throw error
+            }
+        } else {
+            // No content hash: nothing tells a changed file apart, so it isn't kept.
+            file = try RemoteFile(client: client, trackID: info.id, size: info.fileSize,
+                                  file: cache.directory.appendingPathComponent("\(info.id.uuidString).part"),
                                   readAheadLimit: readAhead, onSpeed: { [weak self] in self?.measured($0) })
+        }
         held.withLock { $0.files[info.id] = file }
         return file
     }
@@ -151,7 +259,8 @@ final class ServerStreamer: Sendable {
         // Superseded: end the old stream before asking for the new one.
         held.withLock { $0.streams.removeValue(forKey: info.id) }?.cancel()
         let store = try await ADTSStore.open(client: client, trackID: info.id, quality: quality, seconds: seconds,
-                                             sourceRate: info.sampleRate, onSpeed: { [weak self] in self?.measured($0) })
+                                             sourceRate: info.sampleRate, keepWhole: seconds == 0 ? keeper(info, quality) : nil,
+                                             onSpeed: { [weak self] in self?.measured($0) })
         store.stallThrows = stallThrows
         held.withLock { h in
             h.streams[info.id]?.cancel()
@@ -160,6 +269,15 @@ final class ServerStreamer: Sendable {
         return ADTSStreamSource(store: store, reader: store.reader(at: seconds, received: false)!, duration: info.duration) { [weak self] s in
             try await self?.transcode(info, quality, at: s, client: client, stallThrows: stallThrows)
         }
+    }
+
+    /// Whether `track` can play right now: not a server track, an offline
+    /// copy, or the server is there to stream it.
+    func canPlay(_ track: Track) -> Bool {
+        let c = config.withLock { $0 }
+        guard let info = c.tracks[track.url.standardizedFileURL.path] else { return true }
+        if c.offline.contains(info.id) || cachedPick(info, c) != nil { return true }
+        return c.reachable && c.client != nil
     }
 
     /// Whether a download or stream of `id` is held (playing or preloaded).
@@ -182,17 +300,20 @@ final class ServerStreamer: Sendable {
             h.next = nxt?.id
             h.preload?.cancel()
             h.preload = nil
-            guard let cur, let nxt, let client = c.client, let dir = c.cacheDirectory,
-                  !c.offline.contains(nxt.id) else { return }
+            guard let cur, let nxt, let client = c.client, let cache = cache(c),
+                  c.reachable, !c.offline.contains(nxt.id), cachedPick(nxt, c) == nil else { return }
             h.preload = Task.detached(priority: .utility) { [weak self] in
-                await self?.preload(nxt, after: cur, client: client, dir: dir)
+                await self?.preload(nxt, after: cur, client: client, cache: cache)
             }
         }
     }
 
-    private func preload(_ next: TrackInfo, after current: TrackInfo, client: ServerClient, dir: URL) async {
-        // Wait for the playing track to have ten seconds in hand.
-        for _ in 0..<480 where !Task.isCancelled {
+    private func preload(_ next: TrackInfo, after current: TrackInfo, client: ServerClient, cache: StreamCache) async {
+        // Wait for the playing track to have ten seconds in hand. An offline
+        // or cached copy has all of it; there's no download of it to measure.
+        let c0 = config.withLock { $0 }
+        let currentIsLocal = c0.offline.contains(current.id) || cachedPick(current, c0) != nil
+        for _ in 0..<480 where !Task.isCancelled && !currentIsLocal {
             let ahead: Double = held.withLock { h in
                 if let f = h.files[current.id] { return f.isComplete ? .infinity : Double(f.bufferedAhead) / current.bytesPerSecond }
                 if let s = h.streams[current.id] { return s.isFinished ? .infinity : s.bufferedSeconds }
@@ -206,13 +327,14 @@ final class ServerStreamer: Sendable {
             let quality = c.transcoding ? pick(c.quality, next) : .original
             do {
                 if quality == .original {
-                    let file = try remoteFile(next, client: client, dir: dir, readAhead: max(512 << 10, Int64(next.bytesPerSecond * 10)))
+                    let file = try remoteFile(next, client: client, cache: cache, readAhead: max(512 << 10, Int64(next.bytesPerSecond * 10)))
                     // Open it once, so whatever Core Audio needs to start (an
                     // M4A's moov at the end, say) is here before the skip.
                     _ = try RemoteAudioSource(file, format: next.format)
                 } else {
                     let store = try await ADTSStore.open(client: client, trackID: next.id, quality: quality, seconds: 0,
                                                          sourceRate: next.sampleRate, pauseAfter: 10,
+                                                         keepWhole: keeper(next, quality),
                                                          onSpeed: { [weak self] in self?.measured($0) })
                     guard !Task.isCancelled else { return store.cancel() }
                     held.withLock { $0.streams[next.id] = store }
@@ -267,11 +389,28 @@ final class ADTSStore: @unchecked Sendable {
     private var readIndex = 0
     var stallThrows = false
     private var stallNow = false
+    private var waiting = false
+    /// Read from the stream cache, not the network.
+    private(set) var fromCache = false
+    /// Every byte received, kept while the stream runs from the start, and
+    /// handed to `keepWhole` (the cache) if it ends cleanly.
+    private var recording: Data?
+    private var keepWhole: (@Sendable (Data, Int, Int?) -> Void)?
 
-    /// Playback ran dry on this stream: with Auto, the waiting read gives up.
+    /// A whole transcode from the cache, parsed and ready to read anywhere.
+    static func cached(_ data: Data, quality: StreamQuality, priming: Int, frames: Int?) -> ADTSStore? {
+        let store = ADTSStore(quality: quality, start: 0, priming: priming, frames: frames)
+        store.fromCache = true
+        store.feed(data)
+        store.finish()
+        return store.outFormat == nil ? nil : store
+    }
+
+    /// The engine's buffer ran low on this stream: with Auto, the waiting
+    /// read gives up (only one that's actually waiting).
     func stalled() {
         condition.withLock {
-            guard stallThrows else { return }
+            guard stallThrows, waiting else { return }
             stallNow = true
             condition.broadcast()
         }
@@ -294,14 +433,17 @@ final class ADTSStore: @unchecked Sendable {
     /// Requests the stream from `seconds` and returns once its format is known.
     static func open(client: ServerClient, trackID: UUID, quality: StreamQuality, seconds: TimeInterval,
                      sourceRate: Double, pauseAfter: Double? = nil,
+                     keepWhole: (@Sendable (Data, Int, Int?) -> Void)? = nil,
                      onSpeed: @escaping @Sendable (Double) -> Void) async throws -> ADTSStore {
         let request = client.request("GET", "v2/tracks/\(trackID.uuidString)/stream", query: [
             URLQueryItem(name: "quality", value: quality.rawValue),
             URLQueryItem(name: "s", value: String(max(0, Int((seconds * sourceRate).rounded())))),
         ], timeout: 30)
         let box = OSAllocatedUnfairLock<ADTSStore?>(initialState: nil)
-        // Measured every 256 KB, so the rate follows the link as it changes.
-        let sample = OSAllocatedUnfairLock(initialState: (bytes: 0, since: Date()))
+        // Measured every 256 KB, so the rate follows the link as it changes —
+        // over the time bytes are arriving: a pause (read far enough ahead)
+        // isn't a slow link.
+        let sample = OSAllocatedUnfairLock(initialState: (bytes: 0, time: 0.0, last: Date?.none))
         // A decode pass replaced by a seek cancels its open, and the request,
         // even if the cancel lands before the request exists.
         let task = OSAllocatedUnfairLock<(stream: StreamTask?, cancelled: Bool)>(initialState: (nil, false))
@@ -317,14 +459,18 @@ final class ADTSStore: @unchecked Sendable {
                 let store = ADTSStore(quality: quality, start: AVAudioFramePosition((seconds * rate).rounded()),
                                       priming: header("FLACtastic-Priming") ?? 0, frames: header("FLACtastic-Frames"))
                 store.pauseAfterPackets = pauseAfter.map { Int($0 * rate / 1024) }
+                if let keepWhole, seconds == 0 { store.recording = Data(); store.keepWhole = keepWhole }
                 box.withLock { $0 = store }
                 finish(.success(store))
             }, onData: { data in
                 let rate: Double? = sample.withLock { s in
+                    let now = Date()
+                    if let last = s.last, now.timeIntervalSince(last) < 0.5 { s.time += now.timeIntervalSince(last) }
+                    s.last = now
                     s.bytes += data.count
-                    guard s.bytes >= 256 << 10 else { return nil }
-                    defer { s = (0, Date()) }
-                    return Double(s.bytes) / max(0.005, Date().timeIntervalSince(s.since))
+                    guard s.bytes >= 256 << 10, s.time > 0.005 else { return nil }
+                    defer { s.bytes = 0; s.time = 0 }
+                    return Double(s.bytes) / s.time
                 }
                 if let rate { onSpeed(rate) }
                 box.withLock { $0 }?.feed(data)
@@ -358,16 +504,21 @@ final class ADTSStore: @unchecked Sendable {
 
     func feed(_ data: Data) {
         guard let parser, !data.isEmpty else { return }
+        condition.withLock { recording?.append(data) }
         let status = data.withUnsafeBytes { AudioFileStreamParseBytes(parser, UInt32(data.count), $0.baseAddress, []) }
         if status != noErr { finish(ServerError.badResponse) }
     }
 
     func finish(_ error: Error? = nil) {
-        condition.withLock {
+        let whole: (Data, @Sendable (Data, Int, Int?) -> Void)? = condition.withLock {
             ended = true
             if let error, (error as? CancellationError) == nil { failure = failure ?? error }
             condition.broadcast()
+            defer { recording = nil; keepWhole = nil }
+            guard error == nil, failure == nil, let recording, let keepWhole else { return nil }
+            return (recording, keepWhole)
         }
+        if let whole { whole.1(whole.0, Int(priming), frames.map(Int.init)) }
     }
 
     fileprivate func gotFormat(_ asbd: AudioStreamBasicDescription) {
@@ -404,6 +555,8 @@ final class ADTSStore: @unchecked Sendable {
         condition.lock()
         defer { condition.unlock() }
         let began = Date()
+        waiting = true
+        defer { waiting = false }
         while i >= packets.count && !ended {
             if paused { paused = false; pauseAfterPackets = nil; task?.resume() }
             if stallNow {
@@ -411,12 +564,10 @@ final class ADTSStore: @unchecked Sendable {
                 RemoteFile.stalls.withLock { $0 += 1 }
                 throw ServerError.unreachable("Stalled")
             }
-            if !condition.wait(until: .now + 0.25) {
-                let waited = Date().timeIntervalSince(began)
-                if (stallThrows && waited > RemoteFile.stallSeconds) || waited > 30 {
-                    RemoteFile.stalls.withLock { $0 += 1 }
-                    throw ServerError.unreachable("Stalled")
-                }
+            // Waiting alone doesn't change quality (see `RemoteFile.read`).
+            if !condition.wait(until: .now + 0.25), Date().timeIntervalSince(began) > 30 {
+                RemoteFile.stalls.withLock { $0 += 1 }
+                throw ServerError.unreachable("Stalled")
             }
         }
         stallNow = false
@@ -569,7 +720,7 @@ private let adtsPacketsProc: AudioFileStream_PacketsProc = { context, _, count, 
 /// A transcoded stream as a `PCMSource`. A seek inside what's received
 /// decodes locally; elsewhere it asks the streamer for a new stream at `s`.
 final class ADTSStreamSource: PCMSource, @unchecked Sendable {
-    var playbackSource: PlaybackSource? { .transcode(store.quality) }
+    var playbackSource: PlaybackSource? { store.fromCache ? .cached(store.quality) : .transcode(store.quality) }
     private var store: ADTSStore
     private var decoder: ADTSDecoder
     private let duration: TimeInterval?

@@ -199,7 +199,7 @@ struct QueueUpNextList: View {
         let isDropTarget = dropTargetTrackID == trackID && draggingTrackID != trackID
 
         QueueTrackRow(track: item.track, isAdded: isAdded, compact: compact,
-                      isCursor: keyboardCursor == trackID) {
+                      isCursor: keyboardCursor == trackID, unavailable: !player.canPlayNow(item.track)) {
             player.removeFromQueue(at: item.engineIndex)
         }
         .opacity(draggingTrackID == trackID ? 0.35 : 1.0)
@@ -403,6 +403,9 @@ private struct QueueTrackRow: View {
     var compact = false
     /// The keyboard's row in the list.
     var isCursor = false
+    /// Can't play right now (a server track while the server is away):
+    /// dimmed, and skipped when its turn comes.
+    var unavailable = false
     let onRemove: (() -> Void)?
 
     @State private var isHovered = false
@@ -463,6 +466,9 @@ private struct QueueTrackRow: View {
                 .frame(width: 18)
                 .opacity(isHovered ? 1 : 0)
         }
+        .opacity(unavailable ? 0.4 : 1)
+        .help(unavailable ? "Needs the server" : "")
+        .accessibilityValue(unavailable ? "Needs the server" : "")
         .padding(.leading, compact ? 8 : 12)
         .padding(.trailing, compact ? 6 : 10)
         .frame(height: compact ? 46 : 58)
